@@ -1,0 +1,165 @@
+import 'package:audio_service/audio_service.dart' as audio_service;
+import 'package:vibeflow/models/quick_picks_model.dart';
+import 'package:vibeflow/services/bg_audio_handler.dart';
+
+/// Singleton service for managing background audio playback
+class AudioServices {
+  static AudioServices? _instance;
+  static BackgroundAudioHandler? _audioHandler;
+
+  String? _currentStreamUrl;
+
+  // Getter for current audio URL
+  String? get currentAudioUrl => _currentStreamUrl;
+
+  AudioServices._();
+
+  static Future<AudioServices> init() async {
+    if (_instance == null) {
+      _instance = AudioServices._();
+
+      // Initialize audio_service and get the handler
+      final handler = await audio_service.AudioService.init(
+        builder: () => BackgroundAudioHandler(),
+        config: const audio_service.AudioServiceConfig(
+          androidNotificationChannelId: 'com.vibeflow.audio',
+          androidNotificationChannelName: 'VibeFlow Music',
+          androidNotificationOngoing: true,
+          androidNotificationIcon: 'mipmap/ic_launcher',
+          androidShowNotificationBadge: true,
+          androidStopForegroundOnPause: true,
+        ),
+      );
+
+      _audioHandler = handler;
+      print('✅ [AudioService] Initialized');
+    }
+    return _instance!;
+  }
+
+  static AudioServices get instance {
+    if (_instance == null) {
+      throw StateError(
+        'AudioService not initialized. Call AudioService.init() first.',
+      );
+    }
+    return _instance!;
+  }
+
+  static BackgroundAudioHandler get handler {
+    if (_audioHandler == null) {
+      throw StateError('AudioHandler not initialized.');
+    }
+    return _audioHandler!;
+  }
+
+  // ==================== PLAYBACK CONTROLS ====================
+
+  /// Play a single song
+  Future<void> playSong(QuickPick song) async {
+    await handler.playSong(song);
+  }
+
+  /// Play a queue of songs
+  Future<void> playQueue(List<QuickPick> songs, {int startIndex = 0}) async {
+    await handler.playQueue(songs, startIndex: startIndex);
+  }
+
+  /// Play/pause toggle
+  Future<void> playPause() async {
+    if (handler.isPlaying) {
+      await handler.pause();
+    } else {
+      await handler.play();
+    }
+  }
+
+  /// Pause playback
+  Future<void> pause() async {
+    await handler.pause();
+  }
+
+  /// Resume playback
+  Future<void> play() async {
+    await handler.play();
+  }
+
+  /// Stop playback
+  Future<void> stop() async {
+    await handler.stop();
+  }
+
+  /// Seek to position
+  Future<void> seek(Duration position) async {
+    await handler.seek(position);
+  }
+
+  /// Skip to next song - ADD THIS METHOD
+  Future<void> skipToNext() async {
+    await handler.skipToNext();
+  }
+
+  /// Skip to previous song - ADD THIS METHOD
+  Future<void> skipToPrevious() async {
+    await handler.skipToPrevious();
+  }
+
+  /// Fast forward 10 seconds
+  Future<void> fastForward() async {
+    await handler.fastForward();
+  }
+
+  /// Rewind 10 seconds
+  Future<void> rewind() async {
+    await handler.rewind();
+  }
+
+  /// Add a song to the queue
+  Future<void> addToQueue(QuickPick song) async {
+    try {
+      final mediaItem = audio_service.MediaItem(
+        id: song.videoId,
+        title: song.title,
+        artist: song.artists,
+        artUri:
+            song.thumbnail.isNotEmpty &&
+                (song.thumbnail.startsWith('http://') ||
+                    song.thumbnail.startsWith('https://'))
+            ? Uri.parse(song.thumbnail)
+            : null,
+        duration: song.duration != null
+            ? _parseDurationString(song.duration!)
+            : null,
+      );
+
+      await handler.addQueueItem(mediaItem);
+      print('✅ Added to queue: ${song.title}');
+    } catch (e) {
+      print('❌ Error adding to queue: $e');
+      rethrow;
+    }
+  }
+
+  Duration? _parseDurationString(String durationStr) {
+    final parts = durationStr.split(':');
+    if (parts.length != 2) return null;
+    final minutes = int.tryParse(parts[0]) ?? 0;
+    final seconds = int.tryParse(parts[1]) ?? 0;
+    return Duration(minutes: minutes, seconds: seconds);
+  }
+
+  // ==================== STREAMS ====================
+
+  Stream<audio_service.MediaItem?> get mediaItemStream => handler.mediaItem;
+  Stream<audio_service.PlaybackState> get playbackStateStream =>
+      handler.playbackState;
+  Stream<Duration> get positionStream => handler.positionStream;
+  Stream<Duration?> get durationStream => handler.durationStream;
+
+  // ==================== GETTERS ====================
+
+  bool get isPlaying => handler.isPlaying;
+  Duration get position => handler.position;
+  Duration? get duration => handler.duration;
+  audio_service.MediaItem? get currentMediaItem => handler.mediaItem.value;
+}
