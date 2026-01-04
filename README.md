@@ -25,8 +25,10 @@ VibeFlow reimagines music listening as a social experience. Built with Flutter, 
 
 ### Music Playback
 * **High-quality audio streaming** with adaptive bitrate
+* 
 ~~* **Offline mode** - Download your favorite tracks for offline listening~~
 * **Smart queue management** - Create and manage multiple playback queues
+*  
 ~~* **Gapless playback** - Seamless transitions between tracks~~
 ~~* **Audio effects**~~  
 ~~  - Equalizer with presets~~  
