@@ -1,13 +1,14 @@
 // lib/widgets/search_suggestions_widget.dart
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:vibeflow/api_base/yt_music_search_suggestor.dart';
-import 'package:vibeflow/constants/app_colors.dart';
 import 'package:vibeflow/constants/app_spacing.dart';
 import 'package:vibeflow/constants/app_typography.dart';
+import 'package:vibeflow/constants/theme_colors.dart';
 
 /// Widget that displays search suggestions or recent searches
 /// Shows history when query is empty, suggestions when typing
-class SearchSuggestionsWidget extends StatefulWidget {
+class SearchSuggestionsWidget extends ConsumerStatefulWidget {
   final String query;
   final Function(String) onSuggestionTap;
   final VoidCallback? onClearHistory;
@@ -20,11 +21,12 @@ class SearchSuggestionsWidget extends StatefulWidget {
   }) : super(key: key);
 
   @override
-  State<SearchSuggestionsWidget> createState() =>
+  ConsumerState<SearchSuggestionsWidget> createState() =>
       _SearchSuggestionsWidgetState();
 }
 
-class _SearchSuggestionsWidgetState extends State<SearchSuggestionsWidget> {
+class _SearchSuggestionsWidgetState
+    extends ConsumerState<SearchSuggestionsWidget> {
   final YTMusicSuggestionsHelper _suggestionsHelper =
       YTMusicSuggestionsHelper();
   List<SearchSuggestion> _suggestions = [];
@@ -89,11 +91,17 @@ class _SearchSuggestionsWidgetState extends State<SearchSuggestionsWidget> {
 
   @override
   Widget build(BuildContext context) {
+    final backgroundColor = ref.watch(themeBackgroundColorProvider);
+    final textPrimaryColor = ref.watch(themeTextPrimaryColorProvider);
+    final textSecondaryColor = ref.watch(themeTextSecondaryColorProvider);
+    final accentColor = ref.watch(themeAccentColorProvider);
+    final cardBackgroundColor = ref.watch(themeCardBackgroundColorProvider);
+
     final isEmpty = widget.query.trim().isEmpty;
     final hasHistory = _suggestions.any((s) => s.isHistory);
 
     return Container(
-      color: AppColors.background,
+      color: backgroundColor,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -114,6 +122,7 @@ class _SearchSuggestionsWidgetState extends State<SearchSuggestionsWidget> {
                     style: AppTypography.sectionHeader.copyWith(
                       fontSize: 14,
                       fontWeight: FontWeight.w600,
+                      color: textPrimaryColor,
                     ),
                   ),
                   TextButton(
@@ -129,7 +138,7 @@ class _SearchSuggestionsWidgetState extends State<SearchSuggestionsWidget> {
                     child: Text(
                       'Clear All',
                       style: AppTypography.caption.copyWith(
-                        color: AppColors.accent,
+                        color: accentColor,
                         fontSize: 12,
                       ),
                     ),
@@ -140,11 +149,11 @@ class _SearchSuggestionsWidgetState extends State<SearchSuggestionsWidget> {
 
           // Loading indicator
           if (_isLoading)
-            const Padding(
-              padding: EdgeInsets.all(AppSpacing.lg),
+            Padding(
+              padding: const EdgeInsets.all(AppSpacing.lg),
               child: Center(
                 child: CircularProgressIndicator(
-                  color: AppColors.textSecondary,
+                  color: textSecondaryColor,
                   strokeWidth: 2,
                 ),
               ),
@@ -161,7 +170,13 @@ class _SearchSuggestionsWidgetState extends State<SearchSuggestionsWidget> {
                 itemCount: _suggestions.length,
                 itemBuilder: (context, index) {
                   final suggestion = _suggestions[index];
-                  return _buildSuggestionItem(suggestion);
+                  return _buildSuggestionItem(
+                    suggestion,
+                    textPrimaryColor,
+                    textSecondaryColor,
+                    accentColor,
+                    cardBackgroundColor,
+                  );
                 },
               ),
             ),
@@ -178,20 +193,20 @@ class _SearchSuggestionsWidgetState extends State<SearchSuggestionsWidget> {
                       Icon(
                         Icons.history,
                         size: 56,
-                        color: AppColors.textSecondary.withOpacity(0.4),
+                        color: textSecondaryColor.withOpacity(0.4),
                       ),
                       const SizedBox(height: 16),
                       Text(
                         'No recent searches',
                         style: AppTypography.subtitle.copyWith(
-                          color: AppColors.textSecondary,
+                          color: textSecondaryColor,
                         ),
                       ),
                       const SizedBox(height: 6),
                       Text(
                         'Your search history will appear here',
                         style: AppTypography.caption.copyWith(
-                          color: AppColors.textSecondary.withOpacity(0.7),
+                          color: textSecondaryColor.withOpacity(0.7),
                           fontSize: 12,
                         ),
                       ),
@@ -205,7 +220,13 @@ class _SearchSuggestionsWidgetState extends State<SearchSuggestionsWidget> {
     );
   }
 
-  Widget _buildSuggestionItem(SearchSuggestion suggestion) {
+  Widget _buildSuggestionItem(
+    SearchSuggestion suggestion,
+    Color textPrimaryColor,
+    Color textSecondaryColor,
+    Color accentColor,
+    Color cardBackgroundColor,
+  ) {
     return Material(
       color: Colors.transparent,
       child: InkWell(
@@ -223,15 +244,15 @@ class _SearchSuggestionsWidgetState extends State<SearchSuggestionsWidget> {
                 height: 40,
                 decoration: BoxDecoration(
                   color: suggestion.isHistory
-                      ? AppColors.accent.withOpacity(0.12)
-                      : AppColors.cardBackground,
+                      ? accentColor.withOpacity(0.12)
+                      : cardBackgroundColor,
                   borderRadius: BorderRadius.circular(20),
                 ),
                 child: Icon(
                   suggestion.isHistory ? Icons.history : Icons.search,
                   color: suggestion.isHistory
-                      ? AppColors.accent
-                      : AppColors.textSecondary,
+                      ? accentColor
+                      : textSecondaryColor,
                   size: 20,
                 ),
               ),
@@ -242,7 +263,7 @@ class _SearchSuggestionsWidgetState extends State<SearchSuggestionsWidget> {
                 child: Text(
                   suggestion.text,
                   style: AppTypography.songTitle.copyWith(
-                    color: AppColors.textPrimary,
+                    color: textPrimaryColor,
                     fontSize: 14,
                   ),
                   maxLines: 1,
@@ -253,11 +274,7 @@ class _SearchSuggestionsWidgetState extends State<SearchSuggestionsWidget> {
               // Actions
               if (suggestion.isHistory)
                 IconButton(
-                  icon: const Icon(
-                    Icons.close,
-                    size: 18,
-                    color: AppColors.textSecondary,
-                  ),
+                  icon: Icon(Icons.close, size: 18, color: textSecondaryColor),
                   onPressed: () => _removeHistoryItem(suggestion.text),
                   splashRadius: 20,
                   padding: const EdgeInsets.all(8),
@@ -267,7 +284,7 @@ class _SearchSuggestionsWidgetState extends State<SearchSuggestionsWidget> {
                 Icon(
                   Icons.north_west,
                   size: 16,
-                  color: AppColors.textSecondary.withOpacity(0.6),
+                  color: textSecondaryColor.withOpacity(0.6),
                 ),
             ],
           ),
@@ -278,7 +295,7 @@ class _SearchSuggestionsWidgetState extends State<SearchSuggestionsWidget> {
 }
 
 /// Compact version for use in overlays or dropdowns
-class CompactSearchSuggestions extends StatelessWidget {
+class CompactSearchSuggestions extends ConsumerWidget {
   final String query;
   final Function(String) onSuggestionTap;
   final int maxItems;
@@ -291,11 +308,13 @@ class CompactSearchSuggestions extends StatelessWidget {
   }) : super(key: key);
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    final cardBackgroundColor = ref.watch(themeCardBackgroundColorProvider);
+
     return Container(
       constraints: const BoxConstraints(maxHeight: 400),
       decoration: BoxDecoration(
-        color: AppColors.cardBackground,
+        color: cardBackgroundColor,
         borderRadius: BorderRadius.circular(12),
         boxShadow: [
           BoxShadow(

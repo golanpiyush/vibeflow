@@ -7,6 +7,7 @@ import 'package:vibeflow/models/quick_picks_model.dart';
 import 'package:vibeflow/pages/player_page.dart';
 import 'package:vibeflow/services/audio_service.dart';
 import 'package:vibeflow/utils/page_transitions.dart';
+import 'package:lottie/lottie.dart';
 
 class SavedSongsScreen extends StatefulWidget {
   const SavedSongsScreen({Key? key}) : super(key: key);
@@ -390,10 +391,12 @@ class _SavedSongsScreenState extends State<SavedSongsScreen> {
                           child: Column(
                             mainAxisAlignment: MainAxisAlignment.center,
                             children: [
-                              Icon(
-                                Icons.favorite_border,
-                                size: 64,
-                                color: Colors.white.withOpacity(0.3),
+                              Lottie.asset(
+                                'assets/animations/not_found.json',
+                                width: 380,
+                                height: 380,
+                                repeat: true,
+                                fit: BoxFit.contain,
                               ),
                               const SizedBox(height: 16),
                               Text(

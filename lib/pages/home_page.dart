@@ -1,22 +1,38 @@
 // lib/pages/home_page.dart
+// ignore_for_file: unused_local_variable
+
 import 'dart:async';
 
 import 'package:audio_service/audio_service.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:miniplayer/miniplayer.dart';
 import 'package:vibeflow/api_base/yt_music_search_suggestor.dart';
 import 'package:vibeflow/api_base/ytmusic_albums_scraper.dart';
 import 'package:vibeflow/api_base/ytmusic_search_helper.dart';
+import 'package:vibeflow/constants/theme_colors.dart';
+import 'package:vibeflow/database/listening_activity_service.dart';
 import 'package:vibeflow/models/song_model.dart';
-import 'package:vibeflow/pages/album_page.dart';
+import 'package:vibeflow/pages/access_code_management_screen.dart';
+import 'package:vibeflow/pages/album_view.dart';
 import 'package:vibeflow/pages/appearance_page.dart';
-import 'package:vibeflow/pages/artist_page.dart';
+import 'package:vibeflow/pages/artist_view.dart';
+import 'package:vibeflow/pages/authOnboard/Screens/social_feed_page.dart';
+import 'package:vibeflow/pages/authOnboard/access_code_screen.dart';
+import 'package:vibeflow/pages/subpages/songs/albums.dart';
+import 'package:vibeflow/pages/subpages/songs/albums_grid_page.dart';
+import 'package:vibeflow/pages/subpages/songs/artists.dart';
+import 'package:vibeflow/pages/subpages/songs/artists_grid_page.dart';
+import 'package:vibeflow/pages/subpages/songs/playlists.dart';
 import 'package:vibeflow/pages/subpages/songs/savedSongs.dart';
 import 'package:vibeflow/services/audio_service.dart';
 import 'package:vibeflow/services/last_played_service.dart';
+import 'package:vibeflow/utils/material_transitions.dart';
 import 'package:vibeflow/utils/page_transitions.dart';
+import 'package:vibeflow/utils/theme_provider.dart';
+import 'package:vibeflow/widgets/recent_listening_speed_dial.dart';
 import 'package:vibeflow/widgets/search_suggestions_widget.dart';
-import 'package:youtube_explode_dart/youtube_explode_dart.dart';
+import 'package:vibeflow/widgets/shimmer_loadings.dart';
 import 'package:vibeflow/api_base/ytmusic_artists_scraper.dart';
 import 'package:vibeflow/api_base/scrapper.dart';
 import 'package:vibeflow/constants/app_colors.dart';
@@ -27,23 +43,19 @@ import 'package:vibeflow/models/artist_model.dart';
 import 'package:vibeflow/models/quick_picks_model.dart';
 import 'package:vibeflow/pages/player_page.dart';
 
-class HomePage extends StatefulWidget {
+class HomePage extends ConsumerStatefulWidget {
   const HomePage({Key? key}) : super(key: key);
-
   @override
-  State<HomePage> createState() => _HomePageState();
+  ConsumerState<HomePage> createState() => _HomePageState();
 }
 
-class _HomePageState extends State<HomePage> {
+class _HomePageState extends ConsumerState<HomePage> {
   final ScrollController _scrollController = ScrollController();
   final YouTubeMusicScraper _scraper = YouTubeMusicScraper();
   final TextEditingController _searchController = TextEditingController();
   final FocusNode _searchFocusNode = FocusNode();
 
   late final ValueNotifier<QuickPick?> _lastPlayedNotifier;
-
-  // Only use YoutubeExplode - remove YTMusic
-  late final YoutubeExplode _yt;
 
   Timer? _debounceTimer;
   final Duration _debounceDuration = const Duration(milliseconds: 500);
@@ -77,7 +89,6 @@ class _HomePageState extends State<HomePage> {
   @override
   void initState() {
     super.initState();
-    _yt = YoutubeExplode();
     _albumsScraper = YTMusicAlbumsScraper();
     _artistsScraper = YTMusicArtistsScraper(); // Initialize
     _searchHelper = YTMusicSearchHelper();
@@ -94,6 +105,7 @@ class _HomePageState extends State<HomePage> {
         _loadQuickPicks(),
         _loadAlbums(),
         _loadArtists(),
+        _fetchRandomArtists(),
         _loadLastPlayedSong(),
       ]);
     } catch (e) {
@@ -121,7 +133,7 @@ class _HomePageState extends State<HomePage> {
     setState(() => isLoadingAlbums = true);
 
     try {
-      final albums = await _albumsScraper.getTrendingAlbums(limit: 20);
+      final albums = await _albumsScraper.getMixedRandomAlbums(limit: 25);
 
       print('✅ Found ${albums.length} albums');
 
@@ -159,6 +171,41 @@ class _HomePageState extends State<HomePage> {
     final lastPlayed = await LastPlayedService.getLastPlayed();
     if (mounted) {
       _lastPlayedNotifier.value = lastPlayed;
+    }
+  }
+
+  // Method to fetch random artists with images
+  Future<void> _fetchRandomArtists() async {
+    setState(() {
+      isLoadingArtists = true;
+    });
+
+    try {
+      final scraper = YTMusicArtistsScraper();
+
+      // Fetch more artists to ensure we get 25+ with images
+      final artists = await scraper.getRandomArtists(count: 50);
+
+      // Filter to only artists with profile images
+      final artistsWithImages = artists
+          .where(
+            (artist) =>
+                artist.profileImage != null && artist.profileImage!.isNotEmpty,
+          )
+          .toList();
+
+      // Take at least 25, or all if less
+      setState(() {
+        similarArtists = artistsWithImages.take(30).toList();
+        isLoadingArtists = false;
+      });
+
+      print('✅ Loaded ${similarArtists.length} artists with images');
+    } catch (e) {
+      print('❌ Error fetching random artists: $e');
+      setState(() {
+        isLoadingArtists = false;
+      });
     }
   }
 
@@ -244,8 +291,12 @@ class _HomePageState extends State<HomePage> {
 
   @override
   Widget build(BuildContext context) {
+    final backgroundColor = ref.watch(themeBackgroundColorProvider);
+    final iconActiveColor = ref.watch(themeIconActiveColorProvider);
+    final iconInactiveColor = ref.watch(themeTextSecondaryColorProvider);
+
     return Scaffold(
-      backgroundColor: AppColors.background,
+      backgroundColor: backgroundColor,
       body: Stack(
         children: [
           // Main content
@@ -257,7 +308,7 @@ class _HomePageState extends State<HomePage> {
                   child: Column(
                     children: [
                       const SizedBox(height: AppSpacing.xxxl),
-                      _buildTopBar(),
+                      _buildTopBar(ref),
                       Expanded(
                         child: isSearchMode
                             ? _buildSearchView()
@@ -267,7 +318,9 @@ class _HomePageState extends State<HomePage> {
                                   left: AppSpacing.lg,
                                   right: AppSpacing.lg,
                                   top: AppSpacing.lg,
-                                  bottom: _lastPlayedSong != null ? 90 : 20,
+                                  bottom: _lastPlayedSong != null
+                                      ? 180
+                                      : 120, // Increased from 90/20 to 180/120
                                 ),
                                 child: Column(
                                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -277,7 +330,9 @@ class _HomePageState extends State<HomePage> {
                                     _buildAlbums(),
                                     const SizedBox(height: AppSpacing.xxxl),
                                     _buildSimilarArtists(),
-                                    const SizedBox(height: 100),
+                                    const SizedBox(
+                                      height: 20,
+                                    ), // Additional spacing after artists
                                   ],
                                 ),
                               ),
@@ -327,9 +382,24 @@ class _HomePageState extends State<HomePage> {
           ),
         ],
       ),
-      floatingActionButton: _lastPlayedSong != null
-          ? null // Hide FAB when miniplayer is showing
-          : FloatingActionButton(
+      // FLOATING ACTION BUTTONS - Stack for multiple FABs
+      floatingActionButton: Stack(
+        children: [
+          // Recent Listening Speed Dial - Center position
+          Positioned(
+            bottom: 40,
+            left:
+                MediaQuery.of(context).size.width / 2 -
+                28, // Center it (28 = half of FAB width)
+            child: const RecentListeningSpeedDial(),
+          ),
+
+          // Search FAB - Right position
+          Positioned(
+            bottom: 40,
+            right: 16,
+            child: FloatingActionButton(
+              heroTag: 'search_fab',
               onPressed: () {
                 setState(() {
                   isSearchMode = !isSearchMode;
@@ -342,157 +412,272 @@ class _HomePageState extends State<HomePage> {
                   }
                 });
               },
-              backgroundColor: AppColors.iconActive,
+              backgroundColor: iconActiveColor,
               child: Icon(
                 isSearchMode ? Icons.close : Icons.search,
-                color: AppColors.background,
+                color: backgroundColor,
               ),
             ),
+          ),
+        ],
+      ),
     );
   }
 
   // Updated _buildSearchView method
+  // Update the _buildSearchView method to use theme colors
   Widget _buildSearchView() {
-    // Show suggestions when:
-    // 1. Search field has text BUT no search results yet (typing)
-    // 2. OR search field is empty (show history)
+    final textPrimaryColor = ref.watch(themeTextPrimaryColorProvider);
+    final textSecondaryColor = ref.watch(themeTextSecondaryColorProvider);
+    final accentColor = ref.watch(themeAccentColorProvider);
     final showSuggestions = searchResults.isEmpty && !isSearching;
 
     return Column(
       children: [
-        // Search suggestions (when not searching and no results)
         if (showSuggestions)
           Expanded(
-            child: SearchSuggestionsWidget(
-              key: ValueKey(_currentQuery), // Force rebuild on query change
-              query: _currentQuery,
-              onSuggestionTap: (suggestion) {
-                // Update search field
-                _searchController.text = suggestion;
-                setState(() {
-                  _currentQuery = suggestion;
-                });
-
-                // Perform immediate search
-                _debounceTimer?.cancel();
-                _performSearchImmediately(suggestion);
-
-                // Unfocus keyboard
-                FocusScope.of(context).unfocus();
-              },
-              onClearHistory: () {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(
-                    content: const Text('Search history cleared'),
-                    duration: const Duration(seconds: 2),
-                    backgroundColor: AppColors.accent,
-                    behavior: SnackBarBehavior.floating,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(8),
+            child: AnimatedSwitcher(
+              duration: const Duration(milliseconds: 300),
+              switchInCurve: Curves.easeOutCubic,
+              switchOutCurve: Curves.easeInCubic,
+              child: SearchSuggestionsWidget(
+                key: ValueKey(_currentQuery),
+                query: _currentQuery,
+                onSuggestionTap: (suggestion) {
+                  _searchController.text = suggestion;
+                  setState(() {
+                    _currentQuery = suggestion;
+                  });
+                  _debounceTimer?.cancel();
+                  _performSearchImmediately(suggestion);
+                  FocusScope.of(context).unfocus();
+                },
+                onClearHistory: () {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: const Text('Search history cleared'),
+                      duration: const Duration(seconds: 2),
+                      backgroundColor: accentColor,
+                      behavior: SnackBarBehavior.floating,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      margin: const EdgeInsets.all(16),
                     ),
-                    margin: const EdgeInsets.all(16),
-                  ),
-                );
-              },
+                  );
+                },
+              ),
             ),
           )
         else
           Expanded(
-            child: SingleChildScrollView(
-              padding: const EdgeInsets.all(AppSpacing.lg),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  // Loading state
-                  if (isSearching)
-                    const Center(
-                      child: CircularProgressIndicator(
-                        color: AppColors.textPrimary,
+            child: AnimatedSwitcher(
+              duration: const Duration(milliseconds: 400),
+              switchInCurve: Curves.easeOutCubic,
+              switchOutCurve: Curves.easeInCubic,
+              transitionBuilder: (child, animation) {
+                return FadeTransition(
+                  opacity: animation,
+                  child: SlideTransition(
+                    position:
+                        Tween<Offset>(
+                          begin: const Offset(0, 0.02),
+                          end: Offset.zero,
+                        ).animate(
+                          CurvedAnimation(
+                            parent: animation,
+                            curve: Curves.easeOutCubic,
+                          ),
+                        ),
+                    child: child,
+                  ),
+                );
+              },
+              child: isSearching
+                  ? ShimmerLoading(
+                      key: const ValueKey('loading'),
+                      child: SingleChildScrollView(
+                        padding: const EdgeInsets.all(AppSpacing.lg),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            SkeletonBox(width: 80, height: 24, borderRadius: 4),
+                            const SizedBox(height: AppSpacing.md),
+                            ...List.generate(8, (index) {
+                              return Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 16,
+                                  vertical: 8,
+                                ),
+                                margin: const EdgeInsets.only(bottom: 8),
+                                height: 70,
+                                child: Row(
+                                  children: [
+                                    SkeletonBox(
+                                      width: 54,
+                                      height: 54,
+                                      borderRadius: 6,
+                                    ),
+                                    const SizedBox(width: 12),
+                                    Expanded(
+                                      child: Column(
+                                        mainAxisAlignment:
+                                            MainAxisAlignment.center,
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
+                                        children: [
+                                          SkeletonBox(
+                                            width: double.infinity,
+                                            height: 16,
+                                            borderRadius: 4,
+                                          ),
+                                          const SizedBox(height: 6),
+                                          SkeletonBox(
+                                            width: 150,
+                                            height: 12,
+                                            borderRadius: 4,
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                    const SizedBox(width: 8),
+                                    SkeletonBox(
+                                      width: 35,
+                                      height: 11,
+                                      borderRadius: 4,
+                                    ),
+                                  ],
+                                ),
+                              );
+                            }),
+                          ],
+                        ),
                       ),
-                    ),
-
-                  // Search results
-                  if (!isSearching && searchResults.isNotEmpty) ...[
-                    Text('Results', style: AppTypography.sectionHeader),
-                    const SizedBox(height: AppSpacing.md),
-                    ...searchResults.map((song) {
-                      final durationInSeconds = song.duration != null
-                          ? _parseDurationToSeconds(song.duration!)
-                          : null;
-
-                      return _buildSearchResultItem(
-                        videoId: song.videoId,
-                        title: song.title,
-                        subtitle: song.artists.join(', '),
-                        thumbnail: song.thumbnail,
-                        duration: durationInSeconds,
-                        formattedDuration: song.duration,
-                        onTap: () async {
-                          // Save search to history when user taps a result
-                          final helper = YTMusicSuggestionsHelper();
-                          await helper.saveToHistory(_searchController.text);
-                          helper.dispose();
-
-                          final quickPick = QuickPick(
-                            videoId: song.videoId,
-                            title: song.title,
-                            artists: song.artists.join(', '),
-                            thumbnail: song.thumbnail,
-                            duration: song.duration,
-                          );
-
-                          // ✅ Save as last played and update state
-                          await LastPlayedService.saveLastPlayed(quickPick);
-                          setState(() {
-                            _lastPlayedSong = quickPick;
-                          });
-
-                          Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                              builder: (context) =>
-                                  PlayerScreen(song: quickPick),
+                    )
+                  : searchResults.isNotEmpty
+                  ? SingleChildScrollView(
+                      key: ValueKey('results-${searchResults.length}'),
+                      padding: const EdgeInsets.all(AppSpacing.lg),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          TweenAnimationBuilder<double>(
+                            duration: const Duration(milliseconds: 350),
+                            curve: Curves.easeOutCubic,
+                            tween: Tween(begin: 0.0, end: 1.0),
+                            builder: (context, value, child) {
+                              return Opacity(
+                                opacity: value,
+                                child: Transform.translate(
+                                  offset: Offset(0, 10 * (1 - value)),
+                                  child: child,
+                                ),
+                              );
+                            },
+                            child: Text(
+                              'Results',
+                              style: AppTypography.sectionHeader.copyWith(
+                                color: textPrimaryColor,
+                              ),
                             ),
-                          );
-                        },
-                      );
-                    }).toList(),
-                  ],
+                          ),
+                          const SizedBox(height: AppSpacing.md),
+                          ...searchResults.asMap().entries.map((entry) {
+                            final index = entry.key;
+                            final song = entry.value;
+                            final durationInSeconds = song.duration != null
+                                ? _parseDurationToSeconds(song.duration!)
+                                : null;
 
-                  // Empty state
-                  if (!isSearching &&
-                      searchResults.isEmpty &&
-                      _searchController.text.isNotEmpty)
-                    Center(
+                            return TweenAnimationBuilder<double>(
+                              duration: Duration(
+                                milliseconds: 350 + (index * 40),
+                              ),
+                              curve: Curves.easeOutCubic,
+                              tween: Tween(begin: 0.0, end: 1.0),
+                              builder: (context, value, child) {
+                                return Opacity(
+                                  opacity: value,
+                                  child: Transform.translate(
+                                    offset: Offset(0, 15 * (1 - value)),
+                                    child: child,
+                                  ),
+                                );
+                              },
+                              child: _buildSearchResultItem(
+                                videoId: song.videoId,
+                                title: song.title,
+                                subtitle: song.artists.join(', '),
+                                thumbnail: song.thumbnail,
+                                duration: durationInSeconds,
+                                formattedDuration: song.duration,
+                                onTap: () async {
+                                  final helper = YTMusicSuggestionsHelper();
+                                  await helper.saveToHistory(
+                                    _searchController.text,
+                                  );
+                                  helper.dispose();
+
+                                  final quickPick = QuickPick(
+                                    videoId: song.videoId,
+                                    title: song.title,
+                                    artists: song.artists.join(', '),
+                                    thumbnail: song.thumbnail,
+                                    duration: song.duration,
+                                  );
+
+                                  await LastPlayedService.saveLastPlayed(
+                                    quickPick,
+                                  );
+                                  setState(() {
+                                    _lastPlayedSong = quickPick;
+                                  });
+
+                                  Navigator.push(
+                                    context,
+                                    MaterialPageRoute(
+                                      builder: (context) =>
+                                          PlayerScreen(song: quickPick),
+                                    ),
+                                  );
+                                },
+                                ref: ref,
+                              ),
+                            );
+                          }).toList(),
+                        ],
+                      ),
+                    )
+                  : Center(
+                      key: const ValueKey('empty'),
                       child: Padding(
                         padding: const EdgeInsets.all(32.0),
                         child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
                           children: [
                             Icon(
                               Icons.music_off,
                               size: 64,
-                              color: AppColors.textSecondary.withOpacity(0.5),
+                              color: textSecondaryColor.withOpacity(0.5),
                             ),
                             const SizedBox(height: 16),
                             Text(
                               'No results found',
                               style: AppTypography.subtitle.copyWith(
-                                color: AppColors.textSecondary,
+                                color: textSecondaryColor,
                               ),
                             ),
                             const SizedBox(height: 8),
                             Text(
                               'Try a different search term',
                               style: AppTypography.caption.copyWith(
-                                color: AppColors.textSecondary.withOpacity(0.7),
+                                color: textSecondaryColor.withOpacity(0.7),
                               ),
                             ),
                           ],
                         ),
                       ),
                     ),
-                ],
-              ),
             ),
           ),
       ],
@@ -508,7 +693,15 @@ class _HomePageState extends State<HomePage> {
     int? duration,
     String? formattedDuration,
     required VoidCallback onTap,
+    required WidgetRef ref,
   }) {
+    final cardBackgroundColor = ref.watch(themeCardBackgroundColorProvider);
+    final textPrimaryColor = ref.watch(themeTextPrimaryColorProvider);
+    final textSecondaryColor = ref.watch(themeTextSecondaryColorProvider);
+    final thumbnailRadius = ref.watch(
+      thumbnailRadiusProvider,
+    ); // Get the radius
+
     final displayDuration =
         formattedDuration ??
         (duration != null ? _formatDuration(duration) : '');
@@ -521,7 +714,6 @@ class _HomePageState extends State<HomePage> {
         height: 70,
         child: Row(
           children: [
-            // Wrap with Hero for smooth transition
             Hero(
               tag: 'thumbnail-search-$videoId',
               child: Container(
@@ -529,10 +721,10 @@ class _HomePageState extends State<HomePage> {
                 height: 54,
                 decoration: BoxDecoration(
                   borderRadius: BorderRadius.circular(6),
-                  color: AppColors.cardBackground,
+                  color: cardBackgroundColor,
                 ),
                 child: ClipRRect(
-                  borderRadius: BorderRadius.circular(6),
+                  borderRadius: BorderRadius.circular(54 * thumbnailRadius),
                   child: thumbnail.isNotEmpty
                       ? Image.network(
                           thumbnail,
@@ -554,6 +746,7 @@ class _HomePageState extends State<HomePage> {
                     title,
                     style: AppTypography.songTitle.copyWith(
                       fontWeight: FontWeight.w500,
+                      color: textPrimaryColor,
                     ),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
@@ -562,7 +755,7 @@ class _HomePageState extends State<HomePage> {
                   Text(
                     subtitle,
                     style: AppTypography.caption.copyWith(
-                      color: AppColors.textSecondary,
+                      color: textSecondaryColor,
                       fontSize: 12,
                     ),
                     maxLines: 1,
@@ -577,7 +770,7 @@ class _HomePageState extends State<HomePage> {
                 child: Text(
                   displayDuration,
                   style: AppTypography.caption.copyWith(
-                    color: AppColors.textSecondary,
+                    color: textSecondaryColor,
                     fontSize: 11,
                   ),
                 ),
@@ -609,16 +802,33 @@ class _HomePageState extends State<HomePage> {
   }
 
   Widget _buildThumbnailFallback() {
+    // This method is called from places where ref isn't available
+    // You need to either pass ref or use a different approach
     return Container(
-      color: AppColors.cardBackground,
+      color: Colors.grey[800],
       child: const Center(
-        child: Icon(Icons.music_note, color: AppColors.iconInactive, size: 20),
+        child: Icon(Icons.music_note, color: Colors.grey, size: 20),
       ),
     );
   }
 
   Widget _buildSidebar(BuildContext context) {
     final double availableHeight = MediaQuery.of(context).size.height;
+    final iconActiveColor = ref.watch(themeIconActiveColorProvider);
+    final iconInactiveColor = ref.watch(themeTextSecondaryColorProvider);
+    final sidebarLabelColor = ref.watch(themeTextPrimaryColorProvider);
+    final sidebarLabelActiveColor = ref.watch(themeIconActiveColorProvider);
+
+    // Create theme-aware text styles
+    final sidebarLabelStyle = AppTypography.sidebarLabel.copyWith(
+      color: sidebarLabelColor,
+    );
+    final sidebarLabelActiveStyle = AppTypography.sidebarLabelActive.copyWith(
+      color: sidebarLabelActiveColor,
+    );
+
+    // Watch if user has access code
+    final hasAccessCodeAsync = ref.watch(hasAccessCodeProvider);
 
     return SizedBox(
       width: 65,
@@ -631,25 +841,101 @@ class _HomePageState extends State<HomePage> {
               icon: Icons.edit_square,
               label: '',
               isActive: true,
+              iconActiveColor: iconActiveColor,
+              iconInactiveColor: iconInactiveColor,
+              labelStyle: sidebarLabelActiveStyle,
               onTap: () {
                 Navigator.of(context).pushFade(const AppearancePage());
               },
             ),
             const SizedBox(height: 32),
-            _buildSidebarItem(label: 'Quick picks'),
+            _buildSidebarItem(
+              label: 'Quick picks',
+              iconActiveColor: iconActiveColor,
+              iconInactiveColor: iconInactiveColor,
+              labelStyle: sidebarLabelStyle,
+            ),
             const SizedBox(height: 24),
             _buildSidebarItem(
               label: 'Songs',
+              iconActiveColor: iconActiveColor,
+              iconInactiveColor: iconInactiveColor,
+              labelStyle: sidebarLabelStyle,
               onTap: () {
-                Navigator.of(context).pushFade(const SavedSongsScreen());
+                Navigator.of(context).pushMaterialVertical(
+                  const SavedSongsScreen(),
+                  slideUp: true,
+                  enableParallax: true,
+                );
               },
             ),
             const SizedBox(height: 24),
-            _buildSidebarItem(label: 'Playlists'),
+            _buildSidebarItem(
+              label: 'Playlists',
+              iconActiveColor: iconActiveColor,
+              iconInactiveColor: iconInactiveColor,
+              labelStyle: sidebarLabelStyle,
+              onTap: () {
+                Navigator.of(context).pushMaterialVertical(
+                  const IntegratedPlaylistsScreen(),
+                  slideUp: true,
+                  enableParallax: true,
+                );
+              },
+            ),
             const SizedBox(height: 24),
-            _buildSidebarItem(label: 'Artists'),
+            _buildSidebarItem(
+              label: 'Artists',
+              iconActiveColor: iconActiveColor,
+              iconInactiveColor: iconInactiveColor,
+              labelStyle: sidebarLabelStyle,
+              onTap: () {
+                Navigator.of(
+                  context,
+                ).pushMaterialVertical(const ArtistsGridPage(), slideUp: true);
+              },
+            ),
             const SizedBox(height: 24),
-            _buildSidebarItem(label: 'Albums'),
+            _buildSidebarItem(
+              label: 'Albums',
+              iconActiveColor: iconActiveColor,
+              iconInactiveColor: iconInactiveColor,
+              labelStyle: sidebarLabelStyle,
+              onTap: () {
+                Navigator.of(
+                  context,
+                ).pushMaterialVertical(const AlbumsGridPage(), slideUp: true);
+              },
+            ),
+
+            // Social Item - Only show if user has access code
+            hasAccessCodeAsync.when(
+              data: (hasAccessCode) {
+                if (!hasAccessCode) return const SizedBox.shrink();
+
+                return Column(
+                  children: [
+                    const SizedBox(height: 24),
+                    _buildSidebarItem(
+                      label: 'Social',
+                      iconActiveColor: iconActiveColor,
+                      iconInactiveColor: iconInactiveColor,
+                      labelStyle: sidebarLabelStyle,
+                      onTap: () {
+                        Navigator.of(context).pushMaterialVertical(
+                          const SocialScreen(),
+                          slideUp: true,
+                          enableParallax: true,
+                        );
+                      },
+                    ),
+                  ],
+                );
+              },
+              loading: () => const SizedBox.shrink(),
+              error: (_, __) => const SizedBox.shrink(),
+            ),
+
             const SizedBox(height: 40),
           ],
         ),
@@ -661,6 +947,9 @@ class _HomePageState extends State<HomePage> {
     IconData? icon,
     required String label,
     bool isActive = false,
+    required Color iconActiveColor,
+    required Color iconInactiveColor,
+    required TextStyle labelStyle,
     VoidCallback? onTap,
   }) {
     return GestureDetector(
@@ -674,7 +963,7 @@ class _HomePageState extends State<HomePage> {
               Icon(
                 icon,
                 size: 28,
-                color: isActive ? AppColors.iconActive : AppColors.iconInactive,
+                color: isActive ? iconActiveColor : iconInactiveColor,
               ),
               const SizedBox(height: 16),
             ],
@@ -683,11 +972,7 @@ class _HomePageState extends State<HomePage> {
               child: Text(
                 label,
                 textAlign: TextAlign.center,
-                style:
-                    (isActive
-                            ? AppTypography.sidebarLabelActive
-                            : AppTypography.sidebarLabel)
-                        .copyWith(fontSize: 16),
+                style: labelStyle.copyWith(fontSize: 16),
               ),
             ),
           ],
@@ -696,41 +981,206 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
-  Widget _buildTopBar() {
+  Widget _buildTopBar(WidgetRef ref) {
+    final textPrimaryColor = ref.watch(themeTextPrimaryColorProvider);
+    final textSecondaryColor = ref.watch(themeTextSecondaryColorProvider);
+    final iconActiveColor = ref.watch(themeIconActiveColorProvider);
+    final backgroundColor = ref.watch(themeBackgroundColorProvider);
+
+    final pageTitleStyle = AppTypography.pageTitle.copyWith(
+      color: textPrimaryColor,
+    );
+    final hintStyle = AppTypography.pageTitle.copyWith(
+      color: textSecondaryColor.withOpacity(0.5),
+    );
+
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      color: backgroundColor,
       child: Row(
-        mainAxisAlignment: MainAxisAlignment.end,
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
+          // Left side - Back button in search mode, Access Code icon in normal mode
           if (isSearchMode)
-            Expanded(
-              child: TextField(
-                controller: _searchController,
-                focusNode: _searchFocusNode,
-                textAlign: TextAlign.right,
-                style: AppTypography.pageTitle,
-                decoration: InputDecoration(
-                  hintText: 'Enter a name',
-                  hintStyle: AppTypography.pageTitle.copyWith(
-                    color: AppColors.textSecondary.withOpacity(0.5),
-                  ),
-                  border: InputBorder.none,
-                  enabledBorder: InputBorder.none,
-                  focusedBorder: InputBorder.none,
-                ),
-                onChanged: (value) {
-                  _onSearchChanged(value);
-                },
-                onSubmitted: (value) {
-                  // Cancel debounce and search immediately
-                  _debounceTimer?.cancel();
-                  _performSearchImmediately(value);
-                  FocusScope.of(context).unfocus();
-                },
-              ),
+            IconButton(
+              onPressed: () {
+                setState(() {
+                  isSearchMode = false;
+                  _searchController.clear();
+                  _searchFocusNode.unfocus();
+                  searchResults = [];
+                });
+              },
+              icon: Icon(Icons.arrow_back, color: iconActiveColor, size: 28),
             )
           else
-            Text('Quick picks', style: AppTypography.pageTitle),
+            Consumer(
+              builder: (context, ref, child) {
+                final hasAccessCodeAsync = ref.watch(hasAccessCodeProvider);
+
+                return hasAccessCodeAsync.when(
+                  data: (hasAccessCode) {
+                    return GestureDetector(
+                      onTap: hasAccessCode
+                          ? () {
+                              Navigator.of(
+                                context,
+                              ).pushFade(const AccessCodeManagementScreen());
+                            }
+                          : () {
+                              // If no access code, show info or redirect to enter code
+                              _showNoAccessCodeDialog(context);
+                            },
+                      child: Stack(
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.all(8),
+                            decoration: BoxDecoration(
+                              color: hasAccessCode
+                                  ? Colors.deepPurple.withOpacity(0.1)
+                                  : Colors.grey.withOpacity(0.1),
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            child: Icon(
+                              hasAccessCode ? Icons.security : Icons.lock_open,
+                              color: hasAccessCode
+                                  ? Colors.deepPurple
+                                  : iconActiveColor,
+                              size: 24,
+                            ),
+                          ),
+                          // Badge for access code status
+                          if (hasAccessCode)
+                            Positioned(
+                              top: 0,
+                              right: 0,
+                              child: Container(
+                                padding: const EdgeInsets.all(2),
+                                decoration: const BoxDecoration(
+                                  color: Colors.green,
+                                  shape: BoxShape.circle,
+                                ),
+                                child: const Icon(
+                                  Icons.check,
+                                  size: 10,
+                                  color: Colors.white,
+                                ),
+                              ),
+                            ),
+                        ],
+                      ),
+                    );
+                  },
+                  loading: () => Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: Colors.grey.withOpacity(0.1),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: const SizedBox(
+                      width: 24,
+                      height: 24,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    ),
+                  ),
+                  error: (error, stackTrace) => GestureDetector(
+                    onTap: () {
+                      // Show error message
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: const Text(
+                            'Error checking access code status',
+                          ),
+                          backgroundColor: Colors.red,
+                        ),
+                      );
+                    },
+                    child: Container(
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        color: Colors.red.withOpacity(0.1),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Icon(
+                        Icons.error_outline,
+                        color: Colors.red,
+                        size: 24,
+                      ),
+                    ),
+                  ),
+                );
+              },
+            ),
+
+          // Middle content - takes available space
+          Expanded(
+            child: isSearchMode
+                ? TextField(
+                    controller: _searchController,
+                    focusNode: _searchFocusNode,
+                    textAlign: TextAlign.right,
+                    style: pageTitleStyle,
+                    decoration: InputDecoration(
+                      hintText: 'Search songs, artists, albums...',
+                      hintStyle: hintStyle,
+                      border: InputBorder.none,
+                      enabledBorder: InputBorder.none,
+                      focusedBorder: InputBorder.none,
+                      contentPadding: EdgeInsets.zero,
+                    ),
+                    onChanged: (value) {
+                      _onSearchChanged(value);
+                    },
+                    onSubmitted: (value) {
+                      _debounceTimer?.cancel();
+                      _performSearchImmediately(value);
+                      FocusScope.of(context).unfocus();
+                    },
+                  )
+                : Align(
+                    alignment: Alignment.centerRight,
+                    child: Text('Quick picks', style: pageTitleStyle),
+                  ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showNoAccessCodeDialog(BuildContext context) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('No Access Code'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('You don\'t have an access code yet.'),
+            const SizedBox(height: 8),
+            Text(
+              'Access code is required to manage access settings.',
+              style: TextStyle(color: Colors.grey.shade600, fontSize: 14),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              Navigator.of(context).pop();
+              Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (context) =>
+                      const AccessCodeScreen(showSkipButton: false),
+                ),
+              );
+            },
+            child: const Text('Enter Code'),
+          ),
         ],
       ),
     );
@@ -738,17 +1188,70 @@ class _HomePageState extends State<HomePage> {
 
   Widget _buildQuickPicks() {
     if (isLoadingQuickPicks) {
-      return const Center(
-        child: CircularProgressIndicator(color: AppColors.textPrimary),
+      return ShimmerLoading(
+        child: SizedBox(
+          height: 280,
+          child: PageView.builder(
+            controller: PageController(viewportFraction: 0.95),
+            itemCount: 2,
+            itemBuilder: (context, pageIndex) {
+              return Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 8.0),
+                child: Column(
+                  children: List.generate(
+                    4,
+                    (i) => Container(
+                      height: 70,
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 8,
+                      ),
+                      child: Row(
+                        children: [
+                          SkeletonBox(width: 54, height: 54, borderRadius: 12),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Column(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                // Title line 1
+                                SkeletonBox(
+                                  width: double.infinity,
+                                  height: 16,
+                                  borderRadius: 4,
+                                ),
+                                const SizedBox(height: 4),
+                                // Title line 2 (shorter - not all titles are 2 lines)
+                                SkeletonBox(
+                                  width: 180,
+                                  height: 16,
+                                  borderRadius: 4,
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              );
+            },
+          ),
+        ),
       );
     }
 
     if (quickPicks.isEmpty) {
+      final textPrimaryColor = ref.watch(themeTextPrimaryColorProvider);
       return Center(
-        child: Text('No songs available', style: AppTypography.subtitle),
+        child: Text(
+          'No songs available',
+          style: AppTypography.subtitle.copyWith(color: textPrimaryColor),
+        ),
       );
     }
-
     return SizedBox(
       height: 280,
       child: PageView.builder(
@@ -777,74 +1280,100 @@ class _HomePageState extends State<HomePage> {
   }
 
   Widget _buildQuickPickListItem(QuickPick quickPick) {
+    final textPrimaryColor = ref.watch(themeTextPrimaryColorProvider);
+    final textSecondaryColor = ref.watch(themeTextSecondaryColorProvider);
+    final cardBackgroundColor = ref.watch(themeCardBackgroundColorProvider);
+    final iconInactiveColor = ref.watch(themeTextSecondaryColorProvider);
+    final iconActiveColor = ref.watch(themeIconActiveColorProvider);
+    final thumbnailRadius = ref.watch(
+      thumbnailRadiusProvider,
+    ); // Get the radius
+
     return GestureDetector(
       onTap: () async {
-        // Save as last played
         await LastPlayedService.saveLastPlayed(quickPick);
         setState(() {
           _lastPlayedSong = quickPick;
         });
-
-        // Navigate with animation
         Navigator.push(
           context,
           PageRouteBuilder(
-            pageBuilder: (context, animation, secondaryAnimation) =>
-                PlayerScreen(
-                  song: quickPick,
-                  heroTag: 'thumbnail-${quickPick.videoId}',
-                ),
+            pageBuilder: (_, animation, __) => PlayerScreen(
+              song: quickPick,
+              heroTag: 'thumbnail-${quickPick.videoId}',
+            ),
             transitionDuration: const Duration(milliseconds: 600),
             reverseTransitionDuration: const Duration(milliseconds: 500),
-            transitionsBuilder:
-                (context, animation, secondaryAnimation, child) {
-                  final fadeAnimation = CurvedAnimation(
-                    parent: animation,
-                    curve: const Interval(0.0, 0.6, curve: Curves.easeOut),
+            transitionsBuilder: (_, animation, __, child) {
+              final fade = CurvedAnimation(
+                parent: animation,
+                curve: const Interval(0.0, 0.6, curve: Curves.easeOut),
+              );
+              final slide =
+                  Tween<Offset>(
+                    begin: const Offset(0, 1),
+                    end: Offset.zero,
+                  ).animate(
+                    CurvedAnimation(
+                      parent: animation,
+                      curve: Curves.easeOutCubic,
+                    ),
                   );
-
-                  final slideAnimation =
-                      Tween<Offset>(
-                        begin: const Offset(0.0, 1.0),
-                        end: Offset.zero,
-                      ).animate(
-                        CurvedAnimation(
-                          parent: animation,
-                          curve: Curves.easeOutCubic,
-                        ),
-                      );
-
-                  return SlideTransition(
-                    position: slideAnimation,
-                    child: FadeTransition(opacity: fadeAnimation, child: child),
-                  );
-                },
+              return SlideTransition(
+                position: slide,
+                child: FadeTransition(opacity: fade, child: child),
+              );
+            },
           ),
         );
       },
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
         height: 70,
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
         child: Row(
           children: [
             Hero(
               tag: 'thumbnail-${quickPick.videoId}',
-              child: Container(
-                width: 54,
-                height: 54,
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(6),
-                ),
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(6),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(54 * thumbnailRadius),
+                child: SizedBox(
+                  width: 54,
+                  height: 54,
                   child: quickPick.thumbnail.isNotEmpty
                       ? Image.network(
                           quickPick.thumbnail,
                           fit: BoxFit.cover,
-                          errorBuilder: (context, error, stackTrace) =>
-                              _buildThumbnailFallback(),
+                          loadingBuilder: (context, child, loadingProgress) {
+                            if (loadingProgress == null) return child;
+                            return ShimmerLoading(
+                              child: SkeletonBox(
+                                width: 54,
+                                height: 54,
+                                borderRadius: 12,
+                              ),
+                            );
+                          },
+                          errorBuilder: (_, __, ___) => Container(
+                            color: cardBackgroundColor,
+                            child: Center(
+                              child: Icon(
+                                Icons.music_note,
+                                color: iconInactiveColor,
+                                size: 20,
+                              ),
+                            ),
+                          ),
                         )
-                      : _buildThumbnailFallback(),
+                      : Container(
+                          color: cardBackgroundColor,
+                          child: Center(
+                            child: Icon(
+                              Icons.music_note,
+                              color: iconInactiveColor,
+                              size: 20,
+                            ),
+                          ),
+                        ),
                 ),
               ),
             ),
@@ -856,66 +1385,102 @@ class _HomePageState extends State<HomePage> {
                 children: [
                   Text(
                     quickPick.title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
                     style: AppTypography.songTitle.copyWith(
                       fontWeight: FontWeight.w500,
+                      color: textPrimaryColor,
                     ),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
                   ),
-                  const SizedBox(height: 2),
+                  const SizedBox(height: 4),
                   Text(
                     quickPick.artists,
-                    style: AppTypography.caption.copyWith(
-                      color: AppColors.textSecondary,
-                      fontSize: 12,
-                    ),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
+                    style: AppTypography.caption.copyWith(
+                      color: textSecondaryColor,
+                      fontSize: 12,
+                    ),
                   ),
                 ],
               ),
             ),
-            if (quickPick.duration != null)
-              Padding(
-                padding: const EdgeInsets.only(left: 8),
-                child: Text(
-                  quickPick.duration.toString(),
-                  style: AppTypography.caption.copyWith(
-                    color: AppColors.textSecondary,
-                    fontSize: 11,
-                  ),
-                ),
-              ),
           ],
         ),
       ),
     );
   }
 
+  // Updated _buildQuickPicks method with skeleton
+
+  // Updated _buildAlbums method with skeleton
   Widget _buildAlbums() {
+    final textPrimaryColor = ref.watch(themeTextPrimaryColorProvider);
+    final iconActiveColor = ref.watch(themeIconActiveColorProvider);
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Padding(
-          padding: const EdgeInsets.only(left: 16), // Add padding here
+          padding: const EdgeInsets.only(left: 16),
           child: Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Text('Albums', style: AppTypography.sectionHeader),
+              Text(
+                'Albums',
+                style: AppTypography.sectionHeader.copyWith(
+                  color: textPrimaryColor,
+                ),
+              ),
               if (isLoadingAlbums)
-                const SizedBox(
+                SizedBox(
                   width: 16,
                   height: 16,
                   child: CircularProgressIndicator(
                     strokeWidth: 2,
-                    color: AppColors.iconActive,
+                    color: iconActiveColor,
                   ),
                 ),
             ],
           ),
         ),
         const SizedBox(height: AppSpacing.lg),
-        if (relatedAlbums.isEmpty && !isLoadingAlbums)
+        if (isLoadingAlbums)
+          ShimmerLoading(
+            child: SizedBox(
+              height: 220,
+              child: ListView.builder(
+                scrollDirection: Axis.horizontal,
+                padding: const EdgeInsets.only(left: 16),
+                itemCount: 5,
+                itemBuilder: (context, index) {
+                  return Padding(
+                    padding: const EdgeInsets.only(right: 12),
+                    child: SizedBox(
+                      width: 120,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          SkeletonBox(
+                            width: 120,
+                            height: 120,
+                            borderRadius: AppSpacing.radiusMedium,
+                          ),
+                          const SizedBox(height: AppSpacing.sm),
+                          SkeletonBox(width: 120, height: 14, borderRadius: 4),
+                          const SizedBox(height: 6),
+                          SkeletonBox(width: 80, height: 12, borderRadius: 4),
+                          const SizedBox(height: 4),
+                          SkeletonBox(width: 40, height: 10, borderRadius: 4),
+                        ],
+                      ),
+                    ),
+                  );
+                },
+              ),
+            ),
+          )
+        else if (relatedAlbums.isEmpty)
           Center(
             child: Padding(
               padding: const EdgeInsets.all(32.0),
@@ -950,57 +1515,25 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
+  // Replace the _buildAlbumCard method with this updated version:
+
   Widget _buildAlbumCard(Album album) {
     const double size = 120;
+    final cardBackgroundColor = ref.watch(themeCardBackgroundColorProvider);
+    final iconInactiveColor = ref.watch(themeTextSecondaryColorProvider);
+    final textPrimaryColor = ref.watch(themeTextPrimaryColorProvider);
+    final textSecondaryColor = ref.watch(themeTextSecondaryColorProvider);
+    final thumbnailRadius = ref.watch(
+      thumbnailRadiusProvider,
+    ); // Get the radius
 
     return GestureDetector(
-      onTap: () async {
-        showDialog(
-          context: context,
-          barrierDismissible: false,
-          builder: (context) => const Center(
-            child: CircularProgressIndicator(color: AppColors.iconActive),
-          ),
+      onTap: () {
+        // Navigate immediately without showing loading dialog
+        Navigator.push(
+          context,
+          MaterialPageRoute(builder: (context) => AlbumPage(album: album)),
         );
-
-        try {
-          // Fetch album with songs
-          final fullAlbum = await _albumsScraper.getAlbumDetails(album.id);
-
-          if (mounted) Navigator.pop(context);
-
-          if (fullAlbum != null) {
-            // Navigate to album page
-            if (mounted) {
-              Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (context) => AlbumPage(album: fullAlbum),
-                ),
-              );
-            }
-          } else {
-            if (mounted) {
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text('Could not load album'),
-                  backgroundColor: Colors.red,
-                ),
-              );
-            }
-          }
-        } catch (e) {
-          if (mounted) Navigator.pop(context);
-          print('Error loading album: $e');
-          if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(
-                content: Text('Error loading album'),
-                backgroundColor: Colors.red,
-              ),
-            );
-          }
-        }
       },
       child: Container(
         width: size,
@@ -1008,28 +1541,37 @@ class _HomePageState extends State<HomePage> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             ClipRRect(
-              borderRadius: BorderRadius.circular(AppSpacing.radiusMedium),
+              borderRadius: BorderRadius.circular(54 * thumbnailRadius),
               child: Container(
                 width: size,
                 height: size,
-                color: AppColors.cardBackground,
+                color: cardBackgroundColor,
                 child: album.coverArt != null && album.coverArt!.isNotEmpty
                     ? Image.network(
                         album.coverArt!,
                         fit: BoxFit.cover,
-                        errorBuilder: (context, error, stackTrace) =>
-                            const Center(
-                              child: Icon(
-                                Icons.album,
-                                color: AppColors.iconInactive,
-                                size: 40,
-                              ),
+                        loadingBuilder: (context, child, loadingProgress) {
+                          if (loadingProgress == null) return child;
+                          return ShimmerLoading(
+                            child: SkeletonBox(
+                              width: size,
+                              height: size,
+                              borderRadius: AppSpacing.radiusMedium,
                             ),
+                          );
+                        },
+                        errorBuilder: (context, error, stackTrace) => Center(
+                          child: Icon(
+                            Icons.album,
+                            color: iconInactiveColor,
+                            size: 40,
+                          ),
+                        ),
                       )
-                    : const Center(
+                    : Center(
                         child: Icon(
                           Icons.album,
-                          color: AppColors.iconInactive,
+                          color: iconInactiveColor,
                           size: 40,
                         ),
                       ),
@@ -1040,6 +1582,7 @@ class _HomePageState extends State<HomePage> {
               album.title,
               style: AppTypography.subtitle.copyWith(
                 fontWeight: FontWeight.w600,
+                color: textPrimaryColor,
               ),
               maxLines: 2,
               overflow: TextOverflow.ellipsis,
@@ -1047,9 +1590,7 @@ class _HomePageState extends State<HomePage> {
             const SizedBox(height: AppSpacing.xs / 2),
             Text(
               album.artist,
-              style: AppTypography.caption.copyWith(
-                color: AppColors.textSecondary,
-              ),
+              style: AppTypography.caption.copyWith(color: textSecondaryColor),
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
             ),
@@ -1058,7 +1599,7 @@ class _HomePageState extends State<HomePage> {
               Text(
                 album.year.toString(),
                 style: AppTypography.captionSmall.copyWith(
-                  color: AppColors.textSecondary.withOpacity(0.7),
+                  color: textSecondaryColor.withOpacity(0.7),
                 ),
               ),
             ],
@@ -1068,38 +1609,113 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
+  // Updated _buildSimilarArtists method with skeleton
   Widget _buildSimilarArtists() {
+    final textPrimaryColor = ref.watch(themeTextPrimaryColorProvider);
+    final iconActiveColor = ref.watch(themeIconActiveColorProvider);
+
+    // Filter artists to only show those with profile images
+    final artistsWithImages = similarArtists
+        .where(
+          (artist) =>
+              artist.profileImage != null && artist.profileImage!.isNotEmpty,
+        )
+        .toList();
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Padding(
-          padding: const EdgeInsets.only(left: 16), // Add padding here
+          padding: const EdgeInsets.only(left: 16),
           child: Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Text('Similar artists', style: AppTypography.sectionHeader),
-              if (isLoadingArtists)
-                const SizedBox(
-                  width: 16,
-                  height: 16,
-                  child: CircularProgressIndicator(
-                    strokeWidth: 2,
-                    color: AppColors.iconActive,
-                  ),
+              Text(
+                'Similar artists',
+                style: AppTypography.sectionHeader.copyWith(
+                  color: textPrimaryColor,
                 ),
+              ),
+              Row(
+                children: [
+                  // if (artistsWithImages.isNotEmpty)
+                  //   Text(
+                  //     '${artistsWithImages.length} artists',
+                  //     style: AppTypography.caption.copyWith(
+                  //       color: AppColors.textSecondary,
+                  //     ),
+                  //   ),
+                  const SizedBox(width: 8),
+                  if (isLoadingArtists)
+                    SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: iconActiveColor,
+                      ),
+                    )
+                  else
+                    IconButton(
+                      icon: Icon(Icons.refresh, color: iconActiveColor),
+                      onPressed: _fetchRandomArtists,
+                      tooltip: 'Load more artists',
+                    ),
+                ],
+              ),
             ],
           ),
         ),
         const SizedBox(height: AppSpacing.lg),
-        if (similarArtists.isEmpty && !isLoadingArtists)
+        if (isLoadingArtists)
+          ShimmerLoading(
+            child: SizedBox(
+              height: AppSpacing.artistCardSize + 50,
+              child: ListView.builder(
+                scrollDirection: Axis.horizontal,
+                padding: const EdgeInsets.only(left: 16),
+                itemCount: 10,
+                itemBuilder: (context, index) {
+                  return Container(
+                    width: AppSpacing.artistCardSize,
+                    margin: const EdgeInsets.only(right: AppSpacing.lg),
+                    child: Column(
+                      children: [
+                        SkeletonBox(
+                          width: AppSpacing.artistImageSize,
+                          height: AppSpacing.artistImageSize,
+                          borderRadius: AppSpacing.artistImageSize / 2,
+                        ),
+                        const SizedBox(height: AppSpacing.sm),
+                        SkeletonBox(width: 80, height: 14, borderRadius: 4),
+                        const SizedBox(height: 6),
+                        SkeletonBox(width: 60, height: 10, borderRadius: 4),
+                      ],
+                    ),
+                  );
+                },
+              ),
+            ),
+          )
+        else if (artistsWithImages.isEmpty)
           Center(
             child: Padding(
               padding: const EdgeInsets.all(32.0),
-              child: Text(
-                'No artists found',
-                style: AppTypography.subtitle.copyWith(
-                  color: AppColors.textSecondary,
-                ),
+              child: Column(
+                children: [
+                  Text(
+                    'No artists found',
+                    style: AppTypography.subtitle.copyWith(
+                      color: AppColors.textSecondary,
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  ElevatedButton.icon(
+                    onPressed: _fetchRandomArtists,
+                    icon: const Icon(Icons.refresh),
+                    label: const Text('Load Artists'),
+                  ),
+                ],
               ),
             ),
           )
@@ -1109,9 +1725,9 @@ class _HomePageState extends State<HomePage> {
             child: ListView.builder(
               scrollDirection: Axis.horizontal,
               padding: const EdgeInsets.only(left: 16),
-              itemCount: similarArtists.length,
+              itemCount: artistsWithImages.length,
               itemBuilder: (context, index) {
-                return _buildArtistCard(similarArtists[index]);
+                return _buildArtistCard(artistsWithImages[index]);
               },
             ),
           ),
@@ -1120,12 +1736,19 @@ class _HomePageState extends State<HomePage> {
   }
 
   Widget _buildArtistCard(Artist artist) {
+    final cardBackgroundColor = ref.watch(themeCardBackgroundColorProvider);
+    final iconInactiveColor = ref.watch(themeTextSecondaryColorProvider);
+    final textPrimaryColor = ref.watch(themeTextPrimaryColorProvider);
+    final textSecondaryColor = ref.watch(themeTextSecondaryColorProvider);
+    final iconActiveColor = ref.watch(themeIconActiveColorProvider);
+
     return GestureDetector(
       onTap: () {
-        // Navigate directly to artist page
         Navigator.push(
           context,
-          MaterialPageRoute(builder: (context) => ArtistPage(artist: artist)),
+          MaterialPageRoute(
+            builder: (context) => ArtistPage(artist: artist, artistName: ''),
+          ),
         );
       },
       child: Container(
@@ -1137,25 +1760,35 @@ class _HomePageState extends State<HomePage> {
               child: Container(
                 width: AppSpacing.artistImageSize,
                 height: AppSpacing.artistImageSize,
-                color: AppColors.cardBackground,
+                color: cardBackgroundColor,
                 child: artist.profileImage != null
                     ? Image.network(
                         artist.profileImage!,
                         fit: BoxFit.cover,
+                        loadingBuilder: (context, child, loadingProgress) {
+                          if (loadingProgress == null) return child;
+                          return ShimmerLoading(
+                            child: SkeletonBox(
+                              width: AppSpacing.artistImageSize,
+                              height: AppSpacing.artistImageSize,
+                              borderRadius: AppSpacing.artistImageSize / 2,
+                            ),
+                          );
+                        },
                         errorBuilder: (context, error, stackTrace) {
-                          return const Center(
+                          return Center(
                             child: Icon(
                               Icons.person,
-                              color: AppColors.iconInactive,
+                              color: iconInactiveColor,
                               size: 48,
                             ),
                           );
                         },
                       )
-                    : const Center(
+                    : Center(
                         child: Icon(
                           Icons.person,
-                          color: AppColors.iconInactive,
+                          color: iconInactiveColor,
                           size: 48,
                         ),
                       ),
@@ -1164,7 +1797,7 @@ class _HomePageState extends State<HomePage> {
             const SizedBox(height: AppSpacing.sm),
             Text(
               artist.name,
-              style: AppTypography.subtitle,
+              style: AppTypography.subtitle.copyWith(color: textPrimaryColor),
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               textAlign: TextAlign.center,
@@ -1172,7 +1805,9 @@ class _HomePageState extends State<HomePage> {
             const SizedBox(height: AppSpacing.xs / 2),
             Text(
               artist.subscribers,
-              style: AppTypography.captionSmall,
+              style: AppTypography.captionSmall.copyWith(
+                color: textSecondaryColor,
+              ),
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               textAlign: TextAlign.center,
@@ -1184,6 +1819,16 @@ class _HomePageState extends State<HomePage> {
   }
 
   Widget _buildMiniPlayer(QuickPick song, MediaItem? currentMedia) {
+    final backgroundColor = ref.watch(themeBackgroundColorProvider);
+    final cardBackgroundColor = ref.watch(themeCardBackgroundColorProvider);
+    final textPrimaryColor = ref.watch(themeTextPrimaryColorProvider);
+    final textSecondaryColor = ref.watch(themeTextSecondaryColorProvider);
+    final iconActiveColor = ref.watch(themeIconActiveColorProvider);
+    final iconInactiveColor = ref.watch(themeTextSecondaryColorProvider);
+    final thumbnailRadius = ref.watch(
+      thumbnailRadiusProvider,
+    ); // Get the radius
+
     return GestureDetector(
       onTap: () {
         // Navigate to full PlayerScreen instead of expanding miniplayer
@@ -1221,7 +1866,7 @@ class _HomePageState extends State<HomePage> {
       },
       child: Container(
         decoration: BoxDecoration(
-          color: const Color(0xFF1A1A1A),
+          color: cardBackgroundColor, // Use card background color
           boxShadow: [
             BoxShadow(
               color: Colors.black.withOpacity(0.3),
@@ -1238,28 +1883,43 @@ class _HomePageState extends State<HomePage> {
 
             return Row(
               children: [
-                // Album Art
+                // Album Art with thumbnail radius
                 Hero(
                   tag: 'miniplayer-thumbnail-${song.videoId}',
                   child: Container(
                     width: 70,
                     height: 70,
+                    decoration: BoxDecoration(
+                      color: backgroundColor,
+                      borderRadius: BorderRadius.circular(
+                        70 * thumbnailRadius,
+                      ), // Apply radius
+                    ),
                     child: ClipRRect(
+                      borderRadius: BorderRadius.circular(
+                        70 * thumbnailRadius,
+                      ), // Match container
                       child: currentMedia?.artUri != null
                           ? Image.network(
                               currentMedia!.artUri.toString(),
                               fit: BoxFit.cover,
                               errorBuilder: (context, error, stackTrace) =>
-                                  _buildMiniThumbnailFallback(),
+                                  _buildMiniThumbnailFallback(
+                                    ref,
+                                    thumbnailRadius,
+                                  ),
                             )
                           : song.thumbnail.isNotEmpty
                           ? Image.network(
                               song.thumbnail,
                               fit: BoxFit.cover,
                               errorBuilder: (context, error, stackTrace) =>
-                                  _buildMiniThumbnailFallback(),
+                                  _buildMiniThumbnailFallback(
+                                    ref,
+                                    thumbnailRadius,
+                                  ),
                             )
-                          : _buildMiniThumbnailFallback(),
+                          : _buildMiniThumbnailFallback(ref, thumbnailRadius),
                     ),
                   ),
                 ),
@@ -1274,8 +1934,8 @@ class _HomePageState extends State<HomePage> {
                       children: [
                         Text(
                           currentMedia?.title ?? song.title,
-                          style: const TextStyle(
-                            color: Colors.white,
+                          style: AppTypography.songTitle.copyWith(
+                            color: textPrimaryColor,
                             fontSize: 14,
                             fontWeight: FontWeight.w600,
                           ),
@@ -1285,8 +1945,8 @@ class _HomePageState extends State<HomePage> {
                         const SizedBox(height: 4),
                         Text(
                           currentMedia?.artist ?? song.artists,
-                          style: TextStyle(
-                            color: Colors.white.withOpacity(0.7),
+                          style: AppTypography.caption.copyWith(
+                            color: textSecondaryColor,
                             fontSize: 12,
                           ),
                           maxLines: 1,
@@ -1303,13 +1963,13 @@ class _HomePageState extends State<HomePage> {
                   height: 48,
                   margin: const EdgeInsets.only(right: 8),
                   decoration: BoxDecoration(
-                    color: Colors.white.withOpacity(0.1),
+                    color: iconActiveColor.withOpacity(0.2),
                     shape: BoxShape.circle,
                   ),
                   child: IconButton(
                     icon: Icon(
                       isPlaying ? Icons.pause : Icons.play_arrow,
-                      color: Colors.white,
+                      color: iconActiveColor,
                       size: 24,
                     ),
                     onPressed: () {
@@ -1324,13 +1984,13 @@ class _HomePageState extends State<HomePage> {
                   height: 48,
                   margin: const EdgeInsets.only(right: 12),
                   decoration: BoxDecoration(
-                    color: Colors.white.withOpacity(0.1),
+                    color: iconActiveColor.withOpacity(0.2),
                     shape: BoxShape.circle,
                   ),
                   child: IconButton(
-                    icon: const Icon(
+                    icon: Icon(
                       Icons.skip_next,
-                      color: Colors.white,
+                      color: iconActiveColor,
                       size: 24,
                     ),
                     onPressed: () {
@@ -1346,31 +2006,14 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
-  Widget _buildExpandedPlayer(QuickPick song, MediaItem? currentMedia) {
-    return SizedBox(
-      height: _miniplayerMaxHeight,
-      width: double.infinity,
-      child: Container(
-        decoration: BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topCenter,
-            end: Alignment.bottomCenter,
-            colors: [const Color(0xFF1A1A1A), Colors.black],
-          ),
-        ),
-        child: PlayerScreen(
-          song: song,
-          heroTag: 'miniplayer-thumbnail-${song.videoId}',
-        ),
-      ),
-    );
-  }
+  Widget _buildMiniThumbnailFallback(WidgetRef ref, double thumbnailRadius) {
+    final backgroundColor = ref.watch(themeBackgroundColorProvider);
+    final iconInactiveColor = ref.watch(themeTextSecondaryColorProvider);
 
-  Widget _buildMiniThumbnailFallback() {
     return Container(
-      color: AppColors.cardBackground,
-      child: const Center(
-        child: Icon(Icons.music_note, color: AppColors.iconInactive, size: 28),
+      color: backgroundColor,
+      child: Center(
+        child: Icon(Icons.music_note, color: iconInactiveColor, size: 28),
       ),
     );
   }
@@ -1392,26 +2035,8 @@ class _HomePageState extends State<HomePage> {
     _scrollController.dispose();
     _searchController.dispose();
     _searchFocusNode.dispose();
-    _yt.close();
     _searchHelper.dispose();
     super.dispose();
-  }
-}
-
-/// Extension to get high quality thumbnails from ThumbnailSet
-extension ThumbnailSetExtension on List<Thumbnail> {
-  String get highResUrl {
-    if (isEmpty) return '';
-
-    // Sort by resolution (width * height) and get the highest
-    final sorted = [...this];
-    sorted.sort((a, b) {
-      final aRes = (a.width ?? 0) * (a.height ?? 0);
-      final bRes = (b.width ?? 0) * (b.height ?? 0);
-      return bRes.compareTo(aRes);
-    });
-
-    return sorted.first.url.toString();
   }
 }
 

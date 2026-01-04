@@ -39,26 +39,41 @@ dependencies:
   google_fonts:
   cached_network_image_plus:
   lottie:
+  fluttertoast:
   audio_service:
   permission_handler: 
   just_audio_background:
-  youtube_explode_dart:
+  package_info_plus:
   yt_flutter_musicapi:
   dart_ytmusic_api:
+  flutter_secure_storage:
   wikipedia:
   miniplayer:
+  flutter_dotenv:
   shared_preferences:
   provider:
+  encrypt:
+  image_picker:
   url_launcher:
   dio:
+  timeago:
+  connectivity_plus:
+  sqflite:
+  vibration:
+  flutter_speed_dial:
+  flutter_riverpod:
   mini_music_visualizer:
   palette_generator:
   awesome_notifications:
   # wikipedia_search:
+  supabase_flutter:
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
+
+
+  flutter_launcher_icons:
 
   # The "flutter_lints" package below contains a set of recommended lints to
   # encourage good coding practices. The lint set provided by the package is
@@ -69,6 +84,13 @@ dev_dependencies:
 
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec
+flutter_icons:
+  android: true
+  # ios: true
+  image_path: "assets/icons/logo_unamed.png"
+  min_sdk_android: 21
+  adaptive_icon_background: "#0F0F0F"
+  adaptive_icon_foreground: "assets/icons/logo_unamed.png"
 
 # The following section is specific to Flutter packages.
 flutter:
@@ -80,7 +102,21 @@ flutter:
 
   # To add assets to your application, add an assets section, like this:
   assets:
+    # Environmental variables
+    - .env
+
+      # Animations
     - assets/animations/not_found.json
+    - assets/animations/error.json
+    - assets/animations/success.json
+    - assets/animations/hello.json
+    - assets/animations/gmail.json
+    - assets/animations/gender.json
+    
+
+    # Logos
+    - assets/icons/logo_unamed.png
+    - assets/icons/logo_named.png
   #   - images/a_dot_ham.jpeg
 
   # An image asset can refer to one or more resolution-specific "variants", see

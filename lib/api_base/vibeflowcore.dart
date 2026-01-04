@@ -1,3 +1,7 @@
+import 'package:flutter/material.dart';
+import 'package:vibeflow/main.dart';
+import 'package:vibeflow/models/quick_picks_model.dart';
+import 'package:vibeflow/widgets/recent_listening_speed_dial.dart';
 import 'package:yt_flutter_musicapi/yt_flutter_musicapi.dart';
 import 'package:vibeflow/models/song_model.dart';
 
@@ -31,36 +35,6 @@ class VibeFlowCore {
       throw StateError(
         'VibeFlowCore not initialized. Call initialize() first.',
       );
-    }
-  }
-
-  /// Get audio URL for a video ID using fast method
-  /// Returns the direct streaming URL or null if unavailable
-  Future<String?> getAudioUrl(String videoId) async {
-    _ensureInitialized();
-
-    try {
-      print('🎵 [VibeFlowCore] Fetching audio URL for: $videoId');
-
-      // Use the fast method from yt_flutter_musicapi
-      final response = await _ytApi.getAudioUrlFast(videoId: videoId);
-
-      if (response.success &&
-          response.data != null &&
-          response.data!.isNotEmpty) {
-        print('✅ [VibeFlowCore] Got audio URL successfully');
-        return response.data;
-      } else {
-        print('⚠️ [VibeFlowCore] No URL returned for $videoId');
-        if (response.error != null) {
-          print('⚠️ [VibeFlowCore] Error: ${response.error}');
-        }
-        return null;
-      }
-    } catch (e, stack) {
-      print('❌ [VibeFlowCore] Error getting audio URL: $e');
-      print('Stack trace: ${stack.toString().split('\n').take(3).join('\n')}');
-      return null;
     }
   }
 
@@ -128,18 +102,73 @@ class VibeFlowCore {
     return enrichedSongs;
   }
 
-  /// Get audio URL with retry logic
+  /// Get audio URL for a video ID using fast method
+  /// Returns the direct streaming URL or null if unavailable
+  Future<String?> getAudioUrl(String videoId, {QuickPick? song}) async {
+    _ensureInitialized();
+
+    try {
+      print('🎵 [VibeFlowCore] Fetching audio URL for: $videoId');
+      final audioCache = AudioUrlCache();
+
+      // Check cache first
+      final cachedUrl = audioCache.getCachedUrl(videoId);
+      if (cachedUrl != null) {
+        print('⚡ [Cache] Using cached URL for $videoId');
+        return cachedUrl;
+      }
+
+      // Use the fast method from yt_flutter_musicapi
+      final response = await _ytApi.getAudioUrlFast(videoId: videoId);
+
+      if (response.success &&
+          response.data != null &&
+          response.data!.isNotEmpty) {
+        print('✅ [VibeFlowCore] Got audio URL successfully');
+
+        // ✅ Cache the URL if song info is provided
+        if (song != null) {
+          audioCache.cache(song, response.data!);
+          print('💾 [Cache] Cached URL for: ${song.title}');
+        }
+
+        return response.data;
+      } else {
+        print('⚠️ [VibeFlowCore] No URL returned for $videoId');
+        if (response.error != null) {
+          print('⚠️ [VibeFlowCore] Error: ${response.error}');
+        }
+        return null;
+      }
+    } catch (e, stack) {
+      print('❌ [VibeFlowCore] Error getting audio URL: $e');
+      print('Stack trace: ${stack.toString().split('\n').take(3).join('\n')}');
+      return null;
+    }
+  }
+
+  /// Get audio URL with retry logic and caching
   /// Useful for handling temporary network issues
   Future<String?> getAudioUrlWithRetry(
     String videoId, {
+    QuickPick? song,
     int maxRetries = 3,
     Duration retryDelay = const Duration(seconds: 2),
   }) async {
+    final audioCache = AudioUrlCache();
+
+    // Check cache first
+    final cachedUrl = audioCache.getCachedUrl(videoId);
+    if (cachedUrl != null) {
+      print('⚡ [Cache] Using cached URL for $videoId');
+      return cachedUrl;
+    }
+
     for (int attempt = 1; attempt <= maxRetries; attempt++) {
       try {
         print('🔄 [VibeFlowCore] Attempt $attempt/$maxRetries for $videoId');
 
-        final url = await getAudioUrl(videoId);
+        final url = await getAudioUrl(videoId, song: song);
         if (url != null) {
           return url;
         }
@@ -175,5 +204,93 @@ class VibeFlowCore {
 
     print('🔄 [VibeFlowCore] Refreshing audio URL for: ${song.title}');
     return await enrichSongWithAudioUrl(song);
+  }
+}
+
+/// Enhanced VibeFlowCore with error handling and snackbar integration
+extension VibeFlowCoreErrorHandling on VibeFlowCore {
+  /// Get audio URL with user-friendly error handling
+  Future<String?> getAudioUrlWithErrorHandling(
+    String videoId,
+    String songTitle,
+    BuildContext? context,
+  ) async {
+    try {
+      final url = await getAudioUrlWithRetry(videoId);
+
+      if (url == null || url.isEmpty) {
+        AudioErrorHandler.showAudioUrlError(context, songTitle);
+        return null;
+      }
+
+      return url;
+    } catch (e) {
+      print('❌ [VibeFlowCore] Critical error: $e');
+      AudioErrorHandler.showNetworkError(context);
+      return null;
+    }
+  }
+
+  /// Enrich song with error handling
+  Future<Song?> enrichSongWithErrorHandling(
+    Song song,
+    BuildContext? context,
+  ) async {
+    try {
+      final enrichedSong = await enrichSongWithAudioUrl(song);
+
+      if (enrichedSong.audioUrl == null || enrichedSong.audioUrl!.isEmpty) {
+        AudioErrorHandler.showAudioUrlError(context, song.title);
+        return null;
+      }
+
+      return enrichedSong;
+    } catch (e) {
+      print('❌ [VibeFlowCore] Enrichment failed: $e');
+      AudioErrorHandler.showNetworkError(context);
+      return null;
+    }
+  }
+
+  /// Get audio URL with retry and user feedback
+  Future<String?> getAudioUrlWithUserFeedback(
+    String videoId,
+    String songTitle,
+    BuildContext? context, {
+    int maxRetries = 3,
+  }) async {
+    for (int attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        final url = await getAudioUrl(videoId);
+
+        if (url != null && url.isNotEmpty) {
+          // Success on retry
+          if (attempt > 1 && context != null) {
+            AudioErrorHandler.showSuccess(
+              context,
+              'Successfully loaded "$songTitle"',
+            );
+          }
+          return url;
+        }
+
+        // Last attempt failed
+        if (attempt == maxRetries) {
+          AudioErrorHandler.showAudioUrlError(context, songTitle);
+          return null;
+        }
+
+        // Retry delay
+        await Future.delayed(Duration(seconds: attempt));
+      } catch (e) {
+        if (attempt == maxRetries) {
+          AudioErrorHandler.showNetworkError(context);
+          return null;
+        }
+        await Future.delayed(Duration(seconds: attempt));
+      }
+    }
+
+    return null;
   }
 }

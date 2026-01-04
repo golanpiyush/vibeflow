@@ -4,7 +4,15 @@
     <uses-permission android:name="android.permission.INTERNET"/>
     <uses-permission android:name="android.permission.WAKE_LOCK"/>
 
+     <!-- In-App Installer -->
+     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+
+      <!-- In-App EQ -->
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS"/>
+
+
     <!-- Foreground services -->
+    <uses-permission android:name="android.permission.VIBRATE"/>
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK"/>
 
@@ -50,6 +58,26 @@
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
         </activity>
+
+        <!-- ADD FILEPROVIDER -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
+
+        <!-- In-App Installer BROADCAST RECEIVER -->
+        <receiver
+            android:name="com.example.vibeflow.installer.AppInstallBroadcastReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.example.vibeflow.INSTALL_COMPLETE" />
+            </intent-filter>
+        </receiver>
 
         <!-- 🔊 Audio Service (FIXED) -->
         <service

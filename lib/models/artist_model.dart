@@ -11,4 +11,17 @@ class Artist {
     this.profileImage,
     required this.subscribers,
   });
+  Map<String, dynamic> toJson() => {
+    'id': id,
+    'name': name,
+    'profileImage': profileImage,
+    'subscribers': subscribers,
+  };
+
+  factory Artist.fromJson(Map<String, dynamic> json) => Artist(
+    id: json['id'] as String,
+    name: json['name'] as String,
+    profileImage: json['profileImage'] as String?,
+    subscribers: json['subscribers'] as String,
+  );
 }

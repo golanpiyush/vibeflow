@@ -17,7 +17,11 @@ class AppTypography {
     fontWeight: FontWeight.w600,
     color: AppColors.textPrimary,
   );
-
+  static TextStyle dialogTitle = GoogleFonts.manrope(
+    fontSize: 18,
+    fontWeight: FontWeight.w600,
+    color: AppColors.textPrimary,
+  );
   // Song Title
   static TextStyle songTitle = GoogleFonts.cabin(
     fontSize: 17,

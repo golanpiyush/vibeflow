@@ -4,6 +4,7 @@ import 'package:just_audio/just_audio.dart';
 import 'package:vibeflow/api_base/vibeflowcore.dart';
 import 'package:vibeflow/api_base/yt_radio.dart';
 import 'package:vibeflow/models/quick_picks_model.dart';
+import 'package:vibeflow/widgets/recent_listening_speed_dial.dart';
 
 /// Background Audio Handler for persistent playback
 /// Handles notification controls, lock screen controls, and background playback
@@ -180,8 +181,8 @@ class BackgroundAudioHandler extends BaseAudioHandler
       queue.add(_queue);
       mediaItem.add(newMediaItem);
 
-      // Get audio URL
-      final audioUrl = await _getAudioUrl(song.videoId);
+      // ✅ Get audio URL WITH caching (pass song info)
+      final audioUrl = await _getAudioUrl(song.videoId, song: song);
       if (audioUrl == null) {
         throw Exception('Failed to get audio URL');
       }
@@ -191,7 +192,7 @@ class BackgroundAudioHandler extends BaseAudioHandler
       await play();
 
       print('✅ [BackgroundAudioHandler] Playback started');
-
+      AudioUrlCache().cache(song, audioUrl);
       // Load radio for this song
       _loadRadioInBackground(song);
     } catch (e, stack) {
@@ -304,8 +305,12 @@ class BackgroundAudioHandler extends BaseAudioHandler
       queue.add(_queue);
       mediaItem.add(_queue[_currentIndex]);
 
-      // Get audio URL for first song
-      final audioUrl = await _getAudioUrl(songs[_currentIndex].videoId);
+      // Get audio URL for first song WITH caching
+      final audioUrl = await _getAudioUrl(
+        songs[_currentIndex].videoId,
+        song: songs[_currentIndex],
+      );
+
       if (audioUrl == null) {
         throw Exception('Failed to get audio URL');
       }
@@ -320,16 +325,16 @@ class BackgroundAudioHandler extends BaseAudioHandler
     }
   }
 
-  Future<String?> _getAudioUrl(String videoId) async {
+  Future<String?> _getAudioUrl(String videoId, {QuickPick? song}) async {
     // Check cache
     if (_urlCache.containsKey(videoId)) {
       print('⚡ [BackgroundAudioHandler] Using cached URL');
       return _urlCache[videoId];
     }
 
-    // Fetch new URL
+    // Fetch new URL with caching
     print('🔄 [BackgroundAudioHandler] Fetching audio URL...');
-    final url = await _core.getAudioUrl(videoId);
+    final url = await _core.getAudioUrl(videoId, song: song);
 
     if (url != null) {
       _urlCache[videoId] = url;
@@ -371,9 +376,21 @@ class BackgroundAudioHandler extends BaseAudioHandler
     if (_queue.isNotEmpty && _currentIndex < _queue.length - 1) {
       print('▶️ Playing next from manual queue');
       _currentIndex++;
-      mediaItem.add(_queue[_currentIndex]);
+      final nextMedia = _queue[_currentIndex];
+      mediaItem.add(nextMedia);
 
-      final audioUrl = await _getAudioUrl(_queue[_currentIndex].id);
+      // Convert MediaItem to QuickPick for caching
+      final quickPick = QuickPick(
+        videoId: nextMedia.id,
+        title: nextMedia.title,
+        artists: nextMedia.artist ?? '',
+        thumbnail: nextMedia.artUri?.toString() ?? '',
+        duration: nextMedia.duration != null
+            ? '${nextMedia.duration!.inMinutes}:${(nextMedia.duration!.inSeconds % 60).toString().padLeft(2, '0')}'
+            : null,
+      );
+
+      final audioUrl = await _getAudioUrl(nextMedia.id, song: quickPick);
       if (audioUrl != null) {
         await _audioPlayer.setUrl(audioUrl);
         await play();
@@ -385,9 +402,20 @@ class BackgroundAudioHandler extends BaseAudioHandler
     if (_radioQueue.isNotEmpty && _radioQueueIndex < _radioQueue.length - 1) {
       print('📻 Playing next from radio queue (autoplay)');
       _radioQueueIndex++;
-      mediaItem.add(_radioQueue[_radioQueueIndex]);
+      final nextMedia = _radioQueue[_radioQueueIndex];
+      mediaItem.add(nextMedia);
 
-      final audioUrl = await _getAudioUrl(_radioQueue[_radioQueueIndex].id);
+      final quickPick = QuickPick(
+        videoId: nextMedia.id,
+        title: nextMedia.title,
+        artists: nextMedia.artist ?? '',
+        thumbnail: nextMedia.artUri?.toString() ?? '',
+        duration: nextMedia.duration != null
+            ? '${nextMedia.duration!.inMinutes}:${(nextMedia.duration!.inSeconds % 60).toString().padLeft(2, '0')}'
+            : null,
+      );
+
+      final audioUrl = await _getAudioUrl(nextMedia.id, song: quickPick);
       if (audioUrl != null) {
         await _audioPlayer.setUrl(audioUrl);
         await play();
@@ -399,9 +427,20 @@ class BackgroundAudioHandler extends BaseAudioHandler
     if (_radioQueue.isNotEmpty && _radioQueueIndex == -1) {
       print('📻 Starting radio queue');
       _radioQueueIndex = 0;
-      mediaItem.add(_radioQueue[_radioQueueIndex]);
+      final nextMedia = _radioQueue[_radioQueueIndex];
+      mediaItem.add(nextMedia);
 
-      final audioUrl = await _getAudioUrl(_radioQueue[_radioQueueIndex].id);
+      final quickPick = QuickPick(
+        videoId: nextMedia.id,
+        title: nextMedia.title,
+        artists: nextMedia.artist ?? '',
+        thumbnail: nextMedia.artUri?.toString() ?? '',
+        duration: nextMedia.duration != null
+            ? '${nextMedia.duration!.inMinutes}:${(nextMedia.duration!.inSeconds % 60).toString().padLeft(2, '0')}'
+            : null,
+      );
+
+      final audioUrl = await _getAudioUrl(nextMedia.id, song: quickPick);
       if (audioUrl != null) {
         await _audioPlayer.setUrl(audioUrl);
         await play();
@@ -429,9 +468,21 @@ class BackgroundAudioHandler extends BaseAudioHandler
     if (_queue.isNotEmpty && _currentIndex > 0) {
       print('◀️ Playing previous from manual queue');
       _currentIndex--;
-      mediaItem.add(_queue[_currentIndex]);
+      final prevMedia = _queue[_currentIndex];
+      mediaItem.add(prevMedia);
 
-      final audioUrl = await _getAudioUrl(_queue[_currentIndex].id);
+      // Convert MediaItem to QuickPick for caching
+      final quickPick = QuickPick(
+        videoId: prevMedia.id,
+        title: prevMedia.title,
+        artists: prevMedia.artist ?? '',
+        thumbnail: prevMedia.artUri?.toString() ?? '',
+        duration: prevMedia.duration != null
+            ? '${prevMedia.duration!.inMinutes}:${(prevMedia.duration!.inSeconds % 60).toString().padLeft(2, '0')}'
+            : null,
+      );
+
+      final audioUrl = await _getAudioUrl(prevMedia.id, song: quickPick);
       if (audioUrl != null) {
         await _audioPlayer.setUrl(audioUrl);
         await play();
@@ -443,9 +494,21 @@ class BackgroundAudioHandler extends BaseAudioHandler
     if (_radioQueue.isNotEmpty && _radioQueueIndex > 0) {
       print('📻 Playing previous from radio queue');
       _radioQueueIndex--;
-      mediaItem.add(_radioQueue[_radioQueueIndex]);
+      final prevMedia = _radioQueue[_radioQueueIndex];
+      mediaItem.add(prevMedia);
 
-      final audioUrl = await _getAudioUrl(_radioQueue[_radioQueueIndex].id);
+      // Convert MediaItem to QuickPick for caching
+      final quickPick = QuickPick(
+        videoId: prevMedia.id,
+        title: prevMedia.title,
+        artists: prevMedia.artist ?? '',
+        thumbnail: prevMedia.artUri?.toString() ?? '',
+        duration: prevMedia.duration != null
+            ? '${prevMedia.duration!.inMinutes}:${(prevMedia.duration!.inSeconds % 60).toString().padLeft(2, '0')}'
+            : null,
+      );
+
+      final audioUrl = await _getAudioUrl(prevMedia.id, song: quickPick);
       if (audioUrl != null) {
         await _audioPlayer.setUrl(audioUrl);
         await play();
@@ -460,9 +523,21 @@ class BackgroundAudioHandler extends BaseAudioHandler
   Future<void> skipToQueueItem(int index) async {
     if (index >= 0 && index < _queue.length) {
       _currentIndex = index;
-      mediaItem.add(_queue[_currentIndex]);
+      final selectedMedia = _queue[_currentIndex];
+      mediaItem.add(selectedMedia);
 
-      final audioUrl = await _getAudioUrl(_queue[_currentIndex].id);
+      // Convert MediaItem to QuickPick for caching
+      final quickPick = QuickPick(
+        videoId: selectedMedia.id,
+        title: selectedMedia.title,
+        artists: selectedMedia.artist ?? '',
+        thumbnail: selectedMedia.artUri?.toString() ?? '',
+        duration: selectedMedia.duration != null
+            ? '${selectedMedia.duration!.inMinutes}:${(selectedMedia.duration!.inSeconds % 60).toString().padLeft(2, '0')}'
+            : null,
+      );
+
+      final audioUrl = await _getAudioUrl(selectedMedia.id, song: quickPick);
       if (audioUrl != null) {
         await _audioPlayer.setUrl(audioUrl);
         await play();

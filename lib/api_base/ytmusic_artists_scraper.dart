@@ -1,9 +1,25 @@
 // lib/api_base/ytmusic_artists_scraper.dart
 import 'dart:convert';
+import 'dart:math';
 import 'package:http/http.dart' as http;
+import 'package:vibeflow/api_base/cache_manager.dart';
 import 'package:vibeflow/models/artist_model.dart';
 import 'package:vibeflow/models/song_model.dart';
 import 'package:vibeflow/models/album_model.dart';
+
+/// Music genres supported by the scraper
+enum MusicGenre {
+  pop,
+  rock,
+  rap,
+  edm,
+  jazz,
+  country,
+  rnb,
+  indie,
+  metal,
+  classical,
+}
 
 /// Scraper for YouTube Music artists using the internal API
 class YTMusicArtistsScraper {
@@ -25,38 +41,233 @@ class YTMusicArtistsScraper {
     'client': {'clientName': 'WEB_REMIX', 'clientVersion': '1.20231204.01.00'},
   };
 
-  /// Get trending/popular artists - metadata only
-  Future<List<Artist>> getTrendingArtists({int limit = 20}) async {
+  final Random _random = Random();
+  final CacheManager _cacheManager = CacheManager.instance;
+  final Map<String, ArtistDetails> _artistDetailsCache = {};
+  final Map<String, List<Artist>> _genreArtistsCache = {};
+  List<Artist>? _trendingArtistsCache;
+
+  /// Get random artists from different genres
+  Future<List<Artist>> getRandomArtists({int count = 50}) async {
     try {
-      print('🔍 [YTMusicArtistsScraper] Fetching trending artists...');
+      print('🎲 [YTMusicArtistsScraper] Fetching $count random artists...');
 
-      final response = await _makeRequest(
-        endpoint: 'browse',
-        body: {'context': _context, 'browseId': 'FEmusic_trending'},
-      );
+      // Get artists from multiple genres and shuffle
+      final allArtists = <Artist>[];
+      final genres = MusicGenre.values.toList()..shuffle(_random);
 
-      if (response == null) {
-        return _getFallbackArtists();
+      for (final genre in genres.take(5)) {
+        final artists = await getArtistsByGenre(genre, limit: 10);
+        allArtists.addAll(artists);
+        if (allArtists.length >= count * 2) break;
       }
 
-      final artists = _parseArtistsFromBrowse(response, limit);
+      // Shuffle and return requested count
+      allArtists.shuffle(_random);
+      final randomArtists = allArtists.take(count).toList();
 
-      if (artists.isEmpty) {
+      print(
+        '✅ [YTMusicArtistsScraper] Found ${randomArtists.length} random artists',
+      );
+      return randomArtists;
+    } catch (e) {
+      print('❌ [YTMusicArtistsScraper] Error getting random artists: $e');
+      return _getFallbackArtists();
+    }
+  }
+
+  /// Get trending artists with caching
+  Future<List<Artist>> getTrendingArtists({int limit = 50}) async {
+    try {
+      // Check memory cache first
+      if (_trendingArtistsCache != null && _trendingArtistsCache!.isNotEmpty) {
+        print('📦 Using cached trending artists');
+        return _trendingArtistsCache!.take(limit).toList();
+      }
+
+      // Check disk cache
+      final cachedData = await _cacheManager.get<List<Artist>>(
+        'trending_artists',
+      );
+      if (cachedData != null && cachedData.isNotEmpty) {
+        print('💾 Using disk cached trending artists');
+        _trendingArtistsCache = cachedData;
+        return cachedData.take(limit).toList();
+      }
+
+      print('🔍 [YTMusicArtistsScraper] Fetching trending artists...');
+
+      // Fetch artists from multiple popular genres
+      final allArtists = <Artist>[];
+      final seenIds = <String>{};
+
+      final popularGenres = [
+        MusicGenre.pop,
+        MusicGenre.rap,
+        MusicGenre.rock,
+        MusicGenre.edm,
+        MusicGenre.rnb,
+      ];
+
+      for (final genre in popularGenres) {
+        final genreArtists = await getArtistsByGenre(
+          genre,
+          limit: (limit ~/ popularGenres.length) + 5,
+        );
+
+        for (final artist in genreArtists) {
+          if (!seenIds.contains(artist.id)) {
+            seenIds.add(artist.id);
+            allArtists.add(artist);
+          }
+        }
+
+        if (allArtists.length >= limit) break;
+      }
+
+      allArtists.shuffle(_random);
+      final trendingArtists = allArtists.take(limit).toList();
+
+      if (trendingArtists.isEmpty) {
         print('⚠️ No artists found, using fallback');
         return _getFallbackArtists();
       }
 
-      print('✅ [YTMusicArtistsScraper] Found ${artists.length} artists');
-      return artists;
+      // Cache the results
+      _trendingArtistsCache = trendingArtists;
+      await _cacheManager.set('trending_artists', trendingArtists);
+
+      print(
+        '✅ [YTMusicArtistsScraper] Found ${trendingArtists.length} artists',
+      );
+      return trendingArtists;
     } catch (e) {
       print('❌ [YTMusicArtistsScraper] Error: $e');
       return _getFallbackArtists();
     }
   }
 
-  /// Get artist details - metadata only (including top songs and albums)
+  /// Get artists by specific genre with HQ images and subscriber counts
+  /// Get artists by genre with caching
+  Future<List<Artist>> getArtistsByGenre(
+    MusicGenre genre, {
+    int limit = 50,
+  }) async {
+    final genreKey = genre.toString();
+
+    try {
+      // Check memory cache first
+      if (_genreArtistsCache.containsKey(genreKey)) {
+        final cached = _genreArtistsCache[genreKey]!;
+        if (cached.isNotEmpty) {
+          print('📦 Using cached $genreKey artists');
+          return cached.take(limit).toList();
+        }
+      }
+
+      // Check disk cache
+      final cacheKey = 'artists_genre_$genreKey';
+      final cachedData = await _cacheManager.get<List<Artist>>(cacheKey);
+      if (cachedData != null && cachedData.isNotEmpty) {
+        print('💾 Using disk cached $genreKey artists');
+        _genreArtistsCache[genreKey] = cachedData;
+        return cachedData.take(limit).toList();
+      }
+
+      final genreName = _getGenreName(genre);
+      print('🎵 [YTMusicArtistsScraper] Fetching $genreName artists...');
+
+      final searchQuery = '$genreName music artists';
+      final response = await _makeRequest(
+        endpoint: 'search',
+        body: {
+          'context': _context,
+          'query': searchQuery,
+          'params': 'EgWKAQIgAWoKEAoQAxAEEAkQBQ%3D%3D',
+        },
+      );
+
+      if (response == null) {
+        return _getGenreFallbackArtists(genre);
+      }
+
+      final artists = _parseArtistsFromSearch(response, limit);
+
+      if (artists.isEmpty) {
+        print('⚠️ No artists found for $genreName, using fallback');
+        return _getGenreFallbackArtists(genre);
+      }
+
+      // Cache the results
+      _genreArtistsCache[genreKey] = artists;
+      await _cacheManager.set(cacheKey, artists);
+
+      print(
+        '✅ [YTMusicArtistsScraper] Found ${artists.length} $genreName artists',
+      );
+      return artists;
+    } catch (e) {
+      print('❌ [YTMusicArtistsScraper] Error getting $genre artists: $e');
+      return _getGenreFallbackArtists(genre);
+    }
+  }
+
+  /// Get artists by multiple genres (user selections)
+  Future<List<Artist>> getArtistsByGenres(
+    List<MusicGenre> genres, {
+    int artistsPerGenre = 50,
+  }) async {
+    try {
+      print(
+        '🎨 [YTMusicArtistsScraper] Fetching artists from ${genres.length} genres...',
+      );
+
+      final allArtists = <Artist>[];
+      final seenIds = <String>{};
+
+      for (final genre in genres) {
+        final genreArtists = await getArtistsByGenre(
+          genre,
+          limit: artistsPerGenre,
+        );
+
+        // Add only unique artists
+        for (final artist in genreArtists) {
+          if (!seenIds.contains(artist.id)) {
+            seenIds.add(artist.id);
+            allArtists.add(artist);
+          }
+        }
+      }
+
+      print(
+        '✅ [YTMusicArtistsScraper] Found ${allArtists.length} unique artists',
+      );
+      return allArtists;
+    } catch (e) {
+      print('❌ [YTMusicArtistsScraper] Error getting multi-genre artists: $e');
+      return [];
+    }
+  }
+
+  /// Get artist details with caching
   Future<ArtistDetails?> getArtistDetails(String artistId) async {
     try {
+      // Check memory cache first
+      if (_artistDetailsCache.containsKey(artistId)) {
+        print('📦 Using cached artist details for $artistId');
+        return _artistDetailsCache[artistId];
+      }
+
+      // Check disk cache
+      final cacheKey = 'artist_details_$artistId';
+      final cachedData = await _cacheManager.get<ArtistDetails>(cacheKey);
+      if (cachedData != null) {
+        print('💾 Using disk cached artist details for $artistId');
+        _artistDetailsCache[artistId] = cachedData;
+        return cachedData;
+      }
+
       print('🎤 [YTMusicArtistsScraper] Fetching artist: $artistId');
 
       final response = await _makeRequest(
@@ -66,20 +277,15 @@ class YTMusicArtistsScraper {
 
       if (response == null) return null;
 
-      // Extract artist metadata
       final artistData = _extractArtistMetadata(response, artistId);
-
-      // Extract top songs metadata
       final topSongs = _extractTopSongs(response, artistData['name'] as String);
-
-      // Extract albums metadata
       final albums = _extractArtistAlbums(response);
 
       print(
         '✅ [YTMusicArtistsScraper] Loaded artist "${artistData['name']}" with ${topSongs.length} songs and ${albums.length} albums',
       );
 
-      return ArtistDetails(
+      final details = ArtistDetails(
         artist: Artist(
           id: artistId,
           name: artistData['name'] as String,
@@ -89,6 +295,12 @@ class YTMusicArtistsScraper {
         topSongs: topSongs,
         albums: albums,
       );
+
+      // Cache the results
+      _artistDetailsCache[artistId] = details;
+      await _cacheManager.set(cacheKey, details);
+
+      return details;
     } catch (e) {
       print('❌ [YTMusicArtistsScraper] Error: $e');
       return null;
@@ -135,6 +347,7 @@ class YTMusicArtistsScraper {
 
       if (response.statusCode != 200) {
         print('❌ Request failed: ${response.statusCode}');
+        print('Response body: ${response.body.substring(0, 200)}...');
         return null;
       }
 
@@ -650,6 +863,32 @@ class YTMusicArtistsScraper {
         (text.contains('K') && !text.contains('•'));
   }
 
+  /// Get genre name for search
+  String _getGenreName(MusicGenre genre) {
+    switch (genre) {
+      case MusicGenre.pop:
+        return 'popular pop';
+      case MusicGenre.rock:
+        return 'popular rock';
+      case MusicGenre.rap:
+        return 'top hip hop rap';
+      case MusicGenre.edm:
+        return 'top edm electronic';
+      case MusicGenre.jazz:
+        return 'popular jazz';
+      case MusicGenre.country:
+        return 'top country';
+      case MusicGenre.rnb:
+        return 'top r&b soul';
+      case MusicGenre.indie:
+        return 'popular indie alternative';
+      case MusicGenre.metal:
+        return 'popular metal';
+      case MusicGenre.classical:
+        return 'popular classical';
+    }
+  }
+
   /// Fallback artists with known good IDs
   List<Artist> _getFallbackArtists() {
     return [
@@ -681,9 +920,395 @@ class YTMusicArtistsScraper {
         id: 'UCHkj014U2CQ2Nv0UZeYpE_A',
         name: 'Imagine Dragons',
         profileImage: null,
-        subscribers: '2s9.8M subkscrsaiberee',
+        subscribers: '29.8M subscribers',
+      ),
+      Artist(
+        id: 'UC0C-w0YjGpqDXGB8IHb662A',
+        name: 'Ariana Grande',
+        profileImage: null,
+        subscribers: '54M subscribers',
+      ),
+      Artist(
+        id: 'UC_-lkd5iACZzJ4zE_GOeUXw',
+        name: 'Eminem',
+        profileImage: null,
+        subscribers: '58M subscribers',
+      ),
+      Artist(
+        id: 'UCa10nxShhzNrCE1o2ZOPztg',
+        name: 'Marshmello',
+        profileImage: null,
+        subscribers: '57M subscribers',
       ),
     ];
+  }
+
+  /// Get genre-specific fallback artists
+  List<Artist> _getGenreFallbackArtists(MusicGenre genre) {
+    switch (genre) {
+      case MusicGenre.pop:
+        return [
+          Artist(
+            id: 'UCqECaJ8Gagnn7YCbPEzWH6g',
+            name: 'Taylor Swift',
+            profileImage: null,
+            subscribers: '62M subscribers',
+          ),
+          Artist(
+            id: 'UC0C-w0YjGpqDXGB8IHb662A',
+            name: 'Ariana Grande',
+            profileImage: null,
+            subscribers: '54M subscribers',
+          ),
+          Artist(
+            id: 'UCN1hnUccO4FD5WfM7ithXaw',
+            name: 'Maroon 5',
+            profileImage: null,
+            subscribers: '39.5M subscribers',
+          ),
+        ];
+      case MusicGenre.rock:
+        return [
+          Artist(
+            id: 'UCHkj014U2CQ2Nv0UZeYpE_A',
+            name: 'Imagine Dragons',
+            profileImage: null,
+            subscribers: '29.8M subscribers',
+          ),
+        ];
+      case MusicGenre.rap:
+        return [
+          Artist(
+            id: 'UC_-lkd5iACZzJ4zE_GOeUXw',
+            name: 'Eminem',
+            profileImage: null,
+            subscribers: '58M subscribers',
+          ),
+        ];
+      case MusicGenre.edm:
+        return [
+          Artist(
+            id: 'UCa10nxShhzNrCE1o2ZOPztg',
+            name: 'Marshmello',
+            profileImage: null,
+            subscribers: '57M subscribers',
+          ),
+        ];
+      default:
+        return _getFallbackArtists();
+    }
+  }
+
+  /// Get comprehensive artist details - all songs, albums, and singles
+  Future<ArtistDetailsExtended?> getArtistDetailsExtended(
+    String artistId,
+  ) async {
+    try {
+      print(
+        '🎤 [YTMusicArtistsScraper] Fetching extended artist data: $artistId',
+      );
+
+      final response = await _makeRequest(
+        endpoint: 'browse',
+        body: {'context': _context, 'browseId': artistId},
+      );
+
+      if (response == null) return null;
+
+      // Extract artist metadata
+      final artistData = _extractArtistMetadata(response, artistId);
+
+      // Extract all songs with pagination
+      final allSongs = await _extractAllSongs(
+        response,
+        artistData['name'] as String,
+        artistId,
+      );
+
+      // Extract all albums with pagination
+      final allAlbums = await _extractAllAlbums(response, artistId);
+
+      // Extract all singles with pagination
+      final allSingles = await _extractAllSingles(response, artistId);
+
+      print(
+        '✅ [YTMusicArtistsScraper] Loaded artist "${artistData['name']}" with ${allSongs.length} songs, ${allAlbums.length} albums, ${allSingles.length} singles',
+      );
+
+      return ArtistDetailsExtended(
+        artist: Artist(
+          id: artistId,
+          name: artistData['name'] as String,
+          profileImage: artistData['profileImage'] as String?,
+          subscribers: artistData['subscribers'] as String,
+        ),
+        allSongs: allSongs,
+        albums: allAlbums,
+        singles: allSingles,
+      );
+    } catch (e) {
+      print('❌ [YTMusicArtistsScraper] Error: $e');
+      return null;
+    }
+  }
+
+  /// Extract all songs from artist with pagination
+  Future<List<Song>> _extractAllSongs(
+    Map<String, dynamic> initialData,
+    String artistName,
+    String artistId,
+  ) async {
+    final songs = <Song>[];
+    String? continuationToken;
+
+    try {
+      // Get initial songs
+      final contents =
+          initialData['contents']?['singleColumnBrowseResultsRenderer']?['tabs']?[0]?['tabRenderer']?['content']?['sectionListRenderer']?['contents']
+              as List?;
+
+      if (contents != null) {
+        for (final section in contents) {
+          var shelf = section['musicShelfRenderer'];
+          shelf ??= section['musicCarouselShelfRenderer'];
+
+          if (shelf == null) continue;
+
+          // Check if this is a songs section
+          final shelfTitle = _extractText(shelf['title']);
+          final isSongs = shelfTitle?.toLowerCase().contains('song') ?? false;
+
+          if (!isSongs) continue;
+
+          final items = shelf['contents'] as List?;
+          if (items != null) {
+            for (final item in items) {
+              final song = _parseSongMetadata(item, artistName);
+              if (song != null) songs.add(song);
+            }
+          }
+
+          // Get continuation token for pagination
+          continuationToken =
+              shelf['continuations']?[0]?['nextContinuationData']?['continuation']
+                  as String?;
+          break;
+        }
+      }
+
+      // Continue fetching with pagination
+      while (continuationToken != null && songs.length < 200) {
+        print('🔄 Fetching more songs... (${songs.length} so far)');
+
+        final continueResponse = await _makeRequest(
+          endpoint: 'browse',
+          body: {'context': _context, 'continuation': continuationToken},
+        );
+
+        if (continueResponse == null) break;
+
+        final continuationContents =
+            continueResponse['continuationContents']?['musicShelfContinuation'];
+
+        if (continuationContents == null) break;
+
+        final items = continuationContents['contents'] as List?;
+        if (items != null) {
+          for (final item in items) {
+            final song = _parseSongMetadata(item, artistName);
+            if (song != null) songs.add(song);
+          }
+        }
+
+        // Get next continuation token
+        continuationToken =
+            continuationContents['continuations']?[0]?['nextContinuationData']?['continuation']
+                as String?;
+
+        // Break if no more items
+        if (items == null || items.isEmpty) break;
+      }
+
+      print('✅ Total songs fetched: ${songs.length}');
+    } catch (e) {
+      print('⚠️ Error extracting all songs: $e');
+    }
+
+    return songs;
+  }
+
+  /// Extract all albums from artist with pagination
+  Future<List<Album>> _extractAllAlbums(
+    Map<String, dynamic> initialData,
+    String artistId,
+  ) async {
+    final albums = <Album>[];
+    String? continuationToken;
+
+    try {
+      // Get initial albums
+      final contents =
+          initialData['contents']?['singleColumnBrowseResultsRenderer']?['tabs']?[0]?['tabRenderer']?['content']?['sectionListRenderer']?['contents']
+              as List?;
+
+      if (contents != null) {
+        for (final section in contents) {
+          final shelf = section['musicCarouselShelfRenderer'];
+          if (shelf == null) continue;
+
+          // Check if this is an albums section
+          final shelfTitle = _extractText(shelf['title']);
+          final isAlbums = shelfTitle?.toLowerCase().contains('album') ?? false;
+
+          if (!isAlbums) continue;
+
+          final items = shelf['contents'] as List?;
+          if (items != null) {
+            for (final item in items) {
+              final album = _parseAlbumMetadata(item);
+              if (album != null) albums.add(album);
+            }
+          }
+
+          // Get continuation token
+          continuationToken =
+              shelf['continuations']?[0]?['nextContinuationData']?['continuation']
+                  as String?;
+          break;
+        }
+      }
+
+      // Continue fetching with pagination
+      while (continuationToken != null && albums.length < 200) {
+        print('🔄 Fetching more albums... (${albums.length} so far)');
+
+        final continueResponse = await _makeRequest(
+          endpoint: 'browse',
+          body: {'context': _context, 'continuation': continuationToken},
+        );
+
+        if (continueResponse == null) break;
+
+        final continuationContents =
+            continueResponse['continuationContents']?['musicCarouselShelfContinuation'];
+
+        if (continuationContents == null) break;
+
+        final items = continuationContents['contents'] as List?;
+        if (items != null) {
+          for (final item in items) {
+            final album = _parseAlbumMetadata(item);
+            if (album != null) albums.add(album);
+          }
+        }
+
+        // Get next continuation token
+        continuationToken =
+            continuationContents['continuations']?[0]?['nextContinuationData']?['continuation']
+                as String?;
+
+        if (items == null || items.isEmpty) break;
+      }
+
+      print('✅ Total albums fetched: ${albums.length}');
+    } catch (e) {
+      print('⚠️ Error extracting all albums: $e');
+    }
+
+    return albums;
+  }
+
+  /// Extract all singles from artist with pagination
+  Future<List<Album>> _extractAllSingles(
+    Map<String, dynamic> initialData,
+    String artistId,
+  ) async {
+    final singles = <Album>[];
+    String? continuationToken;
+
+    try {
+      // Get initial singles
+      final contents =
+          initialData['contents']?['singleColumnBrowseResultsRenderer']?['tabs']?[0]?['tabRenderer']?['content']?['sectionListRenderer']?['contents']
+              as List?;
+
+      if (contents != null) {
+        for (final section in contents) {
+          final shelf = section['musicCarouselShelfRenderer'];
+          if (shelf == null) continue;
+
+          // Check if this is a singles section
+          final shelfTitle = _extractText(shelf['title']);
+          final isSingles =
+              shelfTitle?.toLowerCase().contains('single') ?? false;
+
+          if (!isSingles) continue;
+
+          final items = shelf['contents'] as List?;
+          if (items != null) {
+            for (final item in items) {
+              final single = _parseAlbumMetadata(
+                item,
+              ); // Singles use same format
+              if (single != null) singles.add(single);
+            }
+          }
+
+          // Get continuation token
+          continuationToken =
+              shelf['continuations']?[0]?['nextContinuationData']?['continuation']
+                  as String?;
+          break;
+        }
+      }
+
+      // Continue fetching with pagination
+      while (continuationToken != null && singles.length < 200) {
+        print('🔄 Fetching more singles... (${singles.length} so far)');
+
+        final continueResponse = await _makeRequest(
+          endpoint: 'browse',
+          body: {'context': _context, 'continuation': continuationToken},
+        );
+
+        if (continueResponse == null) break;
+
+        final continuationContents =
+            continueResponse['continuationContents']?['musicCarouselShelfContinuation'];
+
+        if (continuationContents == null) break;
+
+        final items = continuationContents['contents'] as List?;
+        if (items != null) {
+          for (final item in items) {
+            final single = _parseAlbumMetadata(item);
+            if (single != null) singles.add(single);
+          }
+        }
+
+        // Get next continuation token
+        continuationToken =
+            continuationContents['continuations']?[0]?['nextContinuationData']?['continuation']
+                as String?;
+
+        if (items == null || items.isEmpty) break;
+      }
+
+      print('✅ Total singles fetched: ${singles.length}');
+    } catch (e) {
+      print('⚠️ Error extracting all singles: $e');
+    }
+
+    return singles;
+  }
+
+  /// Clear all caches (call on app restart)
+  void clearCaches() {
+    _artistDetailsCache.clear();
+    _genreArtistsCache.clear();
+    _trendingArtistsCache = null;
+    _cacheManager.clearAll();
+    print('🧹 Cleared all artist caches');
   }
 
   /// Dispose resources
@@ -703,4 +1328,41 @@ class ArtistDetails {
     required this.topSongs,
     this.albums = const [],
   });
+  // In ArtistDetails class (add to ytmusic_artists_scraper.dart)
+  Map<String, dynamic> toJson() => {
+    'artist': artist.toJson(),
+    'topSongs': topSongs.map((song) => song.toJson()).toList(),
+    'albums': albums.map((album) => album.toJson()).toList(),
+  };
+
+  factory ArtistDetails.fromJson(Map<String, dynamic> json) => ArtistDetails(
+    artist: Artist.fromJson(json['artist']),
+    topSongs: (json['topSongs'] as List)
+        .map((item) => Song.fromJson(item))
+        .toList(),
+    albums: (json['albums'] as List)
+        .map((item) => Album.fromJson(item))
+        .toList(),
+  );
+}
+
+/// Extended artist details with all songs, albums, and singles
+class ArtistDetailsExtended {
+  final Artist artist;
+  final List<Song> allSongs;
+  final List<Album> albums;
+  final List<Album> singles;
+
+  ArtistDetailsExtended({
+    required this.artist,
+    required this.allSongs,
+    this.albums = const [],
+    this.singles = const [],
+  });
+
+  /// Get top songs (first 10)
+  List<Song> get topSongs => allSongs.take(10).toList();
+
+  /// Get all content count
+  int get totalContent => allSongs.length + albums.length + singles.length;
 }

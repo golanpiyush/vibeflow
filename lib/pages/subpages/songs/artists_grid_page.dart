@@ -1,0 +1,525 @@
+// lib/pages/artists_grid_page.dart
+import 'dart:async';
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:lottie/lottie.dart';
+import 'package:vibeflow/api_base/ytmusic_artists_scraper.dart';
+import 'package:vibeflow/constants/app_spacing.dart';
+import 'package:vibeflow/constants/app_typography.dart';
+import 'package:vibeflow/constants/theme_colors.dart';
+import 'package:vibeflow/models/artist_model.dart';
+import 'package:vibeflow/pages/appearance_page.dart';
+import 'package:vibeflow/pages/artist_view.dart';
+import 'package:vibeflow/pages/subpages/songs/albums.dart';
+import 'package:vibeflow/pages/subpages/songs/albums_grid_page.dart';
+import 'package:vibeflow/pages/subpages/songs/artists.dart';
+import 'package:vibeflow/pages/subpages/songs/playlists.dart';
+import 'package:vibeflow/pages/subpages/songs/savedSongs.dart';
+import 'package:vibeflow/utils/material_transitions.dart';
+import 'package:vibeflow/utils/page_transitions.dart';
+import 'package:vibeflow/widgets/shimmer_loadings.dart';
+
+class ArtistsGridPage extends ConsumerStatefulWidget {
+  const ArtistsGridPage({Key? key}) : super(key: key);
+
+  @override
+  ConsumerState<ArtistsGridPage> createState() => _ArtistsGridPageState();
+}
+
+class _ArtistsGridPageState extends ConsumerState<ArtistsGridPage> {
+  final ScrollController _scrollController = ScrollController();
+  final YTMusicArtistsScraper _artistsScraper = YTMusicArtistsScraper();
+  final TextEditingController _searchController = TextEditingController();
+  final FocusNode _searchFocusNode = FocusNode();
+
+  List<Artist> artists = [];
+  List<Artist> filteredArtists = [];
+  bool isLoadingArtists = false;
+  bool isSearchMode = false;
+  Timer? _debounceTimer;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadArtists();
+  }
+
+  Future<void> _loadArtists() async {
+    if (!mounted) return;
+
+    setState(() => isLoadingArtists = true);
+
+    try {
+      final fetchedArtists = await _artistsScraper.getTrendingArtists(
+        limit: 150,
+      );
+      print('✅ Found ${fetchedArtists.length} artists');
+
+      if (!mounted) return;
+
+      setState(() {
+        artists = fetchedArtists;
+        filteredArtists = fetchedArtists;
+        isLoadingArtists = false;
+      });
+
+      print('📋 filteredArtists now has ${filteredArtists.length} items');
+    } catch (e, stack) {
+      print('❌ Error loading artists: $e');
+      print('Stack: ${stack.toString().split('\n').take(3).join('\n')}');
+      if (!mounted) return;
+      setState(() => isLoadingArtists = false);
+    }
+  }
+
+  void _onSearchChanged(String query) {
+    // Cancel any existing timer
+    _debounceTimer?.cancel();
+
+    // Start a new timer for debouncing
+    _debounceTimer = Timer(const Duration(milliseconds: 300), () {
+      if (mounted) {
+        setState(() {
+          if (query.isEmpty) {
+            filteredArtists = artists;
+          } else {
+            filteredArtists = artists.where((artist) {
+              return artist.name.toLowerCase().contains(query.toLowerCase());
+            }).toList();
+          }
+        });
+      }
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final backgroundColor = ref.watch(themeBackgroundColorProvider);
+
+    return Scaffold(
+      backgroundColor: backgroundColor,
+      body: SafeArea(
+        child: Row(
+          children: [
+            _buildSidebar(context),
+            Expanded(
+              child: Column(
+                children: [
+                  const SizedBox(height: AppSpacing.xxxl),
+                  _buildTopBar(ref),
+                  Expanded(
+                    child: isLoadingArtists
+                        ? _buildLoadingGrid()
+                        : _buildArtistsGrid(),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+      floatingActionButton: Padding(
+        padding: const EdgeInsets.only(bottom: 40.0),
+        child: FloatingActionButton(
+          onPressed: () {
+            setState(() {
+              isSearchMode = !isSearchMode;
+              if (isSearchMode) {
+                _searchFocusNode.requestFocus();
+              } else {
+                _searchController.clear();
+                _searchFocusNode.unfocus();
+                filteredArtists = artists;
+              }
+            });
+          },
+          backgroundColor: ref.watch(themeIconActiveColorProvider),
+          child: Icon(
+            isSearchMode ? Icons.close : Icons.search,
+            color: backgroundColor,
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSidebar(BuildContext context) {
+    final double availableHeight = MediaQuery.of(context).size.height;
+    final iconActiveColor = ref.watch(themeIconActiveColorProvider);
+    final iconInactiveColor = ref.watch(themeTextSecondaryColorProvider);
+    final sidebarLabelColor = ref.watch(themeTextPrimaryColorProvider);
+    final sidebarLabelActiveColor = ref.watch(themeIconActiveColorProvider);
+
+    final sidebarLabelStyle = AppTypography.sidebarLabel.copyWith(
+      color: sidebarLabelColor,
+    );
+    final sidebarLabelActiveStyle = AppTypography.sidebarLabelActive.copyWith(
+      color: sidebarLabelActiveColor,
+    );
+
+    return SizedBox(
+      width: 65,
+      height: availableHeight,
+      child: SingleChildScrollView(
+        child: Column(
+          children: [
+            const SizedBox(height: 200),
+            _buildSidebarItem(
+              icon: Icons.edit_square,
+              label: '',
+              isActive: false,
+              iconActiveColor: iconActiveColor,
+              iconInactiveColor: iconInactiveColor,
+              labelStyle: sidebarLabelStyle,
+              onTap: () {
+                Navigator.of(context).pushFade(const AppearancePage());
+              },
+            ),
+            const SizedBox(height: 32),
+            _buildSidebarItem(
+              label: 'Quick picks',
+              iconActiveColor: iconActiveColor,
+              iconInactiveColor: iconInactiveColor,
+              labelStyle: sidebarLabelStyle,
+              onTap: () {
+                Navigator.of(context).pop();
+              },
+            ),
+            const SizedBox(height: 24),
+            _buildSidebarItem(
+              label: 'Songs',
+              iconActiveColor: iconActiveColor,
+              iconInactiveColor: iconInactiveColor,
+              labelStyle: sidebarLabelStyle,
+              onTap: () {
+                Navigator.of(context).pushMaterialVertical(
+                  const SavedSongsScreen(),
+                  slideUp: true,
+                  enableParallax: true,
+                );
+              },
+            ),
+            const SizedBox(height: 24),
+            _buildSidebarItem(
+              label: 'Playlists',
+              iconActiveColor: iconActiveColor,
+              iconInactiveColor: iconInactiveColor,
+              labelStyle: sidebarLabelStyle,
+              onTap: () {
+                Navigator.of(context).pushMaterialVertical(
+                  const IntegratedPlaylistsScreen(),
+                  slideUp: true,
+                  enableParallax: true,
+                );
+              },
+            ),
+            const SizedBox(height: 24),
+            _buildSidebarItem(
+              label: 'Artists',
+              isActive: true,
+              iconActiveColor: iconActiveColor,
+              iconInactiveColor: iconInactiveColor,
+              labelStyle: sidebarLabelActiveStyle,
+              onTap: () {
+                Navigator.of(
+                  context,
+                ).pushMaterialVertical(const AlbumsGridPage(), slideUp: true);
+              },
+            ),
+            const SizedBox(height: 24),
+            _buildSidebarItem(
+              label: 'Albums',
+              iconActiveColor: iconActiveColor,
+              iconInactiveColor: iconInactiveColor,
+              labelStyle: sidebarLabelStyle,
+              onTap: () {
+                Navigator.of(
+                  context,
+                ).pushMaterialVertical(const AlbumsGridPage(), slideUp: true);
+              },
+            ),
+            const SizedBox(height: 40),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSidebarItem({
+    IconData? icon,
+    required String label,
+    bool isActive = false,
+    required Color iconActiveColor,
+    required Color iconInactiveColor,
+    required TextStyle labelStyle,
+    VoidCallback? onTap,
+  }) {
+    return GestureDetector(
+      onTap: onTap,
+      child: SizedBox(
+        width: 72,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (icon != null) ...[
+              Icon(
+                icon,
+                size: 28,
+                color: isActive ? iconActiveColor : iconInactiveColor,
+              ),
+              const SizedBox(height: 16),
+            ],
+            RotatedBox(
+              quarterTurns: -1,
+              child: Text(
+                label,
+                textAlign: TextAlign.center,
+                style: labelStyle.copyWith(fontSize: 16),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildTopBar(WidgetRef ref) {
+    final textPrimaryColor = ref.watch(themeTextPrimaryColorProvider);
+    final textSecondaryColor = ref.watch(themeTextSecondaryColorProvider);
+    final iconActiveColor = ref.watch(themeIconActiveColorProvider);
+
+    final pageTitleStyle = AppTypography.pageTitle.copyWith(
+      color: textPrimaryColor,
+    );
+    final hintStyle = AppTypography.pageTitle.copyWith(
+      color: textSecondaryColor.withOpacity(0.5),
+    );
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          if (isSearchMode)
+            IconButton(
+              onPressed: () {
+                setState(() {
+                  isSearchMode = false;
+                  _searchController.clear();
+                  _searchFocusNode.unfocus();
+                  filteredArtists = artists;
+                });
+              },
+              icon: Icon(Icons.arrow_back, color: iconActiveColor, size: 28),
+            )
+          else
+            IconButton(
+              onPressed: () => Navigator.of(context).pop(),
+              icon: Icon(Icons.arrow_back, color: iconActiveColor, size: 28),
+            ),
+          Expanded(
+            child: isSearchMode
+                ? TextField(
+                    controller: _searchController,
+                    focusNode: _searchFocusNode,
+                    textAlign: TextAlign.right,
+                    style: pageTitleStyle,
+                    decoration: InputDecoration(
+                      hintText: 'Search artists...',
+                      hintStyle: hintStyle,
+                      border: InputBorder.none,
+                      enabledBorder: InputBorder.none,
+                      focusedBorder: InputBorder.none,
+                      contentPadding: EdgeInsets.zero,
+                    ),
+                    onChanged: _onSearchChanged,
+                  )
+                : Align(
+                    alignment: Alignment.centerRight,
+                    child: Text('Artists', style: pageTitleStyle),
+                  ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildLoadingGrid() {
+    return ShimmerLoading(
+      child: GridView.builder(
+        controller: _scrollController,
+        padding: const EdgeInsets.all(AppSpacing.lg),
+        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+          crossAxisCount: 2,
+          childAspectRatio: 0.85,
+          crossAxisSpacing: AppSpacing.lg,
+          mainAxisSpacing: AppSpacing.xl,
+        ),
+        itemCount: 8,
+        itemBuilder: (context, index) {
+          return Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              SkeletonBox(width: 100, height: 100, borderRadius: 50),
+              const SizedBox(height: AppSpacing.sm),
+              SkeletonBox(width: 100, height: 14, borderRadius: 4),
+              const SizedBox(height: 6),
+              SkeletonBox(width: 70, height: 10, borderRadius: 4),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _buildArtistsGrid() {
+    final textPrimaryColor = ref.watch(themeTextPrimaryColorProvider);
+    final textSecondaryColor = ref.watch(themeTextSecondaryColorProvider);
+
+    if (filteredArtists.isEmpty) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(32.0),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              // Lottie animation for "not found" state
+              SizedBox(
+                height: 380,
+                width: 380,
+                child: Lottie.asset(
+                  'assets/animations/not_found.json',
+                  fit: BoxFit.contain,
+                  animate: true,
+                  repeat: true,
+                ),
+              ),
+              const SizedBox(height: 16),
+              Text(
+                isSearchMode ? 'No artists found' : 'No artists available',
+                style: AppTypography.subtitle.copyWith(
+                  color: textSecondaryColor,
+                ),
+              ),
+              if (isSearchMode) ...[
+                const SizedBox(height: 8),
+                Text(
+                  'Try a different search term',
+                  style: AppTypography.caption.copyWith(
+                    color: textSecondaryColor.withOpacity(0.7),
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+      );
+    }
+
+    return GridView.builder(
+      controller: _scrollController,
+      padding: const EdgeInsets.all(AppSpacing.lg),
+      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: 2,
+        childAspectRatio: 0.85,
+        crossAxisSpacing: AppSpacing.lg,
+        mainAxisSpacing: AppSpacing.xl,
+      ),
+      itemCount: filteredArtists.length,
+      itemBuilder: (context, index) {
+        return _buildArtistCard(filteredArtists[index]);
+      },
+    );
+  }
+
+  Widget _buildArtistCard(Artist artist) {
+    final cardBackgroundColor = ref.watch(themeCardBackgroundColorProvider);
+    final iconInactiveColor = ref.watch(themeTextSecondaryColorProvider);
+    final textPrimaryColor = ref.watch(themeTextPrimaryColorProvider);
+    final textSecondaryColor = ref.watch(themeTextSecondaryColorProvider);
+
+    return GestureDetector(
+      onTap: () {
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (context) => ArtistPage(artist: artist, artistName: ''),
+          ),
+        );
+      },
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          ClipOval(
+            child: Container(
+              width: AppSpacing.artistImageSize,
+              height: AppSpacing.artistImageSize,
+              color: cardBackgroundColor,
+              child: artist.profileImage != null
+                  ? Image.network(
+                      artist.profileImage!,
+                      fit: BoxFit.cover,
+                      loadingBuilder: (context, child, loadingProgress) {
+                        if (loadingProgress == null) return child;
+                        return ShimmerLoading(
+                          child: SkeletonBox(
+                            width: AppSpacing.artistImageSize,
+                            height: AppSpacing.artistImageSize,
+                            borderRadius: AppSpacing.artistImageSize / 2,
+                          ),
+                        );
+                      },
+                      errorBuilder: (context, error, stackTrace) {
+                        return Center(
+                          child: Icon(
+                            Icons.person,
+                            color: iconInactiveColor,
+                            size: 48,
+                          ),
+                        );
+                      },
+                    )
+                  : Center(
+                      child: Icon(
+                        Icons.person,
+                        color: iconInactiveColor,
+                        size: 48,
+                      ),
+                    ),
+            ),
+          ),
+          const SizedBox(height: AppSpacing.sm),
+          Text(
+            artist.name,
+            style: AppTypography.subtitle.copyWith(
+              color: textPrimaryColor,
+              fontWeight: FontWeight.w600,
+            ),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: AppSpacing.xs / 2),
+          Text(
+            artist.subscribers,
+            style: AppTypography.captionSmall.copyWith(
+              color: textSecondaryColor,
+            ),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            textAlign: TextAlign.center,
+          ),
+        ],
+      ),
+    );
+  }
+
+  @override
+  void dispose() {
+    _scrollController.dispose();
+    _searchController.dispose();
+    _searchFocusNode.dispose();
+    _debounceTimer?.cancel();
+    super.dispose();
+  }
+}

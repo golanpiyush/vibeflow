@@ -5,6 +5,7 @@ class Song {
   final String thumbnail;
   final String? duration;
   String? audioUrl;
+  int? id;
 
   Song({
     required this.videoId,
@@ -13,6 +14,7 @@ class Song {
     required this.thumbnail,
     this.duration,
     this.audioUrl,
+    this.id,
   });
 
   String get artistsString => artists.join(', ');
