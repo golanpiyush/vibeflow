@@ -4,6 +4,7 @@ class QuickPick {
   final String videoId;
   final String title;
   final String artists;
+  // final String? audioUrl;
   final String thumbnail;
   final String? duration;
   bool isFavorite;
@@ -12,6 +13,7 @@ class QuickPick {
     required this.videoId,
     required this.title,
     required this.artists,
+    // this.audioUrl,
     required this.thumbnail,
     this.duration,
     this.isFavorite = false,

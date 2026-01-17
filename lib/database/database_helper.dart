@@ -9,7 +9,7 @@ class DatabaseManager {
   DatabaseManager._init();
 
   // Current schema version - increment on each schema change
-  static const int _currentVersion = 1;
+  static const int _currentVersion = 2;
 
   Future<Database> get database async {
     if (_database != null) return _database!;

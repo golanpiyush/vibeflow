@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:vibeflow/main.dart';
 import 'package:vibeflow/models/quick_picks_model.dart';
+import 'package:vibeflow/services/cacheManager.dart';
 import 'package:vibeflow/widgets/recent_listening_speed_dial.dart';
 import 'package:yt_flutter_musicapi/yt_flutter_musicapi.dart';
 import 'package:vibeflow/models/song_model.dart';
@@ -13,6 +14,9 @@ class VibeFlowCore {
 
   YtFlutterMusicapi _ytApi = YtFlutterMusicapi();
   bool _isInitialized = false;
+
+  // Cache expiry duration (YouTube URLs typically last 6 hours)
+  static const Duration _cacheExpiryDuration = Duration(hours: 5);
 
   /// Initialize the API (must be called before using any methods)
   Future<void> initialize() async {
@@ -104,6 +108,7 @@ class VibeFlowCore {
 
   /// Get audio URL for a video ID using fast method
   /// Returns the direct streaming URL or null if unavailable
+  /// Automatically handles cache expiry and refreshes URLs
   Future<String?> getAudioUrl(String videoId, {QuickPick? song}) async {
     _ensureInitialized();
 
@@ -112,11 +117,30 @@ class VibeFlowCore {
       final audioCache = AudioUrlCache();
 
       // Check cache first
-      final cachedUrl = audioCache.getCachedUrl(videoId);
-      if (cachedUrl != null) {
-        print('⚡ [Cache] Using cached URL for $videoId');
-        return cachedUrl;
+      final cachedUrl = await audioCache.getCachedUrl(videoId);
+      if (cachedUrl != null && cachedUrl.isNotEmpty) {
+        // Check if cache is still valid (not expired)
+        final cacheTime = await audioCache.getCacheTime(videoId);
+        if (cacheTime != null) {
+          final age = DateTime.now().difference(cacheTime);
+          if (age < _cacheExpiryDuration) {
+            print(
+              '⚡ [Cache] Using cached URL for $videoId (age: ${age.inMinutes}m)',
+            );
+            return cachedUrl;
+          } else {
+            print(
+              '⏰ [Cache] URL expired for $videoId (age: ${age.inHours}h), fetching fresh...',
+            );
+            await audioCache.remove(videoId);
+          }
+        } else {
+          print('⚡ [Cache] Using cached URL for $videoId');
+          return cachedUrl;
+        }
       }
+
+      print('🔄 [VibeFlowCore] Cache miss, fetching fresh URL...');
 
       // Use the fast method from yt_flutter_musicapi
       final response = await _ytApi.getAudioUrlFast(videoId: videoId);
@@ -126,10 +150,14 @@ class VibeFlowCore {
           response.data!.isNotEmpty) {
         print('✅ [VibeFlowCore] Got audio URL successfully');
 
-        // ✅ Cache the URL if song info is provided
+        // Cache the URL if song info is provided
         if (song != null) {
-          audioCache.cache(song, response.data!);
+          await audioCache.cache(song, response.data!);
           print('💾 [Cache] Cached URL for: ${song.title}');
+        } else {
+          // Cache even without song info using videoId
+          await audioCache.cacheByVideoId(videoId, response.data!);
+          print('💾 [Cache] Cached URL for videoId: $videoId');
         }
 
         return response.data;
@@ -138,11 +166,18 @@ class VibeFlowCore {
         if (response.error != null) {
           print('⚠️ [VibeFlowCore] Error: ${response.error}');
         }
+
+        // Clear bad cache entry
+        await audioCache.remove(videoId);
         return null;
       }
     } catch (e, stack) {
       print('❌ [VibeFlowCore] Error getting audio URL: $e');
       print('Stack trace: ${stack.toString().split('\n').take(3).join('\n')}');
+
+      // Clear cache on error
+      final audioCache = AudioUrlCache();
+      await audioCache.remove(videoId);
       return null;
     }
   }
@@ -155,21 +190,12 @@ class VibeFlowCore {
     int maxRetries = 3,
     Duration retryDelay = const Duration(seconds: 2),
   }) async {
-    final audioCache = AudioUrlCache();
-
-    // Check cache first
-    final cachedUrl = audioCache.getCachedUrl(videoId);
-    if (cachedUrl != null) {
-      print('⚡ [Cache] Using cached URL for $videoId');
-      return cachedUrl;
-    }
-
     for (int attempt = 1; attempt <= maxRetries; attempt++) {
       try {
         print('🔄 [VibeFlowCore] Attempt $attempt/$maxRetries for $videoId');
 
         final url = await getAudioUrl(videoId, song: song);
-        if (url != null) {
+        if (url != null && url.isNotEmpty) {
           return url;
         }
 
@@ -187,6 +213,47 @@ class VibeFlowCore {
 
     print('❌ [VibeFlowCore] All retry attempts failed for $videoId');
     return null;
+  }
+
+  /// Force refresh audio URL (bypass cache)
+  /// Useful when you get a 403 error from an expired URL
+  Future<String?> forceRefreshAudioUrl(
+    String videoId, {
+    QuickPick? song,
+  }) async {
+    _ensureInitialized();
+
+    try {
+      print('🔄 [VibeFlowCore] Force refreshing audio URL for: $videoId');
+
+      // Clear old cache
+      final audioCache = AudioUrlCache();
+      await audioCache.remove(videoId);
+
+      // Fetch fresh URL
+      final response = await _ytApi.getAudioUrlFast(videoId: videoId);
+
+      if (response.success &&
+          response.data != null &&
+          response.data!.isNotEmpty) {
+        print('✅ [VibeFlowCore] Got fresh audio URL');
+
+        // Cache the new URL
+        if (song != null) {
+          await audioCache.cache(song, response.data!);
+        } else {
+          await audioCache.cacheByVideoId(videoId, response.data!);
+        }
+
+        return response.data;
+      }
+
+      print('⚠️ [VibeFlowCore] Failed to get fresh URL');
+      return null;
+    } catch (e) {
+      print('❌ [VibeFlowCore] Error force refreshing: $e');
+      return null;
+    }
   }
 
   /// Check if audio URL is still valid

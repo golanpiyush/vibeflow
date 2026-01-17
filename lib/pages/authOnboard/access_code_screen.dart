@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:vibeflow/api_base/db_actions.dart';
+import 'package:vibeflow/pages/authOnboard/login_page.dart';
 import 'package:vibeflow/pages/authOnboard/profile_setup_screen.dart';
 import 'package:vibeflow/utils/secure_storage.dart';
 
@@ -117,6 +118,12 @@ class _AccessCodeScreenState extends ConsumerState<AccessCodeScreen> {
     if (mounted) {
       Navigator.of(context).pushReplacementNamed('/home');
     }
+  }
+
+  void _navigateToLogin() {
+    Navigator.of(
+      context,
+    ).push(MaterialPageRoute(builder: (context) => const LoginPage()));
   }
 
   @override
@@ -442,7 +449,33 @@ class _AccessCodeScreenState extends ConsumerState<AccessCodeScreen> {
                     ],
                   ),
 
-                  const SizedBox(height: 32),
+                  const SizedBox(height: 24),
+
+                  // Login Button (NEW)
+                  ElevatedButton.icon(
+                    onPressed: _navigateToLogin,
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Theme.of(context).colorScheme.secondary,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 18),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(16),
+                      ),
+                      elevation: 0,
+                      shadowColor: Colors.transparent,
+                    ),
+                    icon: const Icon(Icons.login_rounded, size: 20),
+                    label: Text(
+                      'Already Have an Account? Login',
+                      style: GoogleFonts.inter(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w600,
+                        letterSpacing: -0.2,
+                      ),
+                    ),
+                  ),
+
+                  const SizedBox(height: 16),
 
                   // Continue without code button
                   OutlinedButton(
@@ -461,7 +494,7 @@ class _AccessCodeScreenState extends ConsumerState<AccessCodeScreen> {
                     child: Text(
                       'Continue Without Code',
                       style: GoogleFonts.inter(
-                        fontSize: 16,
+                        fontSize: 15,
                         fontWeight: FontWeight.w600,
                         letterSpacing: -0.2,
                       ),

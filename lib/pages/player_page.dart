@@ -6,8 +6,10 @@ import 'package:audio_service/audio_service.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:just_audio/just_audio.dart';
 import 'package:vibeflow/api_base/vibeflowcore.dart';
 import 'package:vibeflow/constants/app_colors.dart';
+import 'package:auto_size_text/auto_size_text.dart';
 import 'package:vibeflow/constants/theme_colors.dart';
 import 'package:vibeflow/managers/download_manager.dart';
 import 'package:vibeflow/models/DBSong.dart';
@@ -101,40 +103,19 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
 
   Future<void> _playInitialSong() async {
     try {
-      final core = VibeFlowCore();
-      await core.initialize();
+      print('🎵 [PlayerScreen] Playing song: ${widget.song.title}');
 
-      // Get audio URL with error handling
-      final audioUrl = await core.getAudioUrlWithRetry(
-        widget.song.videoId,
-        maxRetries: 3,
-      );
-
-      if (audioUrl == null || audioUrl.isEmpty) {
-        // 📳 VIBRATE: na-na pattern for audio error
-        await HapticFeedbackService().vibrateCriticalError();
-        // Show error overlay
-        setState(() {
-          _hasAudioError = true;
-          _errorMessage = 'Unable to load audio';
-          _detailedError =
-              'Failed to retrieve audio stream for "${widget.song.title}".\n\n'
-              'Possible causes:\n'
-              '• Video ID: ${widget.song.videoId}\n'
-              '• The audio source may be unavailable\n'
-              '• Now Broken Engine\n'
-              '• YouTube API changes';
-        });
-        _errorOverlayController.forward();
-        return;
-      }
-
-      // Play song normally
+      // Just call playSong - it handles audio URL fetching internally
       await _audioService.playSong(widget.song);
+
+      print('✅ [PlayerScreen] Song started successfully');
     } catch (e, stackTrace) {
+      print('❌ [PlayerScreen] Playback error: $e');
+
       // 📳 VIBRATE: Triple pattern for critical error
       await HapticFeedbackService().vibrateCriticalError();
-      // Detailed error for debugging
+
+      // Show error overlay
       setState(() {
         _hasAudioError = true;
         _errorMessage = 'Playback Error';
@@ -147,7 +128,6 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
             '${stackTrace.toString().split('\n').take(5).join('\n')}';
       });
       _errorOverlayController.forward();
-      print('❌ [PlayerScreen] Playback error: $e');
     }
   }
 
@@ -838,54 +818,62 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
                           flex: 1,
                           child: SizedBox(height: availableSpace * 0.1),
                         ),
-
                         // Song Info
                         Container(
                           height: songInfoHeight,
                           padding: const EdgeInsets.symmetric(horizontal: 24.0),
                           child: Column(
                             mainAxisAlignment: MainAxisAlignment.center,
+                            mainAxisSize: MainAxisSize.min,
                             children: [
-                              Text(
-                                currentMedia?.title ?? widget.song.title,
-                                style: GoogleFonts.cabin(
-                                  color: ref.watch(
-                                    themeTextPrimaryColorProvider,
+                              Flexible(
+                                flex: 3,
+                                child: AutoSizeText(
+                                  currentMedia?.title ?? widget.song.title,
+                                  style: GoogleFonts.cabin(
+                                    color: ref.watch(
+                                      themeTextPrimaryColorProvider,
+                                    ),
+                                    fontSize: (screenWidth * 0.055).clamp(
+                                      20.0,
+                                      26.0,
+                                    ),
+                                    fontWeight: FontWeight.w400,
+                                    letterSpacing: 0.6,
                                   ),
-                                  fontSize: (screenWidth * 0.055).clamp(
-                                    20.0,
-                                    26.0,
-                                  ),
-                                  fontWeight: FontWeight.w400,
-                                  letterSpacing: 0.6,
+                                  textAlign: TextAlign.center,
+                                  maxLines: 2,
+                                  minFontSize: 16,
+                                  maxFontSize: 26,
+                                  overflow: TextOverflow.ellipsis,
                                 ),
-                                textAlign: TextAlign.center,
-                                maxLines: 2,
-                                overflow: TextOverflow.ellipsis,
                               ),
-
-                              const SizedBox(height: 8),
-                              Text(
-                                currentMedia?.artist ?? widget.song.artists,
-                                style: GoogleFonts.dancingScript(
-                                  color: ref.watch(
-                                    themeTextSecondaryColorProvider,
+                              const SizedBox(height: 6),
+                              Flexible(
+                                flex: 1,
+                                child: AutoSizeText(
+                                  currentMedia?.artist ?? widget.song.artists,
+                                  style: GoogleFonts.dancingScript(
+                                    color: ref.watch(
+                                      themeTextSecondaryColorProvider,
+                                    ),
+                                    fontSize: (screenWidth * 0.04).clamp(
+                                      14.0,
+                                      18.0,
+                                    ),
+                                    fontWeight: FontWeight.w800,
+                                    letterSpacing: 0.7,
                                   ),
-                                  fontSize: (screenWidth * 0.04).clamp(
-                                    14.0,
-                                    18.0,
-                                  ),
-                                  fontWeight: FontWeight.w800,
-                                  letterSpacing: 0.7,
+                                  textAlign: TextAlign.center,
+                                  maxLines: 1,
+                                  minFontSize: 12,
+                                  maxFontSize: 18,
+                                  overflow: TextOverflow.ellipsis,
                                 ),
-                                textAlign: TextAlign.center,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
                               ),
                             ],
                           ),
                         ),
-
                         // Progress Bar
                         StreamBuilder<Duration>(
                           stream: _audioService.positionStream,
@@ -1019,8 +1007,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
                                         ? Icons.favorite_rounded
                                         : Icons.favorite_border_rounded,
                                     color: widget.song.isFavorite
-                                        ? Colors
-                                              .red // Keep red for favorite state
+                                        ? Colors.red
                                         : ref.watch(
                                             themeTextSecondaryColorProvider,
                                           ),
@@ -1076,8 +1063,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
                                           : isPlaying
                                           ? Icons.pause_rounded
                                           : Icons.play_arrow_rounded,
-                                      color:
-                                          backgroundColor, // Use background color for contrast
+                                      color: backgroundColor,
                                       size: 36,
                                     ),
                                     onPressed: () {
@@ -1100,51 +1086,84 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
                                   },
                                 ),
 
-                                // Repeat
-                                IconButton(
-                                  icon: Icon(
-                                    Icons.repeat_rounded,
-                                    color: ref.watch(
-                                      themeTextSecondaryColorProvider,
-                                    ),
-                                    size: 26,
-                                  ),
-                                  onPressed: () {},
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
+                                // Loop/Repeat Button
+                                StreamBuilder<LoopMode>(
+                                  stream: _audioService.loopModeStream,
+                                  builder: (context, snapshot) {
+                                    final loopMode =
+                                        snapshot.data ?? LoopMode.off;
+                                    Color loopColor;
+                                    IconData loopIcon;
+                                    String? loopTooltip;
 
-                        // Bottom Controls
-                        SizedBox(
-                          height: bottomControlsHeight,
-                          child: Padding(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 24.0,
-                            ),
-                            child: Row(
-                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                              children: [
-                                IconButton(
-                                  icon: Icon(
-                                    Icons.queue_music_rounded,
-                                    color: ref.watch(
-                                      themeTextSecondaryColorProvider,
-                                    ),
-                                    size: 26,
-                                  ),
-                                  onPressed: () => _showAddToPlaylistSheet(),
-                                ),
-                                IconButton(
-                                  icon: Icon(
-                                    Icons.radio_rounded,
-                                    color: ref.watch(
-                                      themeTextSecondaryColorProvider,
-                                    ),
-                                    size: 26,
-                                  ),
-                                  onPressed: _showRadioBottomSheet,
+                                    switch (loopMode) {
+                                      case LoopMode.one:
+                                        loopColor = Colors
+                                            .orange; // Active color for single loop
+                                        loopIcon = Icons.repeat_one_rounded;
+                                        loopTooltip = 'Looping current song';
+                                        break;
+                                      case LoopMode.all:
+                                        loopColor = ref.watch(
+                                          themeIconActiveColorProvider,
+                                        ); // Active color for playlist loop
+                                        loopIcon = Icons.repeat_rounded;
+                                        loopTooltip = 'Looping playlist';
+                                        break;
+                                      case LoopMode.off:
+                                      default:
+                                        loopColor = ref.watch(
+                                          themeTextSecondaryColorProvider,
+                                        ); // Inactive color
+                                        loopIcon = Icons.repeat_rounded;
+                                        loopTooltip = 'No loop';
+                                        break;
+                                    }
+
+                                    return IconButton(
+                                      icon: Icon(
+                                        loopIcon,
+                                        color: loopColor,
+                                        size: 26,
+                                      ),
+                                      onPressed: () {
+                                        // Cycle through loop modes: off → all → one → off
+                                        switch (loopMode) {
+                                          case LoopMode.off:
+                                            _audioService.setLoopMode(
+                                              LoopMode.all,
+                                            );
+                                            break;
+                                          case LoopMode.all:
+                                            _audioService.setLoopMode(
+                                              LoopMode.one,
+                                            );
+                                            break;
+                                          case LoopMode.one:
+                                            _audioService.setLoopMode(
+                                              LoopMode.off,
+                                            );
+                                            break;
+                                        }
+
+                                        // Optional: Show a quick toast or tooltip
+                                        ScaffoldMessenger.of(
+                                          context,
+                                        ).showSnackBar(
+                                          SnackBar(
+                                            content: Text(loopTooltip!),
+                                            duration: const Duration(
+                                              seconds: 1,
+                                            ),
+                                            backgroundColor: ref.watch(
+                                              themeCardBackgroundColorProvider,
+                                            ),
+                                          ),
+                                        );
+                                      },
+                                      tooltip: loopTooltip,
+                                    );
+                                  },
                                 ),
                               ],
                             ),

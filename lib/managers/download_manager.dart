@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'dart:convert';
+import 'dart:async';
 import 'package:dio/dio.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:path/path.dart' as path;
@@ -9,158 +10,109 @@ import 'package:shared_preferences/shared_preferences.dart';
 class DownloadService {
   static final DownloadService instance = DownloadService._internal();
   factory DownloadService() => instance;
-  DownloadService._internal();
 
-  // Version management for app updates
   static const String _currentVersion = '1.0.0';
   static const String _versionKey = 'download_service_version';
   static const String _downloadDirKey = 'download_directory_path';
 
-  // Highly optimized Dio instance
-  final Dio _dio = Dio(
-    BaseOptions(
-      connectTimeout: const Duration(seconds: 10),
-      receiveTimeout: const Duration(minutes: 15),
-      sendTimeout: const Duration(minutes: 5),
-      receiveDataWhenStatusError: true,
-      followRedirects: true,
-      maxRedirects: 5,
-      validateStatus: (status) => status! < 500,
-    ),
-  );
+  // ULTRA OPTIMIZED: Multiple Dio instances for parallel chunks
+  late final Dio _mainDio;
+  late final List<Dio> _chunkDios;
 
-  // Track active downloads
   final Map<String, CancelToken> _activeDownloads = {};
   final Map<String, DownloadProgress> _downloadProgress = {};
 
-  // Track last print time to avoid console spam
-  final Map<String, DateTime> _lastPrintTime = {};
+  DownloadService._internal() {
+    _initializeDio();
+  }
 
-  /// Initialize download directory with persistence across updates
+  void _initializeDio() {
+    // Main Dio with aggressive settings
+    _mainDio = Dio(
+      BaseOptions(
+        connectTimeout: const Duration(seconds: 10),
+        receiveTimeout: const Duration(minutes: 30),
+        sendTimeout: const Duration(minutes: 5),
+        followRedirects: true,
+        maxRedirects: 5,
+        validateStatus: (status) => status! < 500,
+        headers: _getOptimalHeaders(),
+      ),
+    );
+
+    // Create 4 Dio instances for parallel chunk downloads
+    _chunkDios = List.generate(
+      4,
+      (_) => Dio(
+        BaseOptions(
+          connectTimeout: const Duration(seconds: 10),
+          receiveTimeout: const Duration(minutes: 30),
+          followRedirects: true,
+          maxRedirects: 5,
+          validateStatus: (status) => status! < 500,
+          headers: _getOptimalHeaders(),
+        ),
+      ),
+    );
+  }
+
+  Map<String, String> _getOptimalHeaders() {
+    return {
+      'User-Agent':
+          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+      'Accept': '*/*',
+      'Accept-Language': 'en-US,en;q=0.9',
+      'Accept-Encoding': 'identity', // CRITICAL: Disable compression for speed
+      'Connection': 'keep-alive',
+      'DNT': '1',
+      'Sec-Fetch-Dest': 'audio',
+      'Sec-Fetch-Mode': 'no-cors',
+      'Sec-Fetch-Site': 'cross-site',
+      'Sec-Ch-Ua':
+          '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"',
+      'Sec-Ch-Ua-Mobile': '?0',
+      'Sec-Ch-Ua-Platform': '"Windows"',
+    };
+  }
+
   Future<Directory> _getDownloadDirectory() async {
     final prefs = await SharedPreferences.getInstance();
-
-    // Check for version mismatch (app update)
-    final savedVersion = prefs.getString(_versionKey);
-    if (savedVersion != _currentVersion) {
-      debugPrint('App updated from $savedVersion to $_currentVersion');
-      await _handleAppUpdate(prefs, savedVersion);
-    }
-
-    // Try to get saved directory path first
     final savedPath = prefs.getString(_downloadDirKey);
 
     if (savedPath != null) {
       final savedDir = Directory(savedPath);
-      if (await savedDir.exists()) {
-        debugPrint('Using existing download directory: $savedPath');
-        return savedDir;
-      }
+      if (await savedDir.exists()) return savedDir;
     }
 
-    // Create new directory in external/internal storage
     Directory downloadDir;
-
     if (Platform.isAndroid) {
-      // Try external storage first (survives app updates)
       try {
         final externalDir = await getExternalStorageDirectory();
-        if (externalDir != null) {
-          downloadDir = Directory('${externalDir.path}/VibeFlow/downloads');
-        } else {
-          // Fallback to app documents
-          final appDocDir = await getApplicationDocumentsDirectory();
-          downloadDir = Directory('${appDocDir.path}/downloads');
-        }
+        downloadDir = externalDir != null
+            ? Directory('${externalDir.path}/VibeFlow/downloads')
+            : Directory(
+                '${(await getApplicationDocumentsDirectory()).path}/downloads',
+              );
       } catch (e) {
-        debugPrint('External storage not available: $e');
-        final appDocDir = await getApplicationDocumentsDirectory();
-        downloadDir = Directory('${appDocDir.path}/downloads');
+        downloadDir = Directory(
+          '${(await getApplicationDocumentsDirectory()).path}/downloads',
+        );
       }
     } else {
-      // iOS - use documents directory
-      final appDocDir = await getApplicationDocumentsDirectory();
-      downloadDir = Directory('${appDocDir.path}/downloads');
+      downloadDir = Directory(
+        '${(await getApplicationDocumentsDirectory()).path}/downloads',
+      );
     }
 
     if (!await downloadDir.exists()) {
       await downloadDir.create(recursive: true);
-      debugPrint('Created download directory: ${downloadDir.path}');
     }
 
-    // Save directory path for future use
     await prefs.setString(_downloadDirKey, downloadDir.path);
     await prefs.setString(_versionKey, _currentVersion);
-
     return downloadDir;
   }
 
-  /// Handle app updates - verify and migrate downloads if needed
-  Future<void> _handleAppUpdate(
-    SharedPreferences prefs,
-    String? oldVersion,
-  ) async {
-    try {
-      debugPrint('Handling app update from $oldVersion to $_currentVersion');
-
-      // Verify existing downloads are still accessible
-      final savedPath = prefs.getString(_downloadDirKey);
-      if (savedPath != null) {
-        final dir = Directory(savedPath);
-        if (await dir.exists()) {
-          // Verify metadata files are readable
-          await _verifyDownloadIntegrity(dir);
-          debugPrint('Downloads verified successfully after update');
-        }
-      }
-
-      // Update version
-      await prefs.setString(_versionKey, _currentVersion);
-    } catch (e) {
-      debugPrint('Error handling app update: $e');
-    }
-  }
-
-  /// Verify download integrity after updates
-  Future<void> _verifyDownloadIntegrity(Directory downloadDir) async {
-    try {
-      final files = await downloadDir.list().toList();
-      int validFiles = 0;
-      int corruptedFiles = 0;
-
-      for (final file in files) {
-        if (file is File && file.path.endsWith('_metadata.json')) {
-          try {
-            final content = await file.readAsString();
-            final json = jsonDecode(content);
-
-            // Verify audio file exists
-            final audioPath = json['audioPath'];
-            if (audioPath != null) {
-              final audioFile = File(audioPath);
-              if (await audioFile.exists() && await audioFile.length() > 0) {
-                validFiles++;
-              } else {
-                debugPrint('Missing audio for: ${json['title']}');
-                corruptedFiles++;
-              }
-            }
-          } catch (e) {
-            debugPrint('Corrupted metadata file: ${file.path}');
-            corruptedFiles++;
-          }
-        }
-      }
-
-      debugPrint(
-        'Download integrity check: $validFiles valid, $corruptedFiles corrupted',
-      );
-    } catch (e) {
-      debugPrint('Error verifying downloads: $e');
-    }
-  }
-
-  /// Download a song with metadata and audio
   Future<DownloadResult> downloadSong({
     required String videoId,
     required String audioUrl,
@@ -171,123 +123,104 @@ class DownloadService {
   }) async {
     final cancelToken = CancelToken();
     _activeDownloads[videoId] = cancelToken;
-    _lastPrintTime[videoId] = DateTime.now();
-
     final startTime = DateTime.now();
 
     try {
       final downloadDir = await _getDownloadDirectory();
-
-      // Sanitize filename
       final sanitizedTitle = _sanitizeFilename(title);
       final audioFileName = '${videoId}_$sanitizedTitle.m4a';
       final audioFilePath = path.join(downloadDir.path, audioFileName);
 
       // Check if already downloaded
       final audioFile = File(audioFilePath);
-      if (await audioFile.exists()) {
-        final fileSize = await audioFile.length();
-        if (fileSize > 0) {
-          debugPrint('Song already downloaded: $audioFilePath');
-          return DownloadResult(
-            success: true,
-            audioPath: audioFilePath,
-            thumbnailPath: await _getThumbnailPath(videoId, downloadDir),
-            message: 'Already downloaded',
-          );
-        }
-      }
-
-      // Update progress
-      _updateProgress(videoId, 0.0, 'Starting download...');
-      print('🎵 Starting download: $title');
-
-      // Download thumbnail first (small file, quick)
-      String? thumbnailPath;
-      try {
-        thumbnailPath = await _downloadThumbnail(
-          videoId: videoId,
-          thumbnailUrl: thumbnailUrl,
-          downloadDir: downloadDir,
-          cancelToken: cancelToken,
+      if (await audioFile.exists() && await audioFile.length() > 10000) {
+        print('✓ Already downloaded: $title');
+        return DownloadResult(
+          success: true,
+          audioPath: audioFilePath,
+          thumbnailPath: await _getThumbnailPath(videoId, downloadDir),
+          message: 'Already downloaded',
         );
-        _updateProgress(videoId, 0.05, 'Thumbnail downloaded');
-        print('✓ Thumbnail downloaded');
-      } catch (e) {
-        debugPrint('Thumbnail download failed: $e');
-        // Continue even if thumbnail fails
       }
 
-      // Download audio with optimized settings
-      print('📥 Downloading audio...');
-      int lastReceivedBytes = 0;
-      DateTime lastSpeedCheck = DateTime.now();
+      print('🎵 Starting download: $title');
+      _updateProgress(videoId, 0.0, 'Starting...');
 
-      await _downloadWithOptimization(
-        url: audioUrl,
-        savePath: audioFilePath,
+      // Download thumbnail (non-blocking)
+      String? thumbnailPath;
+      _downloadThumbnail(
+        videoId: videoId,
+        thumbnailUrl: thumbnailUrl,
+        downloadDir: downloadDir,
         cancelToken: cancelToken,
-        onProgress: (received, total) {
-          final progress = total > 0 ? (received / total) * 0.95 + 0.05 : 0.05;
-          final percentage = (progress * 100).toStringAsFixed(1);
-          final receivedMB = (received / (1024 * 1024)).toStringAsFixed(2);
-          final totalMB = total > 0
-              ? (total / (1024 * 1024)).toStringAsFixed(2)
-              : '?';
+      ).then((path) => thumbnailPath = path).catchError((e) {
+        debugPrint('Thumbnail failed: $e');
+      });
 
-          _updateProgress(videoId, progress, 'Downloading: $percentage%');
+      print('📥 Downloading audio with parallel chunks...');
 
-          // Calculate download speed
-          final now = DateTime.now();
-          final timeDiff = now.difference(lastSpeedCheck).inMilliseconds;
+      // STRATEGY 1: Try parallel chunk download first (fastest)
+      bool useParallel = await _supportsRangeRequests(audioUrl);
 
-          // Print every 2 seconds or every 10% to avoid spam but show good updates
-          final shouldPrint =
-              timeDiff > 2000 || (progress * 100).floor() % 10 == 0;
-
-          if (shouldPrint && timeDiff > 0) {
-            final bytesDiff = received - lastReceivedBytes;
-            final speedMBps = (bytesDiff / timeDiff) * 1000 / (1024 * 1024);
-
-            final speedText = speedMBps >= 1
-                ? '${speedMBps.toStringAsFixed(2)} MB/s'
-                : '${(speedMBps * 1024).toStringAsFixed(0)} KB/s';
-
-            // Calculate ETA
-            String etaText = '';
-            if (total > 0 && speedMBps > 0) {
-              final remainingBytes = total - received;
-              final etaSeconds = (remainingBytes / (1024 * 1024)) / speedMBps;
-              if (etaSeconds < 60) {
-                etaText = ' | ETA: ${etaSeconds.toStringAsFixed(0)}s';
-              } else {
-                etaText = ' | ETA: ${(etaSeconds / 60).toStringAsFixed(1)}m';
-              }
-            }
-
-            print(
-              '📊 $percentage% ($receivedMB/$totalMB MB) | Speed: $speedText$etaText',
+      if (useParallel) {
+        print('⚡ Using parallel chunk download (4 connections)');
+        await _parallelChunkDownload(
+          url: audioUrl,
+          savePath: audioFilePath,
+          cancelToken: cancelToken,
+          onProgress: (received, total) {
+            final progress = total > 0
+                ? (received / total) * 0.95 + 0.05
+                : 0.05;
+            _updateProgress(
+              videoId,
+              progress,
+              'Downloading: ${(progress * 100).toStringAsFixed(1)}%',
             );
 
-            lastReceivedBytes = received;
-            lastSpeedCheck = now;
-            _lastPrintTime[videoId] = now;
-          }
+            if ((progress * 100).floor() % 5 == 0) {
+              print(
+                '📊 ${(progress * 100).toStringAsFixed(1)}% (${(received / (1024 * 1024)).toStringAsFixed(2)}/${(total / (1024 * 1024)).toStringAsFixed(2)} MB)',
+              );
+            }
+            onProgress?.call(progress);
+          },
+        );
+      } else {
+        // STRATEGY 2: Single connection with optimizations
+        print('📡 Using single connection (server doesn\'t support ranges)');
+        await _optimizedSingleDownload(
+          url: audioUrl,
+          savePath: audioFilePath,
+          cancelToken: cancelToken,
+          onProgress: (received, total) {
+            final progress = total > 0
+                ? (received / total) * 0.95 + 0.05
+                : 0.05;
+            _updateProgress(
+              videoId,
+              progress,
+              'Downloading: ${(progress * 100).toStringAsFixed(1)}%',
+            );
 
-          onProgress?.call(progress);
-        },
-      );
+            if ((progress * 100).floor() % 5 == 0) {
+              print(
+                '📊 ${(progress * 100).toStringAsFixed(1)}% (${(received / (1024 * 1024)).toStringAsFixed(2)}/${(total / (1024 * 1024)).toStringAsFixed(2)} MB)',
+              );
+            }
+            onProgress?.call(progress);
+          },
+        );
+      }
 
-      final downloadDuration = DateTime.now().difference(startTime);
+      final duration = DateTime.now().difference(startTime);
       final fileSize = await File(audioFilePath).length();
-      final avgSpeedMBps =
-          (fileSize / (1024 * 1024)) / downloadDuration.inSeconds;
+      final speedMBps = (fileSize / (1024 * 1024)) / duration.inSeconds;
 
       print(
-        '✓ Audio download complete in ${downloadDuration.inSeconds}s (Avg: ${avgSpeedMBps.toStringAsFixed(2)} MB/s)',
+        '✅ Complete in ${duration.inSeconds}s (${speedMBps.toStringAsFixed(2)} MB/s)',
       );
 
-      // Save metadata
       await _saveMetadata(
         videoId: videoId,
         title: title,
@@ -297,104 +230,201 @@ class DownloadService {
         downloadDir: downloadDir,
       );
 
-      _updateProgress(videoId, 1.0, 'Download complete');
+      _updateProgress(videoId, 1.0, 'Complete');
       _activeDownloads.remove(videoId);
-      _lastPrintTime.remove(videoId);
-
-      print('✅ Download completed successfully: $title');
 
       return DownloadResult(
         success: true,
         audioPath: audioFilePath,
         thumbnailPath: thumbnailPath,
-        message: 'Download completed successfully',
-      );
-    } on DioException catch (e) {
-      _activeDownloads.remove(videoId);
-      _lastPrintTime.remove(videoId);
-
-      if (e.type == DioExceptionType.cancel) {
-        print('❌ Download cancelled: $title');
-        return DownloadResult(success: false, message: 'Download cancelled');
-      }
-
-      print('❌ Download failed: ${e.message}');
-      return DownloadResult(
-        success: false,
-        message: 'Download failed: ${e.message}',
+        message: 'Download complete',
       );
     } catch (e) {
       _activeDownloads.remove(videoId);
-      _lastPrintTime.remove(videoId);
-      print('❌ Download error: $e');
-      return DownloadResult(success: false, message: 'Download failed: $e');
+      print('❌ Download failed: $e');
+      return DownloadResult(success: false, message: 'Failed: $e');
     }
   }
 
-  /// Optimized download with maximum speed settings
-  Future<void> _downloadWithOptimization({
+  /// Check if server supports range requests
+  Future<bool> _supportsRangeRequests(String url) async {
+    try {
+      final response = await _mainDio.head(url);
+      final acceptRanges = response.headers.value('accept-ranges');
+      final contentLength = response.headers.value('content-length');
+
+      // Server must support ranges and have known size
+      return acceptRanges == 'bytes' && contentLength != null;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  /// PARALLEL CHUNK DOWNLOAD: Download file in 4 parallel chunks
+  Future<void> _parallelChunkDownload({
     required String url,
     required String savePath,
     required CancelToken cancelToken,
     required Function(int, int) onProgress,
   }) async {
-    final file = File(savePath);
-    int downloadedBytes = 0;
+    // Get file size
+    final headResponse = await _mainDio.head(url);
+    final totalSize = int.parse(headResponse.headers.value('content-length')!);
 
-    // Check if partial file exists
-    if (await file.exists()) {
-      downloadedBytes = await file.length();
-      print(
-        '📂 Resuming from ${(downloadedBytes / (1024 * 1024)).toStringAsFixed(2)} MB',
+    if (totalSize < 1024 * 1024) {
+      // File too small for parallel download
+      return _optimizedSingleDownload(
+        url: url,
+        savePath: savePath,
+        cancelToken: cancelToken,
+        onProgress: onProgress,
       );
     }
 
-    // Maximum speed optimization
-    await _dio.download(
-      url,
-      savePath,
-      cancelToken: cancelToken,
-      deleteOnError: false,
-      options: Options(
-        headers: {
-          if (downloadedBytes > 0) 'Range': 'bytes=$downloadedBytes-',
-          'Accept': '*/*',
-          'Accept-Encoding': 'gzip, deflate, br',
-          'Connection': 'keep-alive',
-          'User-Agent':
-              'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-        },
-        responseType: ResponseType.stream,
-        receiveTimeout: const Duration(minutes: 15),
-        sendTimeout: const Duration(minutes: 5),
-        followRedirects: true,
-        maxRedirects: 5,
-      ),
-      onReceiveProgress: (received, total) {
-        final totalBytes = total > 0 ? total : received;
-        final currentBytes = received + downloadedBytes;
-        onProgress(currentBytes, totalBytes + downloadedBytes);
-      },
+    final chunkSize = (totalSize / 4).ceil();
+    final file = File(savePath);
+
+    // Create empty file
+    final raf = await file.open(mode: FileMode.write);
+    await raf.truncate(totalSize);
+    await raf.close();
+
+    print('📦 File size: ${(totalSize / (1024 * 1024)).toStringAsFixed(2)} MB');
+    print(
+      '🔀 Downloading 4 chunks of ${(chunkSize / (1024 * 1024)).toStringAsFixed(2)} MB each',
     );
+
+    // Download progress tracking
+    final chunkProgress = List<int>.filled(4, 0);
+    final completer = Completer<void>();
+    int completedChunks = 0;
+
+    // Download chunks in parallel
+    for (int i = 0; i < 4; i++) {
+      final start = i * chunkSize;
+      final end = (i == 3) ? totalSize - 1 : (start + chunkSize - 1);
+
+      _downloadChunk(
+        url: url,
+        savePath: savePath,
+        start: start,
+        end: end,
+        chunkIndex: i,
+        dio: _chunkDios[i],
+        cancelToken: cancelToken,
+        onProgress: (received) {
+          chunkProgress[i] = received;
+          final totalReceived = chunkProgress.reduce((a, b) => a + b);
+          onProgress(totalReceived, totalSize);
+        },
+        onComplete: () {
+          completedChunks++;
+          print('✓ Chunk ${i + 1}/4 complete');
+          if (completedChunks == 4) {
+            completer.complete();
+          }
+        },
+      ).catchError((e) {
+        if (!completer.isCompleted) {
+          completer.completeError(e);
+        }
+      });
+    }
+
+    await completer.future;
   }
 
-  /// Download thumbnail
+  /// Download a single chunk
+  Future<void> _downloadChunk({
+    required String url,
+    required String savePath,
+    required int start,
+    required int end,
+    required int chunkIndex,
+    required Dio dio,
+    required CancelToken cancelToken,
+    required Function(int) onProgress,
+    required Function() onComplete,
+  }) async {
+    final response = await dio.get<ResponseBody>(
+      url,
+      cancelToken: cancelToken,
+      options: Options(
+        headers: {'Range': 'bytes=$start-$end'},
+        responseType: ResponseType.stream,
+        validateStatus: (status) => status == 206 || status == 200,
+      ),
+    );
+
+    final file = File(savePath);
+    final raf = await file.open(mode: FileMode.writeOnly);
+    await raf.setPosition(start);
+
+    int received = 0;
+    await for (final chunk in response.data!.stream) {
+      if (cancelToken.isCancelled) break;
+      await raf.writeFrom(chunk);
+      received += chunk.length;
+      onProgress(received);
+    }
+
+    await raf.close();
+    onComplete();
+  }
+
+  /// OPTIMIZED SINGLE DOWNLOAD: For servers that don't support ranges
+  Future<void> _optimizedSingleDownload({
+    required String url,
+    required String savePath,
+    required CancelToken cancelToken,
+    required Function(int, int) onProgress,
+  }) async {
+    final response = await _mainDio.get<ResponseBody>(
+      url,
+      cancelToken: cancelToken,
+      options: Options(
+        responseType: ResponseType.stream,
+        headers: {
+          'Accept-Encoding': 'identity', // No compression
+        },
+      ),
+    );
+
+    final totalSize = int.parse(
+      response.headers.value('content-length') ?? '0',
+    );
+
+    final file = File(savePath);
+    final raf = await file.open(mode: FileMode.write);
+
+    try {
+      int received = 0;
+      await for (final chunk in response.data!.stream) {
+        if (cancelToken.isCancelled) break;
+        await raf.writeFrom(chunk);
+        received += chunk.length;
+        onProgress(received, totalSize);
+      }
+    } finally {
+      await raf.close();
+    }
+  }
+
   Future<String?> _downloadThumbnail({
     required String videoId,
     required String thumbnailUrl,
     required Directory downloadDir,
     required CancelToken cancelToken,
   }) async {
-    final thumbnailFileName = '${videoId}_thumbnail.jpg';
-    final thumbnailPath = path.join(downloadDir.path, thumbnailFileName);
+    final thumbnailPath = path.join(
+      downloadDir.path,
+      '${videoId}_thumbnail.jpg',
+    );
+    final file = File(thumbnailPath);
 
-    // Check if already exists
-    final thumbnailFile = File(thumbnailPath);
-    if (await thumbnailFile.exists()) {
-      return thumbnailPath;
-    }
+    if (await file.exists()) return thumbnailPath;
 
-    await _dio.download(
+    await _mainDio.download(
       thumbnailUrl,
       thumbnailPath,
       cancelToken: cancelToken,
@@ -407,7 +437,6 @@ class DownloadService {
     return thumbnailPath;
   }
 
-  /// Save metadata to JSON file
   Future<void> _saveMetadata({
     required String videoId,
     required String title,
@@ -419,7 +448,6 @@ class DownloadService {
     final metadataFile = File(
       path.join(downloadDir.path, '${videoId}_metadata.json'),
     );
-
     final metadata = {
       'videoId': videoId,
       'title': title,
@@ -434,7 +462,6 @@ class DownloadService {
     );
   }
 
-  /// Get thumbnail path if exists
   Future<String?> _getThumbnailPath(
     String videoId,
     Directory downloadDir,
@@ -443,57 +470,38 @@ class DownloadService {
       downloadDir.path,
       '${videoId}_thumbnail.jpg',
     );
-    final file = File(thumbnailPath);
-    return await file.exists() ? thumbnailPath : null;
+    return await File(thumbnailPath).exists() ? thumbnailPath : null;
   }
 
-  /// Cancel a download
   void cancelDownload(String videoId) {
     final cancelToken = _activeDownloads[videoId];
     if (cancelToken != null && !cancelToken.isCancelled) {
-      cancelToken.cancel('User cancelled download');
+      cancelToken.cancel();
       _activeDownloads.remove(videoId);
       _downloadProgress.remove(videoId);
-      _lastPrintTime.remove(videoId);
-      print('🛑 Download cancelled: $videoId');
     }
   }
 
-  /// Get download progress
-  DownloadProgress? getProgress(String videoId) {
-    return _downloadProgress[videoId];
-  }
+  DownloadProgress? getProgress(String videoId) => _downloadProgress[videoId];
+  bool isDownloading(String videoId) => _activeDownloads.containsKey(videoId);
 
-  /// Check if download is active
-  bool isDownloading(String videoId) {
-    return _activeDownloads.containsKey(videoId);
-  }
-
-  /// Get all downloaded songs with integrity check
   Future<List<DownloadedSong>> getDownloadedSongs() async {
     final downloadDir = await _getDownloadDirectory();
     final files = await downloadDir.list().toList();
-
     final List<DownloadedSong> songs = [];
-    final List<File> corruptedFiles = [];
 
     for (final file in files) {
       if (file is File && file.path.endsWith('_metadata.json')) {
         try {
           final content = await file.readAsString();
           final json = jsonDecode(content);
-
-          // Verify audio file still exists and is valid
           final audioPath = json['audioPath'];
+
           if (audioPath != null) {
             final audioFile = File(audioPath);
-
             if (await audioFile.exists()) {
               final fileSize = await audioFile.length();
-
-              // Check if file is not empty (corrupted)
               if (fileSize > 1024) {
-                // At least 1KB
                 songs.add(
                   DownloadedSong(
                     videoId: json['videoId'] ?? '',
@@ -507,63 +515,36 @@ class DownloadService {
                     fileSize: fileSize,
                   ),
                 );
-              } else {
-                debugPrint('Corrupted file detected: $audioPath');
-                corruptedFiles.add(file);
               }
-            } else {
-              debugPrint('Missing audio file: $audioPath');
-              corruptedFiles.add(file);
             }
           }
         } catch (e) {
           debugPrint('Error reading metadata: $e');
-          corruptedFiles.add(file);
         }
       }
     }
 
-    // Clean up corrupted metadata files
-    for (final corruptedFile in corruptedFiles) {
-      try {
-        await corruptedFile.delete();
-        debugPrint('Deleted corrupted metadata: ${corruptedFile.path}');
-      } catch (e) {
-        debugPrint('Failed to delete corrupted file: $e');
-      }
-    }
-
-    // Sort by download date (newest first)
     songs.sort((a, b) => b.downloadDate.compareTo(a.downloadDate));
-
     return songs;
   }
 
-  /// Delete a downloaded song
   Future<bool> deleteDownload(String videoId) async {
     try {
       final downloadDir = await _getDownloadDirectory();
-
-      // Delete audio file
-      final audioFiles = await downloadDir
+      final files = await downloadDir
           .list()
           .where((f) => f.path.contains(videoId))
           .toList();
 
-      for (final file in audioFiles) {
-        if (file is File) {
-          await file.delete();
-        }
+      for (final file in files) {
+        if (file is File) await file.delete();
       }
-
       return true;
     } catch (e) {
-      debugPrint('Error deleting download: $e');
       return false;
     }
   }
 
-  /// Update progress tracking
   void _updateProgress(String videoId, double progress, String message) {
     _downloadProgress[videoId] = DownloadProgress(
       videoId: videoId,
@@ -572,7 +553,6 @@ class DownloadService {
     );
   }
 
-  /// Sanitize filename
   String _sanitizeFilename(String filename) {
     return filename
         .replaceAll(RegExp(r'[<>:"/\\|?*]'), '')
@@ -582,17 +562,13 @@ class DownloadService {
 
   void dispose() {
     for (final token in _activeDownloads.values) {
-      if (!token.isCancelled) {
-        token.cancel();
-      }
+      if (!token.isCancelled) token.cancel();
     }
     _activeDownloads.clear();
     _downloadProgress.clear();
-    _lastPrintTime.clear();
   }
 }
 
-// Models
 class DownloadResult {
   final bool success;
   final String? audioPath;
@@ -626,7 +602,7 @@ class DownloadedSong {
   final String audioPath;
   final String? thumbnailPath;
   final DateTime downloadDate;
-  final int fileSize; // File size in bytes
+  final int fileSize;
 
   DownloadedSong({
     required this.videoId,
@@ -638,12 +614,10 @@ class DownloadedSong {
     this.fileSize = 0,
   });
 
-  // Get formatted file size
   String get formattedFileSize {
     if (fileSize < 1024) return '$fileSize B';
-    if (fileSize < 1024 * 1024) {
+    if (fileSize < 1024 * 1024)
       return '${(fileSize / 1024).toStringAsFixed(1)} KB';
-    }
     return '${(fileSize / (1024 * 1024)).toStringAsFixed(1)} MB';
   }
 }

@@ -1,5 +1,7 @@
 import 'package:audio_service/audio_service.dart' as audio_service;
+import 'package:just_audio/just_audio.dart';
 import 'package:vibeflow/models/quick_picks_model.dart';
+import 'package:vibeflow/pages/player_page.dart';
 import 'package:vibeflow/services/bg_audio_handler.dart';
 
 /// Singleton service for managing background audio playback
@@ -112,6 +114,26 @@ class AudioServices {
   /// Rewind 10 seconds
   Future<void> rewind() async {
     await handler.rewind();
+  }
+
+  // Add these to your AudioServices class:
+
+  Stream<LoopMode> get loopModeStream => AudioServices.handler.customState.map(
+    (customState) => _getLoopModeFromState(customState),
+  );
+
+  Future<void> setLoopMode(LoopMode loopMode) async {
+    await AudioServices.handler.customAction('set_loop_mode', {
+      'loop_mode': loopMode.index,
+    });
+  }
+
+  LoopMode _getLoopModeFromState(Map<String, dynamic>? customState) {
+    if (customState == null || !customState.containsKey('loop_mode')) {
+      return LoopMode.off;
+    }
+    final index = customState['loop_mode'] as int;
+    return LoopMode.values[index];
   }
 
   /// Add a song to the queue

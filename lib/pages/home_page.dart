@@ -386,13 +386,13 @@ class _HomePageState extends ConsumerState<HomePage> {
       floatingActionButton: Stack(
         children: [
           // Recent Listening Speed Dial - Center position
-          Positioned(
-            bottom: 40,
-            left:
-                MediaQuery.of(context).size.width / 2 -
-                28, // Center it (28 = half of FAB width)
-            child: const RecentListeningSpeedDial(),
-          ),
+          // Positioned(
+          //   bottom: 40,
+          //   left:
+          //       MediaQuery.of(context).size.width / 2 -
+          //       28, // Center it (28 = half of FAB width)
+          //   child: const RecentListeningSpeedDial(),
+          // ),
 
           // Search FAB - Right position
           Positioned(

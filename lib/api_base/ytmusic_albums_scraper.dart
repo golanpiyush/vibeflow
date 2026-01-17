@@ -627,6 +627,168 @@ class YTMusicAlbumsScraper {
     }
   }
 
+  /// Stream mixed albums from multiple random artists - yields albums as they're found
+  Stream<Album> getMixedRandomAlbumsStream({int limit = 50}) async* {
+    try {
+      print(
+        '🎭 [YTMusicScraper] Streaming mixed albums from random artists...',
+      );
+
+      // Diverse array of popular artists from different genres
+      final artistsByGenre = {
+        'Hip-Hop/Rap': [
+          'Eminem',
+          'Drake',
+          'Kendrick Lamar',
+          'Travis Scott',
+          'Post Malone',
+          'Kanye West',
+          'J. Cole',
+          'Lil Wayne',
+          'Nicki Minaj',
+          'Cardi B',
+          'Megan Thee Stallion',
+          'Future',
+          'Lil Baby',
+          'DaBaby',
+          'Roddy Ricch',
+          'Jack Harlow',
+          'Lil Uzi Vert',
+          'Playboi Carti',
+          'Young Thug',
+          'Juice WRLD',
+          'XXXTENTACION',
+          'Pop Smoke',
+          'Mac Miller',
+        ],
+        'Pop': [
+          'Taylor Swift',
+          'Ariana Grande',
+          'Ed Sheeran',
+          'Justin Bieber',
+          'Billie Eilish',
+          'Dua Lipa',
+          'Harry Styles',
+          'Bruno Mars',
+          'Maroon 5',
+          'The Weeknd',
+          'One Direction',
+          'Halsey',
+          'Shawn Mendes',
+          'Selena Gomez',
+          'Miley Cyrus',
+          'Katy Perry',
+          'Lady Gaga',
+          'Rihanna',
+          'Beyoncé',
+          'Adele',
+          'Sam Smith',
+          'Olivia Rodrigo',
+          'The Kid LAROI',
+          'Doja Cat',
+          'Lil Nas X',
+        ],
+        'Rock/Alternative': [
+          'Coldplay',
+          'Imagine Dragons',
+          'Twenty One Pilots',
+          'Linkin Park',
+          'Green Day',
+          'Foo Fighters',
+          'Red Hot Chili Peppers',
+          'Arctic Monkeys',
+          'Tame Impala',
+          'Lana Del Rey',
+          'Frank Ocean',
+          'Tyler, The Creator',
+        ],
+        'R&B/Soul': [
+          'The Weeknd',
+          'Frank Ocean',
+          'SZA',
+          'H.E.R.',
+          'Daniel Caesar',
+          'Summer Walker',
+          'Jhené Aiko',
+          'Giveon',
+          'Lucky Daye',
+          'Chris Brown',
+          'Usher',
+          'John Legend',
+          'Alicia Keys',
+        ],
+        'Latin': [
+          'Bad Bunny',
+          'J Balvin',
+          'Karol G',
+          'Maluma',
+          'Ozuna',
+          'Anuel AA',
+          'Daddy Yankee',
+          'Shakira',
+        ],
+      };
+
+      final seenAlbumIds = <String>{};
+      final allArtists = <String>[];
+
+      // Collect artists from all genres
+      for (final genreArtists in artistsByGenre.values) {
+        allArtists.addAll(genreArtists);
+      }
+
+      // Shuffle all artists
+      allArtists.shuffle();
+
+      int yieldedCount = 0;
+      int artistIndex = 0;
+
+      // Try artists until we get enough albums
+      while (yieldedCount < limit && artistIndex < allArtists.length) {
+        final artist = allArtists[artistIndex];
+        artistIndex++;
+
+        try {
+          final albums = await searchAlbums('$artist album', limit: 20);
+
+          // Filter to this artist
+          final artistAlbums = albums.where((album) {
+            final albumArtist = album.artist.toLowerCase();
+            return albumArtist.contains(artist.toLowerCase()) ||
+                album.title.toLowerCase().contains(artist.toLowerCase());
+          }).toList();
+
+          artistAlbums.shuffle();
+
+          // Yield unique albums immediately as we find them
+          for (final album in artistAlbums.take(5)) {
+            if (!seenAlbumIds.contains(album.id)) {
+              seenAlbumIds.add(album.id);
+              yield album;
+              yieldedCount++;
+
+              if (yieldedCount >= limit) break;
+            }
+          }
+
+          await Future.delayed(const Duration(milliseconds: 200));
+        } catch (e) {
+          print('⚠️ Error with artist $artist: $e');
+        }
+      }
+
+      print(
+        '✅ [YTMusicScraper] Streamed $yieldedCount albums from $artistIndex artists',
+      );
+    } catch (e) {
+      print('❌ [YTMusicScraper] Error streaming mixed albums: $e');
+      // Yield fallback albums
+      for (final album in _getFallbackAlbums()) {
+        yield album;
+      }
+    }
+  }
+
   /// Get album details - metadata only (songs list without loading full details)
   Future<Album?> getAlbumDetails(String albumId) async {
     try {

@@ -16,8 +16,13 @@ class ListeningActivity {
   final List<String> songArtists;
   final String? songThumbnail;
   final int durationMs;
+  final int currentPositionMs; // Last known position from DB
+  final bool isCurrentlyPlaying;
   final DateTime playedAt;
   final DateTime createdAt;
+  final String username;
+  final String? profilePic;
+  final String status;
 
   ListeningActivity({
     required this.id,
@@ -28,11 +33,26 @@ class ListeningActivity {
     required this.songArtists,
     this.songThumbnail,
     required this.durationMs,
+    required this.currentPositionMs,
+    required this.isCurrentlyPlaying,
     required this.playedAt,
     required this.createdAt,
+    required this.username,
+    this.profilePic,
+    required this.status,
   });
 
   factory ListeningActivity.fromMap(Map<String, dynamic> map) {
+    // 🔥 FIX: Always parse as UTC
+    DateTime parsePlayedAt(String playedAtString) {
+      final dateTime = DateTime.parse(playedAtString);
+      // If it doesn't end with Z, assume it's UTC and add it
+      if (!playedAtString.endsWith('Z')) {
+        return DateTime.parse('${playedAtString}Z').toUtc();
+      }
+      return dateTime.toUtc();
+    }
+
     return ListeningActivity(
       id: map['id'] as String,
       userId: map['user_id'] as String,
@@ -41,9 +61,17 @@ class ListeningActivity {
       songTitle: map['song_title'] as String,
       songArtists: List<String>.from(map['song_artists'] as List),
       songThumbnail: map['song_thumbnail'] as String?,
-      durationMs: map['duration_ms'] as int,
-      playedAt: DateTime.parse(map['played_at'] as String),
       createdAt: DateTime.parse(map['created_at'] as String),
+
+      durationMs: (map['duration_ms'] as int?) ?? 0,
+      currentPositionMs: (map['current_position_ms'] as int?) ?? 0,
+      isCurrentlyPlaying: (map['is_currently_playing'] as bool?) ?? false,
+      playedAt: DateTime.parse(
+        map['played_at'] as String? ?? DateTime.now().toUtc().toIso8601String(),
+      ).toUtc(),
+      username: map['username']?.toString() ?? 'Unknown',
+      profilePic: map['profile_pic']?.toString(),
+      status: map['status']?.toString() ?? 'unknown',
     );
   }
 
@@ -59,7 +87,69 @@ class ListeningActivity {
       'duration_ms': durationMs,
       'played_at': playedAt.toIso8601String(),
       'created_at': createdAt.toIso8601String(),
+      'username': username,
+      'profile_pic': profilePic,
     };
+  }
+
+  // ✅ ADD THIS GETTER:
+  int get realtimeCurrentPositionMs {
+    if (!isCurrentlyPlaying) {
+      return currentPositionMs; // Use stored position if not playing
+    }
+
+    // Calculate real-time position based on elapsed time
+    final now = DateTime.now().toUtc();
+    final elapsed = now.difference(playedAt).inMilliseconds;
+    final estimatedPosition = currentPositionMs + elapsed;
+
+    // Clamp to duration to prevent overflow
+    return estimatedPosition.clamp(0, durationMs);
+  }
+
+  // ✅ NEW: Real-time position calculation
+  int get realtimePositionMs {
+    if (!isCurrentlyPlaying) {
+      // If paused, return last known position
+      return currentPositionMs;
+    }
+
+    // Calculate elapsed time since playedAt
+    final now = DateTime.now().toUtc();
+    final elapsed = now.difference(playedAt).inMilliseconds;
+
+    // Real-time position = last known position + elapsed time
+    final calculatedPosition = currentPositionMs + elapsed;
+
+    // Don't exceed song duration
+    return calculatedPosition.clamp(0, durationMs);
+  }
+
+  // ✅ NEW: Real-time progress percentage
+  double get realtimeProgressPercentage {
+    if (durationMs <= 0) return 0.0;
+    return (realtimePositionMs / durationMs).clamp(0.0, 1.0);
+  }
+
+  // ✅ NEW: Real-time formatted duration
+  String get realtimeFormattedDuration {
+    final position = realtimePositionMs;
+    final minutes = (position / 60000).floor();
+    final seconds = ((position % 60000) / 1000).floor();
+    return '${minutes}:${seconds.toString().padLeft(2, '0')}';
+  }
+
+  // Helper getter for progress percentage
+  double get progressPercentage {
+    if (durationMs <= 0) return 0.0;
+    return (currentPositionMs / durationMs).clamp(0.0, 1.0);
+  }
+
+  // Helper getter for formatted duration
+  String get formattedDuration {
+    final minutes = (currentPositionMs / 60000).floor();
+    final seconds = ((currentPositionMs % 60000) / 1000).floor();
+    return '${minutes}:${seconds.toString().padLeft(2, '0')}';
   }
 }
 

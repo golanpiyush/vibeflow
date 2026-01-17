@@ -7,8 +7,12 @@ import 'package:vibeflow/database/following_service.dart';
 import 'package:vibeflow/database/listening_activity_service.dart';
 import 'package:vibeflow/database/playlist_services.dart';
 import 'package:vibeflow/database/profile_service.dart';
+import 'package:vibeflow/database/sync_listen.dart';
 import 'package:vibeflow/models/listening_activity_modelandProvider.dart';
 import 'dart:async';
+
+import 'package:vibeflow/models/listening_together.dart';
+import 'package:vibeflow/models/quick_picks_model.dart';
 
 // ============================================================================
 // DBActions - UNIFIED SERVICE INTERFACE
@@ -25,6 +29,7 @@ class DBActions {
   late final FollowService _followService;
   late final ProfileService _profileService;
   late final PlaylistService _playlistService;
+  late final SyncListeningService _syncListeningService; // ✅ ADD THIS
 
   DBActions({
     required SupabaseClient supabase,
@@ -41,6 +46,7 @@ class DBActions {
     _followService = FollowService(_supabase);
     _profileService = ProfileService(_supabase);
     _playlistService = PlaylistService(_supabase);
+    _syncListeningService = SyncListeningService(_supabase); // ✅ ADD THIS
   }
 
   // ==========================================================================
@@ -179,12 +185,85 @@ class DBActions {
       _playlistService.joinPlaylistWithToken(shareToken, userId);
 
   // ==========================================================================
+  // SYNC LISTENING METHODS (from SyncListeningService)
+  // ✅ NEW SECTION
+  // ==========================================================================
+
+  Future<String> createListeningSession({String? sessionName}) =>
+      _syncListeningService.createSession(sessionName: sessionName);
+
+  Future<List<MutualFollower>> getMutualFollowers() =>
+      _syncListeningService.getMutualFollowers();
+
+  Future<void> inviteUserToSession(String sessionId, String userId) =>
+      _syncListeningService.inviteUser(sessionId, userId);
+
+  Future<List<SessionInvitation>> getPendingInvitations() =>
+      _syncListeningService.getPendingInvitations();
+
+  Future<void> acceptSessionInvitation(String invitationId, String sessionId) =>
+      _syncListeningService.acceptInvitation(invitationId, sessionId);
+
+  Future<void> declineSessionInvitation(String invitationId) =>
+      _syncListeningService.declineInvitation(invitationId);
+
+  Future<ListeningSession?> getActiveSession() =>
+      _syncListeningService.getActiveSession();
+
+  Future<List<SessionParticipant>> getSessionParticipants(String sessionId) =>
+      _syncListeningService.getSessionParticipants(sessionId);
+
+  Future<void> leaveSession(String sessionId) =>
+      _syncListeningService.leaveSession(sessionId);
+
+  Future<void> endSession(String sessionId) =>
+      _syncListeningService.endSession(sessionId);
+
+  Future<void> kickParticipant(String sessionId, String userId) =>
+      _syncListeningService.kickParticipant(sessionId, userId);
+
+  Future<void> updateSessionPlaybackState({
+    required String sessionId,
+    QuickPick? song,
+    int? positionMs,
+    bool? isPlaying,
+  }) => _syncListeningService.updatePlaybackState(
+    sessionId: sessionId,
+    song: song,
+    positionMs: positionMs,
+    isPlaying: isPlaying,
+  );
+
+  Future<void> broadcastSessionPlaybackEvent(PlaybackEvent event) =>
+      _syncListeningService.broadcastPlaybackEvent(event);
+
+  Future<void> updateSessionSyncStatus(String sessionId, bool isSynced) =>
+      _syncListeningService.updateSyncStatus(sessionId, isSynced);
+
+  Future<void> connectToSession(String sessionId) =>
+      _syncListeningService.connectToSession(sessionId);
+
+  Future<void> disconnectFromSession() =>
+      _syncListeningService.disconnectFromSession();
+
+  Stream<PlaybackEvent> listenToSessionPlaybackEvents() =>
+      _syncListeningService.listenToPlaybackEvents();
+
+  Stream<ListeningSession> listenToSessionUpdates(String sessionId) =>
+      _syncListeningService.listenToSessionUpdates(sessionId);
+
+  // ==========================================================================
   // HELPER METHODS
   // ==========================================================================
 
   Future<void> initialize() async {
     // Initialize any services that need async setup
     // This can be expanded if needed
+  }
+
+  void dispose() {
+    _realtimeService.dispose();
+    _syncListeningService.dispose(); // ✅ ADD THIS
   }
 
   SupabaseClient get supabaseClient => _supabase;
@@ -199,6 +278,8 @@ class DBActions {
   FollowService get followService => _followService;
   ProfileService get profileService => _profileService;
   PlaylistService get playlistService => _playlistService;
+  SyncListeningService get syncListeningService =>
+      _syncListeningService; // ✅ ADD THIS
 }
 
 // ============================================================================
@@ -221,49 +302,6 @@ final supabaseClientProvider = Provider<SupabaseClient>((ref) {
 final connectivityProvider = Provider<Connectivity>((ref) {
   return Connectivity();
 });
-
-// ============================================================================
-// USAGE EXAMPLES (commented out - just for reference)
-// ============================================================================
-
-/*
-// Example 1: Record listening activity
-final db = ref.read(dbActionsProvider);
-await db.recordListeningActivity(
-  userId: 'user123',
-  videoId: 'abc123',
-  title: 'Blinding Lights',
-  artists: ['The Weeknd'],
-  thumbnail: 'https://...',
-  durationMs: 200000,
-  playedDurationMs: 180000,
-);
-
-// Example 2: Subscribe to realtime updates
-final followingStream = db.subscribeToFollowingActivity();
-followingStream.listen((activity) {
-  print('New activity: ${activity.songTitle}');
-});
-
-// Example 3: Follow a user
-await db.followUser('follower123', 'followed456');
-
-// Example 4: Create playlist
-final playlistId = await db.createPlaylist(
-  name: 'My Playlist',
-  userId: 'user123',
-  isPublic: true,
-);
-
-// Example 5: Validate access code
-final result = await db.validateCode('flywich21');
-if (result.isValid) {
-  print('Access granted!');
-}
-
-// Example 6: Get user profile
-final profile = await db.getUserProfileByUserId('username123');
-*/
 
 // ============================================================================
 // SHORTHAND METHODS FOR COMMON OPERATIONS
@@ -390,5 +428,55 @@ extension DBActionsExtensions on DBActions {
     final user = _supabase.auth.currentUser;
     if (user == null) throw Exception('Not authenticated');
     return await joinPlaylistWithToken(shareToken, user.id);
+  }
+
+  // ✅ NEW: Sync Listening Shorthand Methods
+
+  /// Create a listening session with current user as host
+  Future<String> createListenTogetherSession({String? name}) async {
+    final user = _supabase.auth.currentUser;
+    if (user == null) throw Exception('Not authenticated');
+
+    // Check access code
+    final hasCode = await checkIfUserHasAccessCode(user.id);
+    if (!hasCode) throw Exception('Access code required');
+
+    return await createListeningSession(sessionName: name);
+  }
+
+  /// Get mutual followers for current user (for inviting to sessions)
+  Future<List<MutualFollower>> getMutualFollowersForSession() async {
+    final user = _supabase.auth.currentUser;
+    if (user == null) throw Exception('Not authenticated');
+
+    return await getMutualFollowers();
+  }
+
+  /// Get active session for current user
+  Future<ListeningSession?> getActiveListeningSession() async {
+    final user = _supabase.auth.currentUser;
+    if (user == null) return null;
+
+    return await getActiveSession();
+  }
+
+  /// Leave current user's active session
+  Future<void> leaveActiveSession() async {
+    final session = await getActiveSession();
+    if (session == null) return;
+
+    await leaveSession(session.id);
+  }
+
+  /// End current user's session (if host)
+  Future<void> endActiveSession() async {
+    final session = await getActiveSession();
+    if (session == null) return;
+
+    if (session.isHost) {
+      await endSession(session.id);
+    } else {
+      throw Exception('Only host can end session');
+    }
   }
 }

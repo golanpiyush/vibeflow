@@ -1,8 +1,11 @@
+import 'package:audio_service/audio_service.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:vibeflow/api_base/db_actions.dart';
+import 'package:vibeflow/database/listening_activity_service.dart';
 import 'package:vibeflow/pages/authOnboard/access_code_screen.dart';
+import 'package:vibeflow/services/auth_service.dart';
 import 'package:vibeflow/utils/secure_storage.dart';
 
 import '../constants/app_typography.dart';
@@ -19,7 +22,6 @@ class AccessCodeManagementScreen extends ConsumerStatefulWidget {
 class _AccessCodeManagementScreenState
     extends ConsumerState<AccessCodeManagementScreen> {
   final SecureStorageService _secureStorage = SecureStorageService();
-
   String? _accessCode;
   DateTime? _validatedAt;
   bool _isLoading = true;
@@ -36,41 +38,76 @@ class _AccessCodeManagementScreenState
     setState(() => _isLoading = true);
 
     try {
-      _accessCode = await _secureStorage.getAccessCode();
-      _validatedAt = await _secureStorage.getAccessCodeValidatedAt();
-    } catch (_) {}
+      // Check if user is authenticated first
+      final currentUser = ref.read(currentUserProvider);
+
+      if (currentUser != null) {
+        // User is authenticated - they have access
+        // Set a default access code indicator
+        _accessCode = 'authenticated';
+        _validatedAt = DateTime.now(); // Or fetch from user metadata if stored
+
+        print('✅ User is authenticated, showing access granted');
+      } else {
+        // Not authenticated - check for access code in storage
+        _accessCode = await _secureStorage.getAccessCode();
+        _validatedAt = await _secureStorage.getAccessCodeValidatedAt();
+
+        print('🔍 No authentication, checking stored access code');
+      }
+    } catch (e) {
+      print('❌ Error loading access code data: $e');
+    }
 
     setState(() => _isLoading = false);
   }
+
+  // ============================================
+  // UPDATED: _clearAccessCodeData method
+  // ============================================
 
   Future<void> _clearAccessCodeData() async {
     setState(() => _isClearing = true);
 
     try {
-      await _secureStorage.clearAccessCode();
-      await ref.read(dbActionsProvider).supabaseClient.auth.signOut();
-      await _secureStorage.clearAllUserData();
+      // ✅ Use authService.signOut() - it handles everything:
+      // - Stops audio and tracking
+      // - Clears secure storage
+      // - Signs out from Supabase
+      await ref.read(authServiceProvider).signOut();
 
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('Access code cleared')));
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Access code cleared and signed out')),
+        );
 
-      setState(() {
-        _accessCode = null;
-        _validatedAt = null;
-        _showConfirmation = false;
-      });
+        setState(() {
+          _accessCode = null;
+          _validatedAt = null;
+          _showConfirmation = false;
+        });
 
-      await Future.delayed(const Duration(milliseconds: 1200));
+        // Small delay for UX
+        await Future.delayed(const Duration(milliseconds: 500));
 
-      Navigator.of(context).pushAndRemoveUntil(
-        MaterialPageRoute(
-          builder: (_) => const AccessCodeScreen(showSkipButton: true),
-        ),
-        (_) => false,
-      );
+        // Navigate to access code screen
+        Navigator.of(context).pushAndRemoveUntil(
+          MaterialPageRoute(
+            builder: (_) => const AccessCodeScreen(showSkipButton: true),
+          ),
+          (_) => false,
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error: $e'), backgroundColor: Colors.red),
+        );
+      }
     } finally {
-      setState(() => _isClearing = false);
+      if (mounted) {
+        setState(() => _isClearing = false);
+      }
     }
   }
 
@@ -149,6 +186,9 @@ class _AccessCodeManagementScreenState
   // =======================
 
   Widget _statusCard(bool isValid, int remaining, ColorScheme colorScheme) {
+    final currentUser = ref.watch(currentUserProvider);
+    final isAuthenticated = currentUser != null;
+
     return Card(
       elevation: 1,
       shape: RoundedRectangleBorder(
@@ -164,36 +204,57 @@ class _AccessCodeManagementScreenState
               children: [
                 Text('Access Status', style: AppTypography.sectionHeader),
                 _pill(
-                  text: isValid ? 'ACTIVE' : 'EXPIRED',
-                  color: isValid ? Colors.green : Colors.orange,
+                  text: isAuthenticated
+                      ? 'AUTHENTICATED'
+                      : (isValid ? 'ACTIVE' : 'EXPIRED'),
+                  color: isAuthenticated
+                      ? Colors.blue
+                      : (isValid ? Colors.green : Colors.orange),
                 ),
               ],
             ),
             const SizedBox(height: AppSpacing.lg),
-            _infoRow(
-              Icons.code,
-              'Access Code Used',
-              _maskAccessCode(_accessCode!),
-              colorScheme,
-            ),
 
-            _divider(),
-            _infoRow(
-              Icons.calendar_today,
-              'Validated On',
-              _validatedAt == null
-                  ? '-'
-                  : '${_validatedAt!.toLocal()}'.split('.')[0],
-              colorScheme,
-            ),
-            _divider(),
-            _infoRow(
-              Icons.timer,
-              'Days Remaining',
-              '$remaining days',
-              colorScheme,
-              warning: remaining <= 7,
-            ),
+            if (isAuthenticated) ...[
+              _infoRow(
+                Icons.verified_user,
+                'Authentication',
+                'Logged in as ${currentUser.email ?? 'User'}',
+                colorScheme,
+              ),
+              _divider(),
+              _infoRow(
+                Icons.check_circle,
+                'Access Level',
+                'Full Access (Authenticated)',
+                colorScheme,
+              ),
+            ] else ...[
+              _infoRow(
+                Icons.code,
+                'Access Code Used',
+                _maskAccessCode(_accessCode!),
+                colorScheme,
+              ),
+              _divider(),
+              _infoRow(
+                Icons.calendar_today,
+                'Validated On',
+                _validatedAt == null
+                    ? '-'
+                    : '${_validatedAt!.toLocal()}'.split('.')[0],
+                colorScheme,
+              ),
+              _divider(),
+              _infoRow(
+                Icons.timer,
+                'Days Remaining',
+                '$remaining days',
+                colorScheme,
+                warning: remaining <= 7,
+              ),
+            ],
+
             _divider(),
             _infoRow(
               Icons.check_circle,
@@ -317,7 +378,40 @@ class _AccessCodeManagementScreenState
   // =======================
 
   Widget _warningCard(bool isValid, ColorScheme colorScheme) {
+    final currentUser = ref.watch(currentUserProvider);
+    final isAuthenticated = currentUser != null;
+
     final isDark = Theme.of(context).brightness == Brightness.dark;
+
+    // For authenticated users, show different warning
+    if (isAuthenticated) {
+      final bgColor = isDark
+          ? Colors.blue.shade900.withOpacity(0.3)
+          : Colors.blue.shade50;
+      final iconColor = Colors.blue;
+      final textColor = isDark ? colorScheme.onSurface : Colors.blue.shade900;
+
+      return Card(
+        color: bgColor,
+        child: Padding(
+          padding: const EdgeInsets.all(AppSpacing.lg),
+          child: Row(
+            children: [
+              Icon(Icons.info, color: iconColor),
+              const SizedBox(width: AppSpacing.md),
+              Expanded(
+                child: Text(
+                  'You are logged in. Logging out will remove social features.',
+                  style: AppTypography.subtitle.copyWith(color: textColor),
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    // Original warning for access code users
     final bgColor = isValid
         ? (isDark
               ? Colors.orange.shade900.withOpacity(0.3)
@@ -358,11 +452,13 @@ class _AccessCodeManagementScreenState
   // =======================
 
   Widget _clearButton() {
+    final currentUser = ref.watch(currentUserProvider);
+    final isAuthenticated = currentUser != null;
     final isDark = Theme.of(context).brightness == Brightness.dark;
 
     return ElevatedButton.icon(
-      icon: const Icon(Icons.delete_outline),
-      label: const Text('Clear Access Code'),
+      icon: Icon(isAuthenticated ? Icons.logout : Icons.delete_outline),
+      label: Text(isAuthenticated ? 'Sign Out' : 'Clear Access Code'),
       style: ElevatedButton.styleFrom(
         backgroundColor: isDark
             ? Colors.red.shade900.withOpacity(0.3)
@@ -379,15 +475,19 @@ class _AccessCodeManagementScreenState
   // =======================
 
   Widget _buildConfirmationDialog() {
+    final currentUser = ref.watch(currentUserProvider);
+    final isAuthenticated = currentUser != null;
     final colorScheme = Theme.of(context).colorScheme;
 
     return AlertDialog(
       title: Text(
-        'Clear Access Code',
+        isAuthenticated ? 'Sign Out' : 'Clear Access Code',
         style: AppTypography.dialogTitle.copyWith(color: colorScheme.onSurface),
       ),
       content: Text(
-        'This action cannot be undone. And you will be logged out.',
+        isAuthenticated
+            ? 'You will be logged out and lose access to social features.'
+            : 'This action cannot be undone. And you will be logged out.',
         style: AppTypography.subtitle.copyWith(
           color: colorScheme.onSurface.withOpacity(0.7),
         ),
@@ -405,7 +505,7 @@ class _AccessCodeManagementScreenState
                   width: 18,
                   child: CircularProgressIndicator(strokeWidth: 2),
                 )
-              : const Text('Clear'),
+              : Text(isAuthenticated ? 'Sign Out' : 'Clear'),
         ),
       ],
     );

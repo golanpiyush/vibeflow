@@ -34,7 +34,7 @@ class _AlbumsGridPageState extends ConsumerState<AlbumsGridPage> {
 
   List<Album> albums = [];
   List<Album> filteredAlbums = [];
-  bool isLoadingAlbums = false;
+  bool isLoadingAlbums = true; // Start with true
   bool isSearchMode = false;
   Timer? _debounceTimer;
 
@@ -45,20 +45,29 @@ class _AlbumsGridPageState extends ConsumerState<AlbumsGridPage> {
   }
 
   Future<void> _loadAlbums() async {
-    setState(() => isLoadingAlbums = true);
+    if (!mounted) return;
+
     try {
-      final fetchedAlbums = await _albumsScraper.getMixedRandomAlbums(
+      await for (final album in _albumsScraper.getMixedRandomAlbumsStream(
         limit: 25,
-      );
-      print('✅ Found ${fetchedAlbums.length} albums');
-      setState(() {
-        albums = fetchedAlbums;
-        filteredAlbums = fetchedAlbums;
-        isLoadingAlbums = false;
-      });
+      )) {
+        if (!mounted) return;
+
+        setState(() {
+          albums.add(album);
+          if (!isSearchMode) {
+            filteredAlbums = albums;
+          }
+          // Turn off loading after first album
+          if (isLoadingAlbums) {
+            isLoadingAlbums = false;
+          }
+        });
+      }
     } catch (e, stack) {
       print('❌ Error loading albums: $e');
       print('Stack: ${stack.toString().split('\n').take(3).join('\n')}');
+      if (!mounted) return;
       setState(() => isLoadingAlbums = false);
     }
   }
@@ -375,7 +384,7 @@ class _AlbumsGridPageState extends ConsumerState<AlbumsGridPage> {
     final Color cardBackgroundColor = const Color.fromARGB(0, 0, 0, 0);
     final iconInactiveColor = ref.watch(themeTextSecondaryColorProvider);
 
-    if (filteredAlbums.isEmpty) {
+    if (filteredAlbums.isEmpty && !isLoadingAlbums) {
       return Center(
         child: Padding(
           padding: const EdgeInsets.all(32.0),
@@ -414,6 +423,12 @@ class _AlbumsGridPageState extends ConsumerState<AlbumsGridPage> {
       );
     }
 
+    // Calculate total items: actual albums + loading placeholders
+    final totalItems = isLoadingAlbums
+        ? filteredAlbums.length +
+              8 // Show 8 shimmer items while loading
+        : filteredAlbums.length;
+
     return GridView.builder(
       controller: _scrollController,
       padding: const EdgeInsets.all(AppSpacing.lg),
@@ -423,14 +438,35 @@ class _AlbumsGridPageState extends ConsumerState<AlbumsGridPage> {
         crossAxisSpacing: AppSpacing.md,
         mainAxisSpacing: AppSpacing.md,
       ),
-      itemCount: filteredAlbums.length,
+      itemCount: totalItems,
       itemBuilder: (context, index) {
-        return _buildAlbumCard(
-          filteredAlbums[index],
-          cardBackgroundColor,
-          textPrimaryColor,
-          textSecondaryColor,
-          iconInactiveColor,
+        // Show actual album if available
+        if (index < filteredAlbums.length) {
+          return _buildAlbumCard(
+            filteredAlbums[index],
+            cardBackgroundColor,
+            textPrimaryColor,
+            textSecondaryColor,
+            iconInactiveColor,
+          );
+        }
+
+        // Show shimmer loading for remaining slots
+        return ShimmerLoading(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              SkeletonBox(
+                width: double.infinity,
+                height: 160,
+                borderRadius: AppSpacing.radiusMedium,
+              ),
+              const SizedBox(height: AppSpacing.sm),
+              SkeletonBox(width: 120, height: 14, borderRadius: 4),
+              const SizedBox(height: 6),
+              SkeletonBox(width: 80, height: 12, borderRadius: 4),
+            ],
+          ),
         );
       },
     );
