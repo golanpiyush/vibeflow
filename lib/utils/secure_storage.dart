@@ -162,6 +162,16 @@ class SecureStorageService {
     return null;
   }
 
+  // In SecureStorageService class
+  Future<bool> isProfileSetupCompleted() async {
+    final value = await _storage.read(key: 'profile_setup_completed');
+    return value == 'true';
+  }
+
+  Future<void> markProfileSetupCompleted() async {
+    await _storage.write(key: 'profile_setup_completed', value: 'true');
+  }
+
   /// Clear skip status (useful when user wants to enter code later)
   Future<void> clearSkipStatus() async {
     await deleteSecureData(_accessCodeSkippedKey);

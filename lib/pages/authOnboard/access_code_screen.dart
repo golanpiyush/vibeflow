@@ -1,4 +1,3 @@
-// lib/screens/access_code_screen.dart
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -10,15 +9,35 @@ import 'package:vibeflow/utils/secure_storage.dart';
 class AccessCodeScreen extends ConsumerStatefulWidget {
   final bool showSkipButton;
   final VoidCallback? onSuccess;
+  final bool isFromDialog; // NEW: Track if opened from dialog
 
   const AccessCodeScreen({
     super.key,
     this.showSkipButton = true,
     this.onSuccess,
+    this.isFromDialog = false, // NEW
   });
 
   @override
   _AccessCodeScreenState createState() => _AccessCodeScreenState();
+
+  // Add this static method to check for orphan access codes
+  static Future<bool> hasOrphanAccessCode() async {
+    final secureStorage = SecureStorageService();
+    final status = await secureStorage.getAccessCodeStatus();
+
+    if (status == 'validated') {
+      final validatedAt = await secureStorage.getAccessCodeValidatedAt();
+      if (validatedAt != null &&
+          DateTime.now().difference(validatedAt).inDays < 30) {
+        // Check if profile setup was completed
+        // You'll need to add this method to SecureStorageService
+        final profileCompleted = await secureStorage.isProfileSetupCompleted();
+        return !profileCompleted; // Returns true if access code validated but profile not completed
+      }
+    }
+    return false;
+  }
 }
 
 class _AccessCodeScreenState extends ConsumerState<AccessCodeScreen> {
@@ -31,10 +50,13 @@ class _AccessCodeScreenState extends ConsumerState<AccessCodeScreen> {
   @override
   void initState() {
     super.initState();
-    _checkExistingAccessCode();
+    // Don't check existing code if opened from dialog
+    if (!widget.isFromDialog && widget.onSuccess != null) {
+      _checkExistingAccessCodeForCallback();
+    }
   }
 
-  Future<void> _checkExistingAccessCode() async {
+  Future<void> _checkExistingAccessCodeForCallback() async {
     final secureStorage = SecureStorageService();
     final status = await secureStorage.getAccessCodeStatus();
 
@@ -42,15 +64,7 @@ class _AccessCodeScreenState extends ConsumerState<AccessCodeScreen> {
       final validatedAt = await secureStorage.getAccessCodeValidatedAt();
       if (validatedAt != null &&
           DateTime.now().difference(validatedAt).inDays < 30) {
-        // Access code is still valid, proceed
-        if (widget.onSuccess != null) {
-          widget.onSuccess!();
-        }
-      }
-    } else if (status == 'skipped') {
-      // User previously skipped, navigate to home
-      if (mounted) {
-        Navigator.of(context).pushReplacementNamed('/home');
+        widget.onSuccess?.call();
       }
     }
   }
@@ -69,25 +83,28 @@ class _AccessCodeScreenState extends ConsumerState<AccessCodeScreen> {
       final result = await db.validateCode(_codeController.text.trim());
 
       if (result.isValid) {
-        // Save to secure storage
         final secureStorage = SecureStorageService();
         await secureStorage.saveAccessCode(_codeController.text.trim());
 
-        // Show success message
         setState(() {
           _showValidationMessage = true;
         });
 
         await Future.delayed(const Duration(milliseconds: 1500));
 
-        // Navigate to profile setup
         if (mounted) {
-          Navigator.of(context).pushReplacement(
-            MaterialPageRoute(
-              builder: (context) =>
-                  ProfileSetupScreen(accessCode: _codeController.text.trim()),
-            ),
-          );
+          // If opened from dialog, just pop back
+          if (widget.isFromDialog) {
+            Navigator.of(context).pop(true); // Just pop with success result
+          } else {
+            // Otherwise navigate to profile setup
+            Navigator.of(context).pushReplacement(
+              MaterialPageRoute(
+                builder: (context) =>
+                    ProfileSetupScreen(accessCode: _codeController.text.trim()),
+              ),
+            );
+          }
         }
       } else {
         setState(() {
@@ -108,15 +125,17 @@ class _AccessCodeScreenState extends ConsumerState<AccessCodeScreen> {
   }
 
   Future<void> _continueWithoutCode() async {
-    // Mark that user skipped access code entry
     final secureStorage = SecureStorageService();
     await secureStorage.markAccessCodeSkipped();
 
     print('✅ User skipped access code - saved to secure storage');
 
-    // Navigate to home without access code
     if (mounted) {
-      Navigator.of(context).pushReplacementNamed('/home');
+      if (widget.isFromDialog) {
+        Navigator.of(context).pop(false); // Return skipped
+      } else {
+        Navigator.of(context).pushReplacementNamed('/home');
+      }
     }
   }
 
@@ -132,6 +151,16 @@ class _AccessCodeScreenState extends ConsumerState<AccessCodeScreen> {
 
     return Scaffold(
       backgroundColor: isDark ? const Color(0xFF0A0A0A) : Colors.white,
+      appBar: widget.isFromDialog
+          ? AppBar(
+              backgroundColor: Colors.transparent,
+              elevation: 0,
+              leading: IconButton(
+                icon: const Icon(Icons.close),
+                onPressed: () => Navigator.of(context).pop(),
+              ),
+            )
+          : null,
       body: SafeArea(
         child: _showValidationMessage
             ? _buildSuccessMessage(isDark)
@@ -169,7 +198,9 @@ class _AccessCodeScreenState extends ConsumerState<AccessCodeScreen> {
           ),
           const SizedBox(height: 8),
           Text(
-            'Setting up your account...',
+            widget.isFromDialog
+                ? 'Returning to app...'
+                : 'Setting up your account...',
             style: GoogleFonts.inter(
               fontSize: 15,
               color: isDark ? Colors.white60 : Colors.black54,
@@ -202,8 +233,6 @@ class _AccessCodeScreenState extends ConsumerState<AccessCodeScreen> {
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
                   const SizedBox(height: 40),
-
-                  // Logo/Icon
                   Center(
                     child: Container(
                       width: 80,
@@ -235,10 +264,7 @@ class _AccessCodeScreenState extends ConsumerState<AccessCodeScreen> {
                       ),
                     ),
                   ),
-
                   const SizedBox(height: 32),
-
-                  // Title
                   Text(
                     'Access Code',
                     style: GoogleFonts.inter(
@@ -249,10 +275,7 @@ class _AccessCodeScreenState extends ConsumerState<AccessCodeScreen> {
                     ),
                     textAlign: TextAlign.center,
                   ),
-
                   const SizedBox(height: 12),
-
-                  // Subtitle
                   Text(
                     'Enter your code to unlock social features',
                     style: GoogleFonts.inter(
@@ -262,10 +285,7 @@ class _AccessCodeScreenState extends ConsumerState<AccessCodeScreen> {
                     ),
                     textAlign: TextAlign.center,
                   ),
-
                   const SizedBox(height: 40),
-
-                  // Form
                   Form(
                     key: _formKey,
                     child: Column(
@@ -335,7 +355,6 @@ class _AccessCodeScreenState extends ConsumerState<AccessCodeScreen> {
                           textInputAction: TextInputAction.done,
                           onFieldSubmitted: (_) => _validateCode(),
                         ),
-
                         if (_errorMessage != null)
                           Padding(
                             padding: const EdgeInsets.only(top: 12.0),
@@ -382,10 +401,7 @@ class _AccessCodeScreenState extends ConsumerState<AccessCodeScreen> {
                       ],
                     ),
                   ),
-
                   const SizedBox(height: 24),
-
-                  // Verify Button
                   ElevatedButton(
                     onPressed: _isLoading ? null : _validateCode,
                     style: ElevatedButton.styleFrom(
@@ -396,7 +412,6 @@ class _AccessCodeScreenState extends ConsumerState<AccessCodeScreen> {
                         borderRadius: BorderRadius.circular(16),
                       ),
                       elevation: 0,
-                      shadowColor: Colors.transparent,
                     ),
                     child: _isLoading
                         ? const SizedBox(
@@ -414,134 +429,123 @@ class _AccessCodeScreenState extends ConsumerState<AccessCodeScreen> {
                             style: GoogleFonts.inter(
                               fontSize: 16,
                               fontWeight: FontWeight.w600,
-                              letterSpacing: -0.2,
                             ),
                           ),
                   ),
-
-                  const SizedBox(height: 32),
-
-                  // Divider
-                  Row(
-                    children: [
-                      Expanded(
-                        child: Divider(
-                          color: isDark ? Colors.white12 : Colors.black12,
-                        ),
-                      ),
-                      Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 16),
-                        child: Text(
-                          'OR',
-                          style: GoogleFonts.inter(
-                            fontSize: 12,
-                            color: isDark ? Colors.white38 : Colors.black38,
-                            fontWeight: FontWeight.w600,
-                            letterSpacing: 1,
-                          ),
-                        ),
-                      ),
-                      Expanded(
-                        child: Divider(
-                          color: isDark ? Colors.white12 : Colors.black12,
-                        ),
-                      ),
-                    ],
-                  ),
-
-                  const SizedBox(height: 24),
-
-                  // Login Button (NEW)
-                  ElevatedButton.icon(
-                    onPressed: _navigateToLogin,
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Theme.of(context).colorScheme.secondary,
-                      foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(vertical: 18),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(16),
-                      ),
-                      elevation: 0,
-                      shadowColor: Colors.transparent,
-                    ),
-                    icon: const Icon(Icons.login_rounded, size: 20),
-                    label: Text(
-                      'Already Have an Account? Login',
-                      style: GoogleFonts.inter(
-                        fontSize: 15,
-                        fontWeight: FontWeight.w600,
-                        letterSpacing: -0.2,
-                      ),
-                    ),
-                  ),
-
-                  const SizedBox(height: 16),
-
-                  // Continue without code button
-                  OutlinedButton(
-                    onPressed: _continueWithoutCode,
-                    style: OutlinedButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(vertical: 18),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(16),
-                      ),
-                      side: BorderSide(
-                        color: isDark ? Colors.white12 : Colors.black12,
-                        width: 1.5,
-                      ),
-                      foregroundColor: isDark ? Colors.white70 : Colors.black87,
-                    ),
-                    child: Text(
-                      'Continue Without Code',
-                      style: GoogleFonts.inter(
-                        fontSize: 15,
-                        fontWeight: FontWeight.w600,
-                        letterSpacing: -0.2,
-                      ),
-                    ),
-                  ),
-
-                  const SizedBox(height: 16),
-
-                  // Info note
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 16,
-                      vertical: 14,
-                    ),
-                    decoration: BoxDecoration(
-                      color: isDark
-                          ? Colors.blue.withOpacity(0.08)
-                          : Colors.blue.withOpacity(0.05),
-                      borderRadius: BorderRadius.circular(12),
-                      border: Border.all(
-                        color: Colors.blue.withOpacity(0.2),
-                        width: 1,
-                      ),
-                    ),
-                    child: Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
+                  if (!widget.isFromDialog) ...[
+                    const SizedBox(height: 32),
+                    Row(
                       children: [
-                        Icon(
-                          Icons.info_outline_rounded,
-                          color: Colors.blue.shade400,
-                          size: 20,
-                        ),
-                        const SizedBox(width: 12),
                         Expanded(
+                          child: Divider(
+                            color: isDark ? Colors.white12 : Colors.black12,
+                          ),
+                        ),
+                        Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 16),
                           child: Text(
-                            'You can use the app without an access code. Social features will be limited.',
+                            'OR',
                             style: GoogleFonts.inter(
-                              fontSize: 13,
-                              color: isDark ? Colors.white70 : Colors.black87,
-                              height: 1.4,
+                              fontSize: 12,
+                              color: isDark ? Colors.white38 : Colors.black38,
+                              fontWeight: FontWeight.w600,
                             ),
+                          ),
+                        ),
+                        Expanded(
+                          child: Divider(
+                            color: isDark ? Colors.white12 : Colors.black12,
                           ),
                         ),
                       ],
                     ),
-                  ),
-
+                    const SizedBox(height: 24),
+                    ElevatedButton.icon(
+                      onPressed: _navigateToLogin,
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Theme.of(
+                          context,
+                        ).colorScheme.secondary,
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(vertical: 18),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(16),
+                        ),
+                        elevation: 0,
+                      ),
+                      icon: const Icon(Icons.login_rounded, size: 20),
+                      label: Text(
+                        'Already Have an Account? Login',
+                        style: GoogleFonts.inter(
+                          fontSize: 15,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    if (widget.showSkipButton)
+                      OutlinedButton(
+                        onPressed: _continueWithoutCode,
+                        style: OutlinedButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(vertical: 18),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(16),
+                          ),
+                          side: BorderSide(
+                            color: isDark ? Colors.white12 : Colors.black12,
+                            width: 1.5,
+                          ),
+                          foregroundColor: isDark
+                              ? Colors.white70
+                              : Colors.black87,
+                        ),
+                        child: Text(
+                          'Continue Without Code',
+                          style: GoogleFonts.inter(
+                            fontSize: 15,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                    const SizedBox(height: 16),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 14,
+                      ),
+                      decoration: BoxDecoration(
+                        color: isDark
+                            ? Colors.blue.withOpacity(0.08)
+                            : Colors.blue.withOpacity(0.05),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(
+                          color: Colors.blue.withOpacity(0.2),
+                          width: 1,
+                        ),
+                      ),
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Icon(
+                            Icons.info_outline_rounded,
+                            color: Colors.blue.shade400,
+                            size: 20,
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Text(
+                              'You can use the app without an access code. Social features will be limited.',
+                              style: GoogleFonts.inter(
+                                fontSize: 13,
+                                color: isDark ? Colors.white70 : Colors.black87,
+                                height: 1.4,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
                   const SizedBox(height: 40),
                 ],
               ),

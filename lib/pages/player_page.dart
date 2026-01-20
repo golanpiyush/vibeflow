@@ -18,12 +18,17 @@ import 'package:vibeflow/pages/audio_equalizer_page.dart';
 import 'package:vibeflow/services/audio_service.dart';
 import 'package:vibeflow/services/haptic_feedback_service.dart';
 import 'package:vibeflow/utils/album_color_generator.dart';
-import 'package:vibeflow/utils/audio_governerScreen.dart';
 import 'package:vibeflow/utils/page_transitions.dart';
 import 'package:vibeflow/utils/theme_provider.dart';
 import 'package:vibeflow/widgets/lyrics_widget.dart';
 import 'package:vibeflow/widgets/radio_sheet.dart';
 import 'package:vibeflow/widgets/playlist_bottomSheet.dart';
+
+// ======================================================================================================================
+
+// Legacy Screen
+
+// ======================================================================================================================
 
 class PlayerScreen extends ConsumerStatefulWidget {
   final QuickPick song;
@@ -130,6 +135,60 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
       _errorOverlayController.forward();
     }
   }
+
+  // Replace the _playInitialSong method in PlayerScreen
+
+  // Future<void> _playInitialSong() async {
+  //   try {
+  //     print('🎵 [PlayerScreen] Checking current playback state...');
+
+  //     // Check if this song is already playing
+  //     final currentMedia = await _audioService.mediaItemStream.first;
+
+  //     if (currentMedia != null && currentMedia.id == widget.song.videoId) {
+  //       print(
+  //         '✅ [PlayerScreen] Song already loaded/playing: ${currentMedia.title}',
+  //       );
+
+  //       // Check if it's paused and we should resume
+  //       final playbackState = await _audioService.playbackStateStream.first;
+  //       final isPlaying = playbackState.playing;
+
+  //       if (!isPlaying) {
+  //         print('▶️ [PlayerScreen] Resuming paused song');
+  //         // Don't call playSong() - just resume
+  //         // The user can manually press play if they want
+  //       }
+
+  //       return; // Don't re-initialize playback
+  //     }
+
+  //     // Only play if it's a different song
+  //     print('🎵 [PlayerScreen] Playing new song: ${widget.song.title}');
+  //     await _audioService.playSong(widget.song);
+
+  //     print('✅ [PlayerScreen] Song started successfully');
+  //   } catch (e, stackTrace) {
+  //     print('❌ [PlayerScreen] Playback error: $e');
+
+  //     // 📳 VIBRATE: Triple pattern for critical error
+  //     await HapticFeedbackService().vibrateCriticalError();
+
+  //     // Show error overlay
+  //     setState(() {
+  //       _hasAudioError = true;
+  //       _errorMessage = 'Playback Error';
+  //       _detailedError =
+  //           'An error occurred while trying to play "${widget.song.title}".\n\n'
+  //           'Error Details:\n'
+  //           '${e.toString()}\n\n'
+  //           'Video ID: ${widget.song.videoId}\n\n'
+  //           'Stack Trace:\n'
+  //           '${stackTrace.toString().split('\n').take(5).join('\n')}';
+  //     });
+  //     _errorOverlayController.forward();
+  //   }
+  // }
 
   String _formatDuration(Duration? duration) {
     if (duration == null) return '0:00';

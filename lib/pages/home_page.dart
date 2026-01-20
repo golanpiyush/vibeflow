@@ -7,11 +7,13 @@ import 'package:audio_service/audio_service.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:miniplayer/miniplayer.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:vibeflow/api_base/yt_music_search_suggestor.dart';
 import 'package:vibeflow/api_base/ytmusic_albums_scraper.dart';
 import 'package:vibeflow/api_base/ytmusic_search_helper.dart';
 import 'package:vibeflow/constants/theme_colors.dart';
 import 'package:vibeflow/database/listening_activity_service.dart';
+import 'package:vibeflow/installer_services/update_manager_service.dart';
 import 'package:vibeflow/models/song_model.dart';
 import 'package:vibeflow/pages/access_code_management_screen.dart';
 import 'package:vibeflow/pages/album_view.dart';
@@ -19,6 +21,7 @@ import 'package:vibeflow/pages/appearance_page.dart';
 import 'package:vibeflow/pages/artist_view.dart';
 import 'package:vibeflow/pages/authOnboard/Screens/social_feed_page.dart';
 import 'package:vibeflow/pages/authOnboard/access_code_screen.dart';
+import 'package:vibeflow/pages/newPlayerPage.dart';
 import 'package:vibeflow/pages/subpages/songs/albums.dart';
 import 'package:vibeflow/pages/subpages/songs/albums_grid_page.dart';
 import 'package:vibeflow/pages/subpages/songs/artists.dart';
@@ -42,6 +45,7 @@ import 'package:vibeflow/models/album_model.dart';
 import 'package:vibeflow/models/artist_model.dart';
 import 'package:vibeflow/models/quick_picks_model.dart';
 import 'package:vibeflow/pages/player_page.dart';
+import 'package:vibeflow/widgets/update_dialog.dart';
 
 class HomePage extends ConsumerStatefulWidget {
   const HomePage({Key? key}) : super(key: key);
@@ -94,6 +98,11 @@ class _HomePageState extends ConsumerState<HomePage> {
     _searchHelper = YTMusicSearchHelper();
     _lastPlayedNotifier = ValueNotifier<QuickPick?>(null);
     _initializeApp();
+
+    // 🔄 Check for updates after first frame
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _checkForUpdates();
+    });
   }
 
   Future<void> _initializeApp() async {
@@ -113,23 +122,29 @@ class _HomePageState extends ConsumerState<HomePage> {
     }
   }
 
+  // Replace these methods in your _HomePageState class:
+
   Future<void> _loadQuickPicks() async {
+    if (!mounted) return; // ✅ Check before setState
     setState(() => isLoadingQuickPicks = true);
 
     try {
       final songs = await _scraper.getQuickPicks(limit: 40);
 
+      if (!mounted) return; // ✅ Check after async operation
       setState(() {
         quickPicks = songs.map((song) => QuickPick.fromSong(song)).toList();
         isLoadingQuickPicks = false;
       });
     } catch (e) {
       print('Error loading quick picks: $e');
+      if (!mounted) return; // ✅ Check before setState in catch
       setState(() => isLoadingQuickPicks = false);
     }
   }
 
   Future<void> _loadAlbums() async {
+    if (!mounted) return; // ✅ Check before setState
     setState(() => isLoadingAlbums = true);
 
     try {
@@ -137,6 +152,7 @@ class _HomePageState extends ConsumerState<HomePage> {
 
       print('✅ Found ${albums.length} albums');
 
+      if (!mounted) return; // ✅ Check after async operation
       setState(() {
         relatedAlbums = albums;
         isLoadingAlbums = false;
@@ -144,11 +160,13 @@ class _HomePageState extends ConsumerState<HomePage> {
     } catch (e, stack) {
       print('❌ Error loading albums: $e');
       print('Stack: ${stack.toString().split('\n').take(3).join('\n')}');
+      if (!mounted) return; // ✅ Check before setState in catch
       setState(() => isLoadingAlbums = false);
     }
   }
 
   Future<void> _loadArtists() async {
+    if (!mounted) return; // ✅ Check before setState
     setState(() => isLoadingArtists = true);
 
     try {
@@ -156,6 +174,7 @@ class _HomePageState extends ConsumerState<HomePage> {
 
       print('✅ Found ${artists.length} artists');
 
+      if (!mounted) return; // ✅ Check after async operation
       setState(() {
         similarArtists = artists;
         isLoadingArtists = false;
@@ -163,19 +182,13 @@ class _HomePageState extends ConsumerState<HomePage> {
     } catch (e, stack) {
       print('❌ Error loading artists: $e');
       print('Stack: ${stack.toString().split('\n').take(3).join('\n')}');
+      if (!mounted) return; // ✅ Check before setState in catch
       setState(() => isLoadingArtists = false);
     }
   }
 
-  Future<void> _loadLastPlayedSong() async {
-    final lastPlayed = await LastPlayedService.getLastPlayed();
-    if (mounted) {
-      _lastPlayedNotifier.value = lastPlayed;
-    }
-  }
-
-  // Method to fetch random artists with images
   Future<void> _fetchRandomArtists() async {
+    if (!mounted) return; // ✅ Check before setState
     setState(() {
       isLoadingArtists = true;
     });
@@ -195,6 +208,7 @@ class _HomePageState extends ConsumerState<HomePage> {
           .toList();
 
       // Take at least 25, or all if less
+      if (!mounted) return; // ✅ Check after async operation
       setState(() {
         similarArtists = artistsWithImages.take(30).toList();
         isLoadingArtists = false;
@@ -203,6 +217,7 @@ class _HomePageState extends ConsumerState<HomePage> {
       print('✅ Loaded ${similarArtists.length} artists with images');
     } catch (e) {
       print('❌ Error fetching random artists: $e');
+      if (!mounted) return; // ✅ Check before setState in catch
       setState(() {
         isLoadingArtists = false;
       });
@@ -214,6 +229,7 @@ class _HomePageState extends ConsumerState<HomePage> {
     _debounceTimer?.cancel();
 
     if (query.trim().isEmpty) {
+      if (!mounted) return; // ✅ Check before setState
       setState(() {
         searchResults = [];
         isSearching = false;
@@ -222,6 +238,7 @@ class _HomePageState extends ConsumerState<HomePage> {
     }
 
     // Show loading immediately
+    if (!mounted) return; // ✅ Check before setState
     setState(() => isSearching = true);
 
     // Start new debounce timer
@@ -230,6 +247,7 @@ class _HomePageState extends ConsumerState<HomePage> {
         final results = await _searchHelper.searchSongs(query, limit: 50);
 
         if (mounted) {
+          // ✅ Check before setState
           setState(() {
             searchResults = results;
             isSearching = false;
@@ -243,6 +261,7 @@ class _HomePageState extends ConsumerState<HomePage> {
       } catch (e) {
         print('Error searching: $e');
         if (mounted) {
+          // ✅ Check before setState in catch
           setState(() => isSearching = false);
         }
       }
@@ -251,6 +270,7 @@ class _HomePageState extends ConsumerState<HomePage> {
 
   Future<void> _performSearchImmediately(String query) async {
     if (query.trim().isEmpty) {
+      if (!mounted) return; // ✅ Check before setState
       setState(() {
         searchResults = [];
         isSearching = false;
@@ -258,12 +278,14 @@ class _HomePageState extends ConsumerState<HomePage> {
       return;
     }
 
+    if (!mounted) return; // ✅ Check before setState
     setState(() => isSearching = true);
 
     try {
       final results = await _searchHelper.searchSongs(query, limit: 50);
 
       if (mounted) {
+        // ✅ Check after async operation
         setState(() {
           searchResults = results;
           isSearching = false;
@@ -277,16 +299,41 @@ class _HomePageState extends ConsumerState<HomePage> {
     } catch (e) {
       print('Error searching: $e');
       if (mounted) {
+        // ✅ Check before setState in catch
         setState(() => isSearching = false);
       }
     }
   }
 
   void _onSearchChanged(String query) {
+    if (!mounted) return; // ✅ Check before setState
     setState(() {
       _currentQuery = query; // Update current query for suggestions widget
     });
     _performSearch(query); // This handles debounced actual search
+  }
+
+  Future<void> _loadLastPlayedSong() async {
+    final lastPlayed = await LastPlayedService.getLastPlayed();
+    if (!mounted) return; // ✅ Check after async operation
+    _lastPlayedNotifier.value = lastPlayed;
+  }
+
+  Future<void> _checkForUpdates() async {
+    try {
+      final updateResult = await UpdateManagerService.checkForUpdate();
+
+      if (!mounted) return; // ✅ Check after async operation
+
+      if (updateResult.status == UpdateStatus.available &&
+          updateResult.updateInfo != null) {
+        // Show update dialog
+        UpdateDialog.show(context, updateResult.updateInfo!);
+      }
+    } catch (e) {
+      debugPrint('⚠️ Update check failed: $e');
+      // Silently fail - don't show error to user
+    }
   }
 
   @override
@@ -424,13 +471,15 @@ class _HomePageState extends ConsumerState<HomePage> {
     );
   }
 
-  // Updated _buildSearchView method
-  // Update the _buildSearchView method to use theme colors
   Widget _buildSearchView() {
     final textPrimaryColor = ref.watch(themeTextPrimaryColorProvider);
     final textSecondaryColor = ref.watch(themeTextSecondaryColorProvider);
     final accentColor = ref.watch(themeAccentColorProvider);
-    final showSuggestions = searchResults.isEmpty && !isSearching;
+
+    // Show suggestions when: searching OR (empty query AND no results)
+    final showSuggestions =
+        (isSearching && _currentQuery.trim().isEmpty) ||
+        (searchResults.isEmpty && !isSearching);
 
     return Column(
       children: [
@@ -576,9 +625,9 @@ class _HomePageState extends ConsumerState<HomePage> {
                             },
                             child: Text(
                               'Results',
-                              style: AppTypography.sectionHeader.copyWith(
-                                color: textPrimaryColor,
-                              ),
+                              style: AppTypography.sectionHeader(
+                                context,
+                              ).copyWith(color: textPrimaryColor),
                             ),
                           ),
                           const SizedBox(height: AppSpacing.md),
@@ -633,13 +682,7 @@ class _HomePageState extends ConsumerState<HomePage> {
                                     _lastPlayedSong = quickPick;
                                   });
 
-                                  Navigator.push(
-                                    context,
-                                    MaterialPageRoute(
-                                      builder: (context) =>
-                                          PlayerScreen(song: quickPick),
-                                    ),
-                                  );
+                                  NewPlayerPage.open(context, quickPick);
                                 },
                                 ref: ref,
                               ),
@@ -663,14 +706,14 @@ class _HomePageState extends ConsumerState<HomePage> {
                             const SizedBox(height: 16),
                             Text(
                               'No results found',
-                              style: AppTypography.subtitle.copyWith(
-                                color: textSecondaryColor,
-                              ),
+                              style: AppTypography.subtitle(
+                                context,
+                              ).copyWith(color: textSecondaryColor),
                             ),
                             const SizedBox(height: 8),
                             Text(
                               'Try a different search term',
-                              style: AppTypography.caption.copyWith(
+                              style: AppTypography.caption(context).copyWith(
                                 color: textSecondaryColor.withOpacity(0.7),
                               ),
                             ),
@@ -683,6 +726,260 @@ class _HomePageState extends ConsumerState<HomePage> {
       ],
     );
   }
+
+  // Updated _buildSearchView method
+  // Update the _buildSearchView method to use theme colors
+  // Widget _buildSearchView() {
+  //   final textPrimaryColor = ref.watch(themeTextPrimaryColorProvider);
+  //   final textSecondaryColor = ref.watch(themeTextSecondaryColorProvider);
+  //   final accentColor = ref.watch(themeAccentColorProvider);
+  //   final showSuggestions = searchResults.isEmpty && !isSearching;
+
+  //   return Column(
+  //     children: [
+  //       if (showSuggestions)
+  //         Expanded(
+  //           child: AnimatedSwitcher(
+  //             duration: const Duration(milliseconds: 300),
+  //             switchInCurve: Curves.easeOutCubic,
+  //             switchOutCurve: Curves.easeInCubic,
+  //             child: SearchSuggestionsWidget(
+  //               key: ValueKey(_currentQuery),
+  //               query: _currentQuery,
+  //               onSuggestionTap: (suggestion) {
+  //                 _searchController.text = suggestion;
+  //                 setState(() {
+  //                   _currentQuery = suggestion;
+  //                 });
+  //                 _debounceTimer?.cancel();
+  //                 _performSearchImmediately(suggestion);
+  //                 FocusScope.of(context).unfocus();
+  //               },
+  //               onClearHistory: () {
+  //                 ScaffoldMessenger.of(context).showSnackBar(
+  //                   SnackBar(
+  //                     content: const Text('Search history cleared'),
+  //                     duration: const Duration(seconds: 2),
+  //                     backgroundColor: accentColor,
+  //                     behavior: SnackBarBehavior.floating,
+  //                     shape: RoundedRectangleBorder(
+  //                       borderRadius: BorderRadius.circular(8),
+  //                     ),
+  //                     margin: const EdgeInsets.all(16),
+  //                   ),
+  //                 );
+  //               },
+  //             ),
+  //           ),
+  //         )
+  //       else
+  //         Expanded(
+  //           child: AnimatedSwitcher(
+  //             duration: const Duration(milliseconds: 400),
+  //             switchInCurve: Curves.easeOutCubic,
+  //             switchOutCurve: Curves.easeInCubic,
+  //             transitionBuilder: (child, animation) {
+  //               return FadeTransition(
+  //                 opacity: animation,
+  //                 child: SlideTransition(
+  //                   position:
+  //                       Tween<Offset>(
+  //                         begin: const Offset(0, 0.02),
+  //                         end: Offset.zero,
+  //                       ).animate(
+  //                         CurvedAnimation(
+  //                           parent: animation,
+  //                           curve: Curves.easeOutCubic,
+  //                         ),
+  //                       ),
+  //                   child: child,
+  //                 ),
+  //               );
+  //             },
+  //             child: isSearching
+  //                 ? ShimmerLoading(
+  //                     key: const ValueKey('loading'),
+  //                     child: SingleChildScrollView(
+  //                       padding: const EdgeInsets.all(AppSpacing.lg),
+  //                       child: Column(
+  //                         crossAxisAlignment: CrossAxisAlignment.start,
+  //                         children: [
+  //                           SkeletonBox(width: 80, height: 24, borderRadius: 4),
+  //                           const SizedBox(height: AppSpacing.md),
+  //                           ...List.generate(8, (index) {
+  //                             return Container(
+  //                               padding: const EdgeInsets.symmetric(
+  //                                 horizontal: 16,
+  //                                 vertical: 8,
+  //                               ),
+  //                               margin: const EdgeInsets.only(bottom: 8),
+  //                               height: 70,
+  //                               child: Row(
+  //                                 children: [
+  //                                   SkeletonBox(
+  //                                     width: 54,
+  //                                     height: 54,
+  //                                     borderRadius: 6,
+  //                                   ),
+  //                                   const SizedBox(width: 12),
+  //                                   Expanded(
+  //                                     child: Column(
+  //                                       mainAxisAlignment:
+  //                                           MainAxisAlignment.center,
+  //                                       crossAxisAlignment:
+  //                                           CrossAxisAlignment.start,
+  //                                       children: [
+  //                                         SkeletonBox(
+  //                                           width: double.infinity,
+  //                                           height: 16,
+  //                                           borderRadius: 4,
+  //                                         ),
+  //                                         const SizedBox(height: 6),
+  //                                         SkeletonBox(
+  //                                           width: 150,
+  //                                           height: 12,
+  //                                           borderRadius: 4,
+  //                                         ),
+  //                                       ],
+  //                                     ),
+  //                                   ),
+  //                                   const SizedBox(width: 8),
+  //                                   SkeletonBox(
+  //                                     width: 35,
+  //                                     height: 11,
+  //                                     borderRadius: 4,
+  //                                   ),
+  //                                 ],
+  //                               ),
+  //                             );
+  //                           }),
+  //                         ],
+  //                       ),
+  //                     ),
+  //                   )
+  //                 : searchResults.isNotEmpty
+  //                 ? SingleChildScrollView(
+  //                     key: ValueKey('results-${searchResults.length}'),
+  //                     padding: const EdgeInsets.all(AppSpacing.lg),
+  //                     child: Column(
+  //                       crossAxisAlignment: CrossAxisAlignment.start,
+  //                       children: [
+  //                         TweenAnimationBuilder<double>(
+  //                           duration: const Duration(milliseconds: 350),
+  //                           curve: Curves.easeOutCubic,
+  //                           tween: Tween(begin: 0.0, end: 1.0),
+  //                           builder: (context, value, child) {
+  //                             return Opacity(
+  //                               opacity: value,
+  //                               child: Transform.translate(
+  //                                 offset: Offset(0, 10 * (1 - value)),
+  //                                 child: child,
+  //                               ),
+  //                             );
+  //                           },
+  //                           child: Text(
+  //                             'Results',
+  //                             style: AppTypography.sectionHeader.copyWith(
+  //                               color: textPrimaryColor,
+  //                             ),
+  //                           ),
+  //                         ),
+  //                         const SizedBox(height: AppSpacing.md),
+  //                         ...searchResults.asMap().entries.map((entry) {
+  //                           final index = entry.key;
+  //                           final song = entry.value;
+  //                           final durationInSeconds = song.duration != null
+  //                               ? _parseDurationToSeconds(song.duration!)
+  //                               : null;
+
+  //                           return TweenAnimationBuilder<double>(
+  //                             duration: Duration(
+  //                               milliseconds: 350 + (index * 40),
+  //                             ),
+  //                             curve: Curves.easeOutCubic,
+  //                             tween: Tween(begin: 0.0, end: 1.0),
+  //                             builder: (context, value, child) {
+  //                               return Opacity(
+  //                                 opacity: value,
+  //                                 child: Transform.translate(
+  //                                   offset: Offset(0, 15 * (1 - value)),
+  //                                   child: child,
+  //                                 ),
+  //                               );
+  //                             },
+  //                             child: _buildSearchResultItem(
+  //                               videoId: song.videoId,
+  //                               title: song.title,
+  //                               subtitle: song.artists.join(', '),
+  //                               thumbnail: song.thumbnail,
+  //                               duration: durationInSeconds,
+  //                               formattedDuration: song.duration,
+  //                               onTap: () async {
+  //                                 final helper = YTMusicSuggestionsHelper();
+  //                                 await helper.saveToHistory(
+  //                                   _searchController.text,
+  //                                 );
+  //                                 helper.dispose();
+
+  //                                 final quickPick = QuickPick(
+  //                                   videoId: song.videoId,
+  //                                   title: song.title,
+  //                                   artists: song.artists.join(', '),
+  //                                   thumbnail: song.thumbnail,
+  //                                   duration: song.duration,
+  //                                 );
+
+  //                                 await LastPlayedService.saveLastPlayed(
+  //                                   quickPick,
+  //                                 );
+  //                                 setState(() {
+  //                                   _lastPlayedSong = quickPick;
+  //                                 });
+
+  //                                 NewPlayerPage.open(context, quickPick);
+  //                               },
+  //                               ref: ref,
+  //                             ),
+  //                           );
+  //                         }).toList(),
+  //                       ],
+  //                     ),
+  //                   )
+  //                 : Center(
+  //                     key: const ValueKey('empty'),
+  //                     child: Padding(
+  //                       padding: const EdgeInsets.all(32.0),
+  //                       child: Column(
+  //                         mainAxisAlignment: MainAxisAlignment.center,
+  //                         children: [
+  //                           Icon(
+  //                             Icons.music_off,
+  //                             size: 64,
+  //                             color: textSecondaryColor.withOpacity(0.5),
+  //                           ),
+  //                           const SizedBox(height: 16),
+  //                           Text(
+  //                             'No results found',
+  //                             style: AppTypography.subtitle.copyWith(
+  //                               color: textSecondaryColor,
+  //                             ),
+  //                           ),
+  //                           const SizedBox(height: 8),
+  //                           Text(
+  //                             'Try a different search term',
+  //                             style: AppTypography.caption.copyWith(
+  //                               color: textSecondaryColor.withOpacity(0.7),
+  //                             ),
+  //                           ),
+  //                         ],
+  //                       ),
+  //                     ),
+  //                   ),
+  //           ),
+  //         ),
+  //     ],
+  //   );
+  // }
 
   // Updated _buildSearchResultItem signature (same as before):
   Widget _buildSearchResultItem({
@@ -744,7 +1041,7 @@ class _HomePageState extends ConsumerState<HomePage> {
                 children: [
                   Text(
                     title,
-                    style: AppTypography.songTitle.copyWith(
+                    style: AppTypography.songTitle(context).copyWith(
                       fontWeight: FontWeight.w500,
                       color: textPrimaryColor,
                     ),
@@ -754,10 +1051,9 @@ class _HomePageState extends ConsumerState<HomePage> {
                   const SizedBox(height: 2),
                   Text(
                     subtitle,
-                    style: AppTypography.caption.copyWith(
-                      color: textSecondaryColor,
-                      fontSize: 12,
-                    ),
+                    style: AppTypography.caption(
+                      context,
+                    ).copyWith(color: textSecondaryColor, fontSize: 12),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                   ),
@@ -769,10 +1065,9 @@ class _HomePageState extends ConsumerState<HomePage> {
                 padding: const EdgeInsets.only(left: 8),
                 child: Text(
                   displayDuration,
-                  style: AppTypography.caption.copyWith(
-                    color: textSecondaryColor,
-                    fontSize: 11,
-                  ),
+                  style: AppTypography.caption(
+                    context,
+                  ).copyWith(color: textSecondaryColor, fontSize: 11),
                 ),
               ),
           ],
@@ -820,15 +1115,16 @@ class _HomePageState extends ConsumerState<HomePage> {
     final sidebarLabelActiveColor = ref.watch(themeIconActiveColorProvider);
 
     // Create theme-aware text styles
-    final sidebarLabelStyle = AppTypography.sidebarLabel.copyWith(
-      color: sidebarLabelColor,
-    );
-    final sidebarLabelActiveStyle = AppTypography.sidebarLabelActive.copyWith(
-      color: sidebarLabelActiveColor,
-    );
+    final sidebarLabelStyle = AppTypography.sidebarLabel(
+      context,
+    ).copyWith(color: sidebarLabelColor);
+    final sidebarLabelActiveStyle = AppTypography.sidebarLabelActive(
+      context,
+    ).copyWith(color: sidebarLabelActiveColor);
 
     // Watch if user has access code
     final hasAccessCodeAsync = ref.watch(hasAccessCodeProvider);
+    (context);
 
     return SizedBox(
       width: 65,
@@ -987,12 +1283,12 @@ class _HomePageState extends ConsumerState<HomePage> {
     final iconActiveColor = ref.watch(themeIconActiveColorProvider);
     final backgroundColor = ref.watch(themeBackgroundColorProvider);
 
-    final pageTitleStyle = AppTypography.pageTitle.copyWith(
-      color: textPrimaryColor,
-    );
-    final hintStyle = AppTypography.pageTitle.copyWith(
-      color: textSecondaryColor.withOpacity(0.5),
-    );
+    final pageTitleStyle = AppTypography.pageTitle(
+      context,
+    ).copyWith(color: textPrimaryColor);
+    final hintStyle = AppTypography.pageTitle(
+      context,
+    ).copyWith(color: textSecondaryColor.withOpacity(0.5));
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
@@ -1128,6 +1424,7 @@ class _HomePageState extends ConsumerState<HomePage> {
                       focusedBorder: InputBorder.none,
                       contentPadding: EdgeInsets.zero,
                     ),
+                    cursorColor: iconActiveColor,
                     onChanged: (value) {
                       _onSearchChanged(value);
                     },
@@ -1150,7 +1447,8 @@ class _HomePageState extends ConsumerState<HomePage> {
   void _showNoAccessCodeDialog(BuildContext context) {
     showDialog(
       context: context,
-      builder: (context) => AlertDialog(
+      barrierDismissible: true,
+      builder: (dialogContext) => AlertDialog(
         title: const Text('No Access Code'),
         content: Column(
           mainAxisSize: MainAxisSize.min,
@@ -1166,18 +1464,45 @@ class _HomePageState extends ConsumerState<HomePage> {
         ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.of(context).pop(),
+            onPressed: () => Navigator.of(dialogContext).pop(),
             child: const Text('Cancel'),
           ),
           ElevatedButton(
-            onPressed: () {
-              Navigator.of(context).pop();
-              Navigator.of(context).push(
-                MaterialPageRoute(
-                  builder: (context) =>
-                      const AccessCodeScreen(showSkipButton: false),
-                ),
-              );
+            onPressed: () async {
+              Navigator.of(dialogContext).pop();
+
+              // Stop audio player
+              try {
+                await AudioServices.instance.stop();
+                print('🛑 Audio stopped before access code entry');
+              } catch (e) {
+                print('⚠️ Error stopping audio: $e');
+              }
+
+              await Future.delayed(const Duration(milliseconds: 100));
+
+              if (context.mounted) {
+                final result = await Navigator.of(context).push<bool>(
+                  MaterialPageRoute(
+                    builder: (context) => const AccessCodeScreen(
+                      showSkipButton: false,
+                      isFromDialog: true, // NEW FLAG
+                    ),
+                    fullscreenDialog: true,
+                  ),
+                );
+
+                // Refresh if code was entered successfully
+                if (result == true && context.mounted) {
+                  setState(() {});
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('Access code verified successfully!'),
+                      backgroundColor: Colors.green,
+                    ),
+                  );
+                }
+              }
             },
             child: const Text('Enter Code'),
           ),
@@ -1248,7 +1573,9 @@ class _HomePageState extends ConsumerState<HomePage> {
       return Center(
         child: Text(
           'No songs available',
-          style: AppTypography.subtitle.copyWith(color: textPrimaryColor),
+          style: AppTypography.subtitle(
+            context,
+          ).copyWith(color: textPrimaryColor),
         ),
       );
     }
@@ -1295,36 +1622,10 @@ class _HomePageState extends ConsumerState<HomePage> {
         setState(() {
           _lastPlayedSong = quickPick;
         });
-        Navigator.push(
+        NewPlayerPage.open(
           context,
-          PageRouteBuilder(
-            pageBuilder: (_, animation, __) => PlayerScreen(
-              song: quickPick,
-              heroTag: 'thumbnail-${quickPick.videoId}',
-            ),
-            transitionDuration: const Duration(milliseconds: 600),
-            reverseTransitionDuration: const Duration(milliseconds: 500),
-            transitionsBuilder: (_, animation, __, child) {
-              final fade = CurvedAnimation(
-                parent: animation,
-                curve: const Interval(0.0, 0.6, curve: Curves.easeOut),
-              );
-              final slide =
-                  Tween<Offset>(
-                    begin: const Offset(0, 1),
-                    end: Offset.zero,
-                  ).animate(
-                    CurvedAnimation(
-                      parent: animation,
-                      curve: Curves.easeOutCubic,
-                    ),
-                  );
-              return SlideTransition(
-                position: slide,
-                child: FadeTransition(opacity: fade, child: child),
-              );
-            },
-          ),
+          quickPick,
+          heroTag: 'thumbnail-${quickPick.videoId}',
         );
       },
       child: Container(
@@ -1387,7 +1688,7 @@ class _HomePageState extends ConsumerState<HomePage> {
                     quickPick.title,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: AppTypography.songTitle.copyWith(
+                    style: AppTypography.songTitle(context).copyWith(
                       fontWeight: FontWeight.w500,
                       color: textPrimaryColor,
                     ),
@@ -1397,10 +1698,9 @@ class _HomePageState extends ConsumerState<HomePage> {
                     quickPick.artists,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: AppTypography.caption.copyWith(
-                      color: textSecondaryColor,
-                      fontSize: 12,
-                    ),
+                    style: AppTypography.caption(
+                      context,
+                    ).copyWith(color: textSecondaryColor, fontSize: 12),
                   ),
                 ],
               ),
@@ -1428,9 +1728,9 @@ class _HomePageState extends ConsumerState<HomePage> {
             children: [
               Text(
                 'Albums',
-                style: AppTypography.sectionHeader.copyWith(
-                  color: textPrimaryColor,
-                ),
+                style: AppTypography.sectionHeader(
+                  context,
+                ).copyWith(color: textPrimaryColor),
               ),
               if (isLoadingAlbums)
                 SizedBox(
@@ -1486,9 +1786,9 @@ class _HomePageState extends ConsumerState<HomePage> {
               padding: const EdgeInsets.all(32.0),
               child: Text(
                 'No albums found',
-                style: AppTypography.subtitle.copyWith(
-                  color: AppColors.textSecondary,
-                ),
+                style: AppTypography.subtitle(
+                  context,
+                ).copyWith(color: AppColors.textSecondary),
               ),
             ),
           )
@@ -1580,17 +1880,18 @@ class _HomePageState extends ConsumerState<HomePage> {
             const SizedBox(height: AppSpacing.sm),
             Text(
               album.title,
-              style: AppTypography.subtitle.copyWith(
-                fontWeight: FontWeight.w600,
-                color: textPrimaryColor,
-              ),
+              style: AppTypography.subtitle(
+                context,
+              ).copyWith(fontWeight: FontWeight.w600, color: textPrimaryColor),
               maxLines: 2,
               overflow: TextOverflow.ellipsis,
             ),
             const SizedBox(height: AppSpacing.xs / 2),
             Text(
               album.artist,
-              style: AppTypography.caption.copyWith(color: textSecondaryColor),
+              style: AppTypography.caption(
+                context,
+              ).copyWith(color: textSecondaryColor),
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
             ),
@@ -1598,9 +1899,9 @@ class _HomePageState extends ConsumerState<HomePage> {
               const SizedBox(height: AppSpacing.xs / 2),
               Text(
                 album.year.toString(),
-                style: AppTypography.captionSmall.copyWith(
-                  color: textSecondaryColor.withOpacity(0.7),
-                ),
+                style: AppTypography.captionSmall(
+                  context,
+                ).copyWith(color: textSecondaryColor.withOpacity(0.7)),
               ),
             ],
           ],
@@ -1632,9 +1933,9 @@ class _HomePageState extends ConsumerState<HomePage> {
             children: [
               Text(
                 'Similar artists',
-                style: AppTypography.sectionHeader.copyWith(
-                  color: textPrimaryColor,
-                ),
+                style: AppTypography.sectionHeader(
+                  context,
+                ).copyWith(color: textPrimaryColor),
               ),
               Row(
                 children: [
@@ -1705,9 +2006,9 @@ class _HomePageState extends ConsumerState<HomePage> {
                 children: [
                   Text(
                     'No artists found',
-                    style: AppTypography.subtitle.copyWith(
-                      color: AppColors.textSecondary,
-                    ),
+                    style: AppTypography.subtitle(
+                      context,
+                    ).copyWith(color: AppColors.textSecondary),
                   ),
                   const SizedBox(height: 16),
                   ElevatedButton.icon(
@@ -1797,7 +2098,9 @@ class _HomePageState extends ConsumerState<HomePage> {
             const SizedBox(height: AppSpacing.sm),
             Text(
               artist.name,
-              style: AppTypography.subtitle.copyWith(color: textPrimaryColor),
+              style: AppTypography.subtitle(
+                context,
+              ).copyWith(color: textPrimaryColor),
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               textAlign: TextAlign.center,
@@ -1805,9 +2108,9 @@ class _HomePageState extends ConsumerState<HomePage> {
             const SizedBox(height: AppSpacing.xs / 2),
             Text(
               artist.subscribers,
-              style: AppTypography.captionSmall.copyWith(
-                color: textSecondaryColor,
-              ),
+              style: AppTypography.captionSmall(
+                context,
+              ).copyWith(color: textSecondaryColor),
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               textAlign: TextAlign.center,
@@ -1818,6 +2121,8 @@ class _HomePageState extends ConsumerState<HomePage> {
     );
   }
 
+  // Replace the _buildMiniPlayer method in your home_page.dart
+
   Widget _buildMiniPlayer(QuickPick song, MediaItem? currentMedia) {
     final backgroundColor = ref.watch(themeBackgroundColorProvider);
     final cardBackgroundColor = ref.watch(themeCardBackgroundColorProvider);
@@ -1825,48 +2130,19 @@ class _HomePageState extends ConsumerState<HomePage> {
     final textSecondaryColor = ref.watch(themeTextSecondaryColorProvider);
     final iconActiveColor = ref.watch(themeIconActiveColorProvider);
     final iconInactiveColor = ref.watch(themeTextSecondaryColorProvider);
-    final thumbnailRadius = ref.watch(
-      thumbnailRadiusProvider,
-    ); // Get the radius
+    final thumbnailRadius = ref.watch(thumbnailRadiusProvider);
 
     return GestureDetector(
       onTap: () {
-        // Navigate to full PlayerScreen instead of expanding miniplayer
-        Navigator.push(
+        NewPlayerPage.open(
           context,
-          PageRouteBuilder(
-            pageBuilder: (context, animation, secondaryAnimation) =>
-                PlayerScreen(
-                  song: song,
-                  heroTag: 'miniplayer-thumbnail-${song.videoId}',
-                ),
-            transitionDuration: const Duration(milliseconds: 400),
-            reverseTransitionDuration: const Duration(milliseconds: 400),
-            transitionsBuilder:
-                (context, animation, secondaryAnimation, child) {
-                  // Slide up animation
-                  final slideAnimation =
-                      Tween<Offset>(
-                        begin: const Offset(0.0, 1.0),
-                        end: Offset.zero,
-                      ).animate(
-                        CurvedAnimation(
-                          parent: animation,
-                          curve: Curves.easeOutCubic,
-                        ),
-                      );
-
-                  return SlideTransition(
-                    position: slideAnimation,
-                    child: child,
-                  );
-                },
-          ),
+          song,
+          heroTag: 'miniplayer-thumbnail-${song.videoId}',
         );
       },
       child: Container(
         decoration: BoxDecoration(
-          color: cardBackgroundColor, // Use card background color
+          color: cardBackgroundColor,
           boxShadow: [
             BoxShadow(
               color: Colors.black.withOpacity(0.3),
@@ -1878,12 +2154,15 @@ class _HomePageState extends ConsumerState<HomePage> {
         child: StreamBuilder<PlaybackState>(
           stream: _audioService.playbackStateStream,
           builder: (context, playbackSnapshot) {
+            // Extract both playing state and processing state
             final playbackState = playbackSnapshot.data;
             final isPlaying = playbackState?.playing ?? false;
+            final processingState =
+                playbackState?.processingState ?? AudioProcessingState.idle;
 
             return Row(
               children: [
-                // Album Art with thumbnail radius
+                // Album Art
                 Hero(
                   tag: 'miniplayer-thumbnail-${song.videoId}',
                   child: Container(
@@ -1891,14 +2170,10 @@ class _HomePageState extends ConsumerState<HomePage> {
                     height: 70,
                     decoration: BoxDecoration(
                       color: backgroundColor,
-                      borderRadius: BorderRadius.circular(
-                        70 * thumbnailRadius,
-                      ), // Apply radius
+                      borderRadius: BorderRadius.circular(70 * thumbnailRadius),
                     ),
                     child: ClipRRect(
-                      borderRadius: BorderRadius.circular(
-                        70 * thumbnailRadius,
-                      ), // Match container
+                      borderRadius: BorderRadius.circular(70 * thumbnailRadius),
                       child: currentMedia?.artUri != null
                           ? Image.network(
                               currentMedia!.artUri.toString(),
@@ -1934,7 +2209,7 @@ class _HomePageState extends ConsumerState<HomePage> {
                       children: [
                         Text(
                           currentMedia?.title ?? song.title,
-                          style: AppTypography.songTitle.copyWith(
+                          style: AppTypography.songTitle(context).copyWith(
                             color: textPrimaryColor,
                             fontSize: 14,
                             fontWeight: FontWeight.w600,
@@ -1945,10 +2220,9 @@ class _HomePageState extends ConsumerState<HomePage> {
                         const SizedBox(height: 4),
                         Text(
                           currentMedia?.artist ?? song.artists,
-                          style: AppTypography.caption.copyWith(
-                            color: textSecondaryColor,
-                            fontSize: 12,
-                          ),
+                          style: AppTypography.caption(
+                            context,
+                          ).copyWith(color: textSecondaryColor, fontSize: 12),
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                         ),
@@ -1957,7 +2231,7 @@ class _HomePageState extends ConsumerState<HomePage> {
                   ),
                 ),
 
-                // Play/Pause Button
+                // Play/Pause Button - FIXED LOGIC
                 Container(
                   width: 48,
                   height: 48,
@@ -1968,12 +2242,33 @@ class _HomePageState extends ConsumerState<HomePage> {
                   ),
                   child: IconButton(
                     icon: Icon(
-                      isPlaying ? Icons.pause : Icons.play_arrow,
+                      processingState == AudioProcessingState.loading
+                          ? Icons.hourglass_empty
+                          : isPlaying
+                          ? Icons.pause
+                          : Icons.play_arrow,
                       color: iconActiveColor,
                       size: 24,
                     ),
-                    onPressed: () {
-                      _audioService.playPause();
+                    onPressed: () async {
+                      if (isPlaying) {
+                        // If playing, just pause
+                        await _audioService.pause();
+                      } else {
+                        // If paused/stopped, check if we need to reload
+                        if (processingState == AudioProcessingState.idle ||
+                            processingState == AudioProcessingState.error) {
+                          // Audio source lost - need to reload with playSong
+                          print(
+                            '🎵 [Miniplayer] Audio source lost, reloading song...',
+                          );
+                          await _audioService.playSong(song);
+                        } else {
+                          // Audio source still loaded - just resume
+                          print('▶️ [Miniplayer] Resuming playback...');
+                          await _audioService.play();
+                        }
+                      }
                     },
                   ),
                 ),
@@ -2027,6 +2322,39 @@ class _HomePageState extends ConsumerState<HomePage> {
       return '${hours.toString().padLeft(2, '0')}:${minutes.toString().padLeft(2, '0')}:${remainingSeconds.toString().padLeft(2, '0')}';
     } else {
       return '${minutes.toString().padLeft(2, '0')}:${remainingSeconds.toString().padLeft(2, '0')}';
+    }
+  }
+
+  Future<void> _openPlayer(QuickPick song, {String? heroTag}) async {
+    // Fetch user profile to check beta status
+    final supabase = Supabase.instance.client;
+    final userId = supabase.auth.currentUser?.id;
+
+    if (userId != null) {
+      final profile = await supabase
+          .from('profiles')
+          .select('is_beta_tester, access_codes')
+          .eq('id', userId)
+          .single();
+
+      final isBetaEnabled = profile?['is_beta_tester'] ?? false;
+      final hasAccessCode =
+          (profile?['access_codes'] as List?)?.isNotEmpty ?? false;
+
+      if (mounted) {
+        if (isBetaEnabled && hasAccessCode) {
+          // Show new beta player
+          Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (context) => NewPlayerPage(song: song, heroTag: heroTag),
+            ),
+          );
+        } else {
+          // Show regular player
+          NewPlayerPage.open(context, song, heroTag: heroTag);
+        }
+      }
     }
   }
 

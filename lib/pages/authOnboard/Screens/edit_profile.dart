@@ -31,6 +31,7 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
   bool _isLoading = false;
   bool _isSaving = false;
   bool _showListeningActivity = true;
+  bool _isJammerOn = false;
 
   // Username change tracking
   int _usernameChangesThisMonth = 0;
@@ -103,6 +104,7 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
 
           _currentProfilePic = response['profile_pic_url'];
           _showListeningActivity = response['show_listening_activity'] ?? true;
+          _isJammerOn = response['is_jammer_on'] ?? false;
 
           _usernameChangesThisMonth =
               response['username_changes_this_month'] ?? 0;
@@ -244,6 +246,7 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
       final updateData = <String, dynamic>{
         'profile_pic_url': newProfilePicUrl ?? _currentProfilePic,
         'show_listening_activity': _showListeningActivity,
+        'is_jammer_on': _isJammerOn,
       };
 
       if (_selectedGender != null) {
@@ -362,15 +365,14 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
                         CircleAvatar(
                           radius: 64,
                           backgroundColor: surfaceColor,
-                          backgroundImage: _newProfilePicFile != null
+                          foregroundImage: _newProfilePicFile != null
                               ? FileImage(_newProfilePicFile!)
                               : (_currentProfilePic != null
-                                        ? NetworkImage(_currentProfilePic!)
-                                        : null)
-                                    as ImageProvider?,
+                                    ? NetworkImage(_currentProfilePic!)
+                                    : null),
                           child:
-                              _newProfilePicFile == null &&
-                                  _currentProfilePic == null
+                              (_newProfilePicFile == null &&
+                                  _currentProfilePic == null)
                               ? Icon(
                                   Icons.person,
                                   size: 64,
@@ -380,6 +382,7 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
                                 )
                               : null,
                         ),
+
                         Positioned(
                           bottom: 0,
                           right: 0,
@@ -407,7 +410,7 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
                       icon: const Icon(Icons.upload),
                       label: Text(
                         'Change Photo',
-                        style: AppTypography.subtitle,
+                        style: AppTypography.subtitle(context),
                       ),
                       style: TextButton.styleFrom(foregroundColor: accentColor),
                     ),
@@ -419,23 +422,23 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
               // Username Field
               Text(
                 'Username',
-                style: AppTypography.songTitle.copyWith(
-                  color: textSecondaryColor,
-                ),
+                style: AppTypography.songTitle(
+                  context,
+                ).copyWith(color: textSecondaryColor),
               ),
 
               SizedBox(height: AppSpacing.sm),
               TextFormField(
                 controller: _usernameController,
                 enabled: canChangeUsername,
-                style: AppTypography.songTitle.copyWith(
+                style: AppTypography.songTitle(context).copyWith(
                   color: textPrimaryColor, // main text color
                 ),
                 decoration: InputDecoration(
                   hintText: canChangeUsername
                       ? 'Enter your username'
                       : 'Username changes limit reached',
-                  hintStyle: AppTypography.caption.copyWith(
+                  hintStyle: AppTypography.caption(context).copyWith(
                     color: isDark
                         ? Colors.grey[400]
                         : Colors.white, // hint text color white in light theme
@@ -470,7 +473,7 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
                 canChangeUsername
                     ? 'You can change your username $changesRemaining more time${changesRemaining != 1 ? 's' : ''} this month'
                     : 'Username change limit reached (3/3). Resets next month.',
-                style: AppTypography.captionSmall.copyWith(
+                style: AppTypography.captionSmall(context).copyWith(
                   color: canChangeUsername
                       ? accentColor
                       : isDark
@@ -484,24 +487,24 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
               // Email Field
               Text(
                 'Email',
-                style: AppTypography.songTitle.copyWith(
-                  color: textSecondaryColor,
-                ),
+                style: AppTypography.songTitle(
+                  context,
+                ).copyWith(color: textSecondaryColor),
               ),
               SizedBox(height: AppSpacing.sm),
               TextFormField(
                 controller: _emailController,
                 enabled: canChangeEmail,
-                style: AppTypography.songTitle.copyWith(
-                  color: textPrimaryColor,
-                ),
+                style: AppTypography.songTitle(
+                  context,
+                ).copyWith(color: textPrimaryColor),
                 decoration: InputDecoration(
                   hintText: _emailHasBeenChanged
                       ? 'Email already changed (permanent)'
                       : (canChangeEmail ? 'Email' : 'Email change locked'),
-                  hintStyle: AppTypography.caption.copyWith(
-                    color: textMutedColor,
-                  ),
+                  hintStyle: AppTypography.caption(
+                    context,
+                  ).copyWith(color: textMutedColor),
                   filled: true,
                   fillColor: canChangeEmail ? cardColor : surfaceColor,
                   border: OutlineInputBorder(
@@ -535,67 +538,13 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
                     : (canChangeEmail
                           ? 'You can change your email once (1 time only)'
                           : 'Email can be changed after 30 days ($daysUntilEmailChange days remaining)'),
-                style: AppTypography.captionSmall.copyWith(
+                style: AppTypography.captionSmall(context).copyWith(
                   color: _emailHasBeenChanged
                       ? Colors.red
                       : (canChangeEmail ? Colors.blue : Colors.orange),
                 ),
               ),
-              SizedBox(height: AppSpacing.xl),
 
-              // Gender Selection
-              Text(
-                'Gender',
-                style: AppTypography.subtitle.copyWith(
-                  color: textSecondaryColor,
-                ),
-              ),
-              SizedBox(height: AppSpacing.sm),
-              Container(
-                decoration: BoxDecoration(
-                  color: cardColor,
-                  borderRadius: BorderRadius.circular(AppSpacing.radiusLarge),
-                ),
-                child: DropdownButtonFormField<String>(
-                  value: _selectedGender,
-                  style: AppTypography.songTitle.copyWith(
-                    color: textPrimaryColor,
-                  ),
-                  dropdownColor: cardColor,
-                  decoration: InputDecoration(
-                    hintText: 'Select gender',
-                    hintStyle: AppTypography.caption.copyWith(
-                      color: textMutedColor,
-                    ),
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(
-                        AppSpacing.radiusLarge,
-                      ),
-                      borderSide: BorderSide.none,
-                    ),
-                    contentPadding: EdgeInsets.symmetric(
-                      horizontal: AppSpacing.lg,
-                      vertical: AppSpacing.lg,
-                    ),
-                  ),
-                  items: _genderOptions.map((gender) {
-                    return DropdownMenuItem(
-                      value: gender,
-                      child: Text(
-                        gender,
-                        style: AppTypography.songTitle.copyWith(
-                          color: textPrimaryColor,
-                        ),
-                      ),
-                    );
-                  }).toList(),
-                  onChanged: (value) {
-                    setState(() {
-                      _selectedGender = value;
-                    });
-                  },
-                ),
-              ),
               SizedBox(height: AppSpacing.xxl),
 
               // Privacy Settings Section
@@ -615,9 +564,9 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
                         SizedBox(width: AppSpacing.md),
                         Text(
                           'Privacy Settings',
-                          style: AppTypography.songTitle.copyWith(
-                            color: textPrimaryColor,
-                          ),
+                          style: AppTypography.songTitle(
+                            context,
+                          ).copyWith(color: textPrimaryColor),
                         ),
                       ],
                     ),
@@ -630,16 +579,16 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
                             children: [
                               Text(
                                 'Show Listening Activity',
-                                style: AppTypography.songTitle.copyWith(
-                                  color: textPrimaryColor,
-                                ),
+                                style: AppTypography.songTitle(
+                                  context,
+                                ).copyWith(color: textPrimaryColor),
                               ),
                               SizedBox(height: AppSpacing.xs),
                               Text(
                                 'Let others see what you\'re currently listening to',
-                                style: AppTypography.captionSmall.copyWith(
-                                  color: textMutedColor,
-                                ),
+                                style: AppTypography.captionSmall(
+                                  context,
+                                ).copyWith(color: textMutedColor),
                               ),
                             ],
                           ),
@@ -661,6 +610,169 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
 
               SizedBox(height: AppSpacing.xxl),
 
+              // Jammer Mode Section
+              Container(
+                padding: EdgeInsets.all(AppSpacing.lg),
+                decoration: BoxDecoration(
+                  color: cardColor,
+                  borderRadius: BorderRadius.circular(AppSpacing.radiusLarge),
+                  border: Border.all(
+                    color: _isJammerOn
+                        ? (isDark ? Colors.green[700]! : Colors.green[300]!)
+                        : surfaceColor!,
+                    width: _isJammerOn ? 2 : 1,
+                  ),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Container(
+                          padding: EdgeInsets.all(AppSpacing.sm),
+                          decoration: BoxDecoration(
+                            color: _isJammerOn
+                                ? (isDark
+                                      ? Colors.green[900]!.withOpacity(0.3)
+                                      : Colors.green[100])
+                                : surfaceColor,
+                            borderRadius: BorderRadius.circular(
+                              AppSpacing.radiusMedium,
+                            ),
+                          ),
+                          child: Icon(
+                            _isJammerOn ? Icons.music_note : Icons.music_off,
+                            color: _isJammerOn
+                                ? (isDark
+                                      ? Colors.green[400]
+                                      : Colors.green[700])
+                                : accentColor,
+                            size: 24,
+                          ),
+                        ),
+                        SizedBox(width: AppSpacing.md),
+                        Expanded(
+                          child: Text(
+                            'Jammer Mode',
+                            style: AppTypography.songTitle.copyWith(
+                              color: textPrimaryColor,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ),
+                        Container(
+                          padding: EdgeInsets.symmetric(
+                            horizontal: AppSpacing.sm,
+                            vertical: AppSpacing.xs,
+                          ),
+                          decoration: BoxDecoration(
+                            color: _isJammerOn
+                                ? (isDark
+                                      ? Colors.green[900]!.withOpacity(0.5)
+                                      : Colors.green[100])
+                                : (isDark
+                                      ? Colors.grey[800]
+                                      : Colors.grey[200]),
+                            borderRadius: BorderRadius.circular(
+                              AppSpacing.radiusSmall,
+                            ),
+                          ),
+                          child: Text(
+                            _isJammerOn ? 'ON' : 'OFF',
+                            style: AppTypography.captionSmall.copyWith(
+                              color: _isJammerOn
+                                  ? (isDark
+                                        ? Colors.green[400]
+                                        : Colors.green[700])
+                                  : textMutedColor,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    SizedBox(height: AppSpacing.lg),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                'Real-time Activity Sync',
+                                style: AppTypography.songTitle.copyWith(
+                                  color: textPrimaryColor,
+                                ),
+                              ),
+                              SizedBox(height: AppSpacing.xs),
+                              Text(
+                                _isJammerOn
+                                    ? '🎵 Now they can'
+                                    : '🔇 Your Friends cannot invite you to join a jammer session.',
+                                style: AppTypography.captionSmall.copyWith(
+                                  color: _isJammerOn
+                                      ? (isDark
+                                            ? Colors.green[400]
+                                            : Colors.green[700])
+                                      : textMutedColor,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        Switch(
+                          value: _isJammerOn,
+                          onChanged: (value) {
+                            setState(() {
+                              _isJammerOn = value;
+                            });
+                          },
+                          activeColor: isDark
+                              ? Colors.green[400]
+                              : Colors.green[600],
+                        ),
+                      ],
+                    ),
+                    if (_isJammerOn) ...[
+                      SizedBox(height: AppSpacing.md),
+                      Container(
+                        padding: EdgeInsets.all(AppSpacing.md),
+                        decoration: BoxDecoration(
+                          color: isDark
+                              ? Colors.green[900]!.withOpacity(0.2)
+                              : Colors.green[50],
+                          borderRadius: BorderRadius.circular(
+                            AppSpacing.radiusMedium,
+                          ),
+                        ),
+                        child: Row(
+                          children: [
+                            Icon(
+                              Icons.info_outline,
+                              size: 16,
+                              color: isDark
+                                  ? Colors.green[400]
+                                  : Colors.green[700],
+                            ),
+                            SizedBox(width: AppSpacing.sm),
+                            Expanded(
+                              child: Text(
+                                'You can also invite your friends into a jammer session.',
+                                style: AppTypography.captionSmall.copyWith(
+                                  color: isDark
+                                      ? Colors.green[400]
+                                      : Colors.green[700],
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+              SizedBox(height: AppSpacing.xxl),
               // Save Button
               SizedBox(
                 width: double.infinity,

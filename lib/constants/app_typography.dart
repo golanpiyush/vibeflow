@@ -1,65 +1,71 @@
 // lib/constants/app_typography.dart
 import 'package:flutter/material.dart';
-import 'package:google_fonts/google_fonts.dart';
-import 'app_colors.dart';
 
 class AppTypography {
+  // ✅ All methods now accept BuildContext to get font from theme
+
   // Page Title
-  static TextStyle pageTitle = GoogleFonts.cabin(
-    fontSize: 32,
-    fontWeight: FontWeight.w600,
-    color: AppColors.textPrimary,
-  );
+  static TextStyle pageTitle(BuildContext context) {
+    return Theme.of(context).textTheme.headlineMedium!.copyWith(
+      fontSize: 32,
+      fontWeight: FontWeight.w600,
+    );
+  }
 
   // Section Headers
-  static TextStyle sectionHeader = GoogleFonts.cabin(
-    fontSize: 20,
-    fontWeight: FontWeight.w600,
-    color: AppColors.textPrimary,
-  );
-  static TextStyle dialogTitle = GoogleFonts.manrope(
-    fontSize: 18,
-    fontWeight: FontWeight.w600,
-    color: AppColors.textPrimary,
-  );
+  static TextStyle sectionHeader(BuildContext context) {
+    return Theme.of(
+      context,
+    ).textTheme.titleLarge!.copyWith(fontSize: 20, fontWeight: FontWeight.w600);
+  }
+
+  static TextStyle dialogTitle(BuildContext context) {
+    return Theme.of(context).textTheme.titleMedium!.copyWith(
+      fontSize: 18,
+      fontWeight: FontWeight.w600,
+    );
+  }
+
   // Song Title
-  static TextStyle songTitle = GoogleFonts.cabin(
-    fontSize: 17,
-    fontWeight: FontWeight.w500,
-    color: AppColors.textPrimary,
-  );
+  static TextStyle songTitle(BuildContext context) {
+    return Theme.of(
+      context,
+    ).textTheme.bodyLarge!.copyWith(fontSize: 17, fontWeight: FontWeight.w500);
+  }
 
   // Artist/Album Name
-  static TextStyle subtitle = GoogleFonts.cabin(
-    fontSize: 15,
-    fontWeight: FontWeight.w400,
-    color: AppColors.textSecondary,
-  );
+  static TextStyle subtitle(BuildContext context) {
+    return Theme.of(
+      context,
+    ).textTheme.bodyMedium!.copyWith(fontSize: 15, fontWeight: FontWeight.w400);
+  }
 
   // Small text (year, subscribers)
-  static TextStyle caption = GoogleFonts.cabin(
-    fontSize: 12,
-    fontWeight: FontWeight.w400,
-    color: AppColors.textSecondary,
-  );
+  static TextStyle caption(BuildContext context) {
+    return Theme.of(
+      context,
+    ).textTheme.bodySmall!.copyWith(fontSize: 12, fontWeight: FontWeight.w400);
+  }
 
   // Smaller caption
-  static TextStyle captionSmall = GoogleFonts.cabin(
-    fontSize: 11,
-    fontWeight: FontWeight.w400,
-    color: AppColors.textSecondary,
-  );
+  static TextStyle captionSmall(BuildContext context) {
+    return Theme.of(
+      context,
+    ).textTheme.labelSmall!.copyWith(fontSize: 11, fontWeight: FontWeight.w400);
+  }
 
   // Sidebar labels
-  static TextStyle sidebarLabel = GoogleFonts.cabin(
-    fontSize: 10,
-    fontWeight: FontWeight.normal,
-    color: AppColors.iconInactive,
-  );
+  static TextStyle sidebarLabel(BuildContext context) {
+    return Theme.of(context).textTheme.labelMedium!.copyWith(
+      fontSize: 10,
+      fontWeight: FontWeight.normal,
+    );
+  }
 
-  static TextStyle sidebarLabelActive = GoogleFonts.cabin(
-    fontSize: 10,
-    fontWeight: FontWeight.w600,
-    color: AppColors.iconActive,
-  );
+  static TextStyle sidebarLabelActive(BuildContext context) {
+    return Theme.of(context).textTheme.labelMedium!.copyWith(
+      fontSize: 10,
+      fontWeight: FontWeight.w600,
+    );
+  }
 }

@@ -1,38 +1,323 @@
 // lib/pages/settings/player_settings_page.dart
+import 'dart:async';
+
+import 'package:audio_service/audio_service.dart'
+    show AudioService, AudioServiceConfig;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_riverpod/legacy.dart';
 import 'package:vibeflow/constants/theme_colors.dart';
 import 'package:vibeflow/constants/app_spacing.dart';
 import 'package:vibeflow/constants/app_typography.dart';
+import 'package:vibeflow/database/listening_activity_service.dart';
+import 'package:vibeflow/database/profile_service.dart';
+import 'package:vibeflow/models/listening_activity_modelandProvider.dart';
 import 'package:vibeflow/pages/subpages/settings/about_page.dart';
 import 'package:vibeflow/pages/subpages/settings/cache_page.dart';
 import 'package:vibeflow/pages/subpages/settings/database_page.dart';
 import 'package:vibeflow/pages/subpages/settings/other_page.dart';
+import 'package:vibeflow/services/bg_audio_handler.dart';
+import 'package:vibeflow/services/haptic_feedback_service.dart';
 import 'package:vibeflow/utils/page_transitions.dart';
+import 'package:vibeflow/widgets/coming_soon_item.dart';
 
-class PlayerSettingsPage extends ConsumerWidget {
+final audioHandlerProvider = Provider<BackgroundAudioHandler?>((ref) {
+  return null; // Will be set when AudioService initializes
+});
+
+// Add this StateProvider to track settings
+final resumePlaybackEnabledProvider = StateProvider<bool>((ref) => false);
+final persistentQueueEnabledProvider = StateProvider<bool>((ref) => false);
+
+// Update the PlayerSettingsPage widget:
+class PlayerSettingsPage extends ConsumerStatefulWidget {
   const PlayerSettingsPage({Key? key}) : super(key: key);
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<PlayerSettingsPage> createState() => _PlayerSettingsPageState();
+}
+
+class _PlayerSettingsPageState extends ConsumerState<PlayerSettingsPage> {
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _loadSettings();
+    });
+  }
+
+  Future<void> _loadSettings() async {
+    try {
+      final handler = getAudioHandler();
+      if (handler != null) {
+        // Load current settings from the handler
+        ref.read(resumePlaybackEnabledProvider.notifier).state =
+            handler.resumePlaybackEnabled;
+        ref.read(persistentQueueEnabledProvider.notifier).state =
+            handler.persistentQueueEnabled;
+
+        print(
+          '✅ [UI] Settings loaded - Resume: ${handler.resumePlaybackEnabled}',
+        );
+      } else {
+        print('⚠️ [UI] Audio handler not available yet');
+
+        // Retry after a delay if handler not ready
+        await Future.delayed(const Duration(milliseconds: 500));
+        final retryHandler = getAudioHandler();
+        if (retryHandler != null && mounted) {
+          ref.read(resumePlaybackEnabledProvider.notifier).state =
+              retryHandler.resumePlaybackEnabled;
+          ref.read(persistentQueueEnabledProvider.notifier).state =
+              retryHandler.persistentQueueEnabled;
+
+          print('✅ [UI] Settings loaded on retry');
+        }
+      }
+    } catch (e) {
+      print('❌ [UI] Error loading settings: $e');
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final resumePlaybackEnabled = ref.watch(resumePlaybackEnabledProvider);
+
+    final persistentQueueEnabled = ref.watch(persistentQueueEnabledProvider);
+
     return _SettingsPageTemplate(
       title: 'Player',
       currentIndex: 0,
       content: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          // PLAYER SECTION
           Text(
-            'PLAYBACK',
-            style: AppTypography.caption.copyWith(
+            'PLAYER',
+            style: AppTypography.caption(context).copyWith(
               color: ref.watch(themeIconActiveColorProvider),
               fontWeight: FontWeight.w600,
               letterSpacing: 1.2,
             ),
           ),
           const SizedBox(height: AppSpacing.lg),
-          _buildSettingItem(ref, 'Audio quality', 'High'),
+
+          // _buildToggleItem(
+          //   ref,
+          //   'Persistent queue',
+          //   'Save and restore playing songs',
+          //   true,
+          //   () {},
+          // ),
+          // const SizedBox(height: AppSpacing.lg),
+          // _buildToggleItem(
+          //   ref,
+          //   'Resume playback',
+          //   'When a wired or Bluetooth device is connected',
+          //   false,
+          //   () {},
+          // ),
+          ComingSoonToggleItem(
+            title: 'Persistent queue',
+            subtitle: 'Save and restore playing songs',
+            value: false,
+          ),
+
           const SizedBox(height: AppSpacing.lg),
-          _buildSettingItem(ref, 'Crossfade', 'Off'),
+
+          // ComingSoonToggleItem(
+          //   title: 'Resume playback',
+          //   subtitle: 'When a wired or Bluetooth device is connected',
+          //   value: false,
+          // ),
+          _buildToggleItem(
+            ref,
+            'Resume playback',
+            'When a wired or Bluetooth device is connected',
+            resumePlaybackEnabled,
+            () async {
+              final handler = getAudioHandler();
+              if (handler == null) {
+                HapticFeedbackService().vibratingForNotAllowed();
+                return;
+              }
+
+              final notifier = ref.read(resumePlaybackEnabledProvider.notifier);
+
+              final newValue = !notifier.state;
+
+              try {
+                await handler.setResumePlaybackEnabled(newValue);
+
+                notifier.state = newValue;
+
+                if (!mounted) return;
+
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text(
+                      newValue ? 'Auto-resume enabled' : 'Auto-resume disabled',
+                    ),
+                    behavior: SnackBarBehavior.floating,
+                    duration: const Duration(seconds: 2),
+                  ),
+                );
+              } catch (e) {
+                HapticFeedbackService().vibrateAudioError();
+
+                if (!mounted) return;
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('Failed to update setting'),
+                    backgroundColor: Colors.red,
+                  ),
+                );
+              }
+            },
+          ),
+
+          const SizedBox(height: AppSpacing.xl),
+
+          // AUDIO SECTION
+          Text(
+            'AUDIO',
+            style: AppTypography.caption(context).copyWith(
+              color: ref.watch(themeIconActiveColorProvider),
+              fontWeight: FontWeight.w600,
+              letterSpacing: 1.2,
+            ),
+          ),
+          const SizedBox(height: AppSpacing.lg),
+
+          // _buildToggleItem(
+          //   ref,
+          //   'Loudness normalization',
+          //   'Normalize volume across tracks',
+          //   false,
+          //   () {},
+          // ),
+          // const SizedBox(height: AppSpacing.lg),
+          // _buildNavigationItem(
+          //   ref,
+          //   context,
+          //   'Equalizer',
+          //   'Adjust sound frequencies',
+          //   () {
+          //     // Navigate to EQ page
+          //   },
+          // ),
+          ComingSoonToggleItem(
+            title: 'Loudness normalization',
+            subtitle: 'Normalize volume across tracks',
+            value: false,
+          ),
+
+          const SizedBox(height: AppSpacing.lg),
+
+          ComingSoonNavigationItem(
+            title: 'Equalizer',
+            subtitle: 'Adjust sound frequencies',
+          ),
+          const SizedBox(height: AppSpacing.xl),
+
+          // PLAYBACK SECTION
+          Text(
+            'PLAYBACK',
+            style: AppTypography.caption(context).copyWith(
+              color: ref.watch(themeIconActiveColorProvider),
+              fontWeight: FontWeight.w600,
+              letterSpacing: 1.2,
+            ),
+          ),
+          const SizedBox(height: AppSpacing.lg),
+          GestureDetector(
+            onTap: () {
+              unawaited(HapticFeedbackService().vibratingForNotAllowed());
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text('Cannot be changed'),
+                  duration: Duration(seconds: 2),
+                  behavior: SnackBarBehavior.floating,
+                ),
+              );
+            },
+            child: _buildSettingItem(ref, 'Audio quality', 'Auto'),
+          ),
+          const SizedBox(height: AppSpacing.lg),
+
+          ComingSoonItem(title: 'Crossfade', subtitle: 'Off'),
+
+          const SizedBox(height: AppSpacing.lg),
+
+          if (ref.watch(supabaseClientProvider).auth.currentUser != null) ...[
+            const SizedBox(height: AppSpacing.xl),
+            Text(
+              'BETA MODE',
+              style: AppTypography.caption(context).copyWith(
+                color: ref.watch(themeIconActiveColorProvider),
+                fontWeight: FontWeight.w600,
+                letterSpacing: 1.2,
+              ),
+            ),
+
+            const SizedBox(height: AppSpacing.xxl),
+
+            ref
+                .watch(hasAccessCodeProvider)
+                .when(
+                  data: (hasAccessCode) {
+                    if (!hasAccessCode) return const SizedBox.shrink();
+
+                    // Watch current user profile for beta status
+                    final userProfile = ref.watch(currentUserProfileProvider);
+
+                    return userProfile.when(
+                      data: (profile) {
+                        final isBetaEnabled =
+                            profile?['is_beta_tester'] ?? false;
+
+                        return Column(
+                          children: [
+                            SizedBox(
+                              width: double.infinity,
+                              child: AnimatedBetaButton(
+                                isBetaEnabled: isBetaEnabled,
+                                onPressed: () =>
+                                    _toggleBetaTester(context, ref),
+                                accentColor: ref.watch(
+                                  themeIconActiveColorProvider,
+                                ),
+                              ),
+                            ),
+                            const SizedBox(height: AppSpacing.lg),
+                          ],
+                        );
+                      },
+                      loading: () => Column(
+                        children: [
+                          SizedBox(
+                            width: double.infinity,
+                            child: OutlinedButton.icon(
+                              onPressed: null,
+                              icon: const Icon(Icons.science),
+                              label: const Text('Beta Features'),
+                              style: OutlinedButton.styleFrom(
+                                padding: const EdgeInsets.symmetric(
+                                  vertical: 12,
+                                ),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(height: AppSpacing.lg),
+                        ],
+                      ),
+                      error: (_, __) => const SizedBox.shrink(),
+                    );
+                  },
+                  loading: () => const SizedBox.shrink(),
+                  error: (_, __) => const SizedBox.shrink(),
+                ),
+          ],
         ],
       ),
     );
@@ -47,18 +332,149 @@ class PlayerSettingsPage extends ConsumerWidget {
       children: [
         Text(
           title,
-          style: AppTypography.subtitle.copyWith(
-            fontWeight: FontWeight.w500,
-            color: textPrimaryColor,
-          ),
+          style: AppTypography.subtitle(
+            context,
+          ).copyWith(fontWeight: FontWeight.w500, color: textPrimaryColor),
         ),
         const SizedBox(height: 4),
         Text(
           value,
-          style: AppTypography.caption.copyWith(color: textSecondaryColor),
+          style: AppTypography.caption(
+            context,
+          ).copyWith(color: textSecondaryColor),
         ),
       ],
     );
+  }
+
+  Widget _buildToggleItem(
+    WidgetRef ref,
+    String title,
+    String subtitle,
+    bool value,
+    VoidCallback onChanged,
+  ) {
+    final textPrimaryColor = ref.watch(themeTextPrimaryColorProvider);
+    final textSecondaryColor = ref.watch(themeTextSecondaryColorProvider);
+    final iconActiveColor = ref.watch(themeIconActiveColorProvider);
+
+    return Row(
+      children: [
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                title,
+                style: AppTypography.subtitle(context).copyWith(
+                  fontWeight: FontWeight.w500,
+                  color: textPrimaryColor,
+                ),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                subtitle,
+                style: AppTypography.caption(
+                  context,
+                ).copyWith(color: textSecondaryColor),
+              ),
+            ],
+          ),
+        ),
+        Switch(
+          value: value,
+          onChanged: (_) => onChanged(),
+          activeColor: iconActiveColor,
+        ),
+      ],
+    );
+  }
+
+  Widget _buildNavigationItem(
+    WidgetRef ref,
+    BuildContext context,
+    String title,
+    String subtitle,
+    VoidCallback onTap,
+  ) {
+    final textPrimaryColor = ref.watch(themeTextPrimaryColorProvider);
+    final textSecondaryColor = ref.watch(themeTextSecondaryColorProvider);
+    final iconInactiveColor = ref.watch(themeTextSecondaryColorProvider);
+
+    return GestureDetector(
+      onTap: onTap,
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: AppTypography.subtitle(context).copyWith(
+                    fontWeight: FontWeight.w500,
+                    color: textPrimaryColor,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  subtitle,
+                  style: AppTypography.caption(
+                    context,
+                  ).copyWith(color: textSecondaryColor),
+                ),
+              ],
+            ),
+          ),
+          Icon(Icons.chevron_right, color: iconInactiveColor, size: 24),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _toggleBetaTester(BuildContext context, WidgetRef ref) async {
+    final userId = ref.read(supabaseClientProvider).auth.currentUser?.id;
+    if (userId == null) return;
+
+    try {
+      // Get current status
+      final profile = await ref.read(currentUserProfileProvider.future);
+      final currentStatus = profile?['is_beta_tester'] ?? false;
+      final newStatus = !currentStatus;
+
+      // Update in database
+      await ref
+          .read(supabaseClientProvider)
+          .from('profiles')
+          .update({'is_beta_tester': newStatus})
+          .eq('id', userId);
+
+      // Refresh the profile provider
+      ref.invalidate(currentUserProfileProvider);
+
+      // Show success message
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              newStatus ? 'Beta features enabled ✨' : 'Beta features disabled',
+            ),
+            duration: const Duration(seconds: 2),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error: ${e.toString()}'),
+            duration: const Duration(seconds: 2),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+    }
   }
 }
 
@@ -122,9 +538,9 @@ class _SettingsPageTemplate extends ConsumerWidget {
               alignment: Alignment.centerRight,
               child: Text(
                 title,
-                style: AppTypography.pageTitle.copyWith(
-                  color: textPrimaryColor,
-                ),
+                style: AppTypography.pageTitle(
+                  context,
+                ).copyWith(color: textPrimaryColor),
               ),
             ),
           ),
@@ -140,12 +556,12 @@ class _SettingsPageTemplate extends ConsumerWidget {
     final sidebarLabelColor = ref.watch(themeTextPrimaryColorProvider);
     final sidebarLabelActiveColor = ref.watch(themeIconActiveColorProvider);
 
-    final sidebarLabelStyle = AppTypography.sidebarLabel.copyWith(
-      color: sidebarLabelColor,
-    );
-    final sidebarLabelActiveStyle = AppTypography.sidebarLabelActive.copyWith(
-      color: sidebarLabelActiveColor,
-    );
+    final sidebarLabelStyle = AppTypography.sidebarLabel(
+      context,
+    ).copyWith(color: sidebarLabelColor);
+    final sidebarLabelActiveStyle = AppTypography.sidebarLabelActive(
+      context,
+    ).copyWith(color: sidebarLabelActiveColor);
 
     return SizedBox(
       width: 65,
@@ -307,6 +723,112 @@ class _SettingsPageTemplate extends ConsumerWidget {
       page,
       currentIndex: currentIndex,
       targetIndex: targetIndex,
+    );
+  }
+}
+
+// AnimatedBetaButton Widget - Add this as a separate class
+class AnimatedBetaButton extends StatefulWidget {
+  final bool isBetaEnabled;
+  final VoidCallback onPressed;
+  final Color accentColor;
+
+  const AnimatedBetaButton({
+    Key? key,
+    required this.isBetaEnabled,
+    required this.onPressed,
+    required this.accentColor,
+  }) : super(key: key);
+
+  @override
+  State<AnimatedBetaButton> createState() => _AnimatedBetaButtonState();
+}
+
+class _AnimatedBetaButtonState extends State<AnimatedBetaButton>
+    with SingleTickerProviderStateMixin {
+  late AnimationController _controller;
+  late Animation<double> _rotationAnimation;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      duration: const Duration(milliseconds: 500),
+      vsync: this,
+    );
+    _rotationAnimation = Tween<double>(
+      begin: 0,
+      end: 1,
+    ).animate(CurvedAnimation(parent: _controller, curve: Curves.easeInOut));
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _handlePress() {
+    _controller.forward().then((_) {
+      _controller.reset();
+      widget.onPressed();
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 300),
+      curve: Curves.easeInOut,
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(50),
+        border: Border.all(
+          color: widget.isBetaEnabled ? Colors.green : widget.accentColor,
+          width: 2,
+        ),
+        color: widget.isBetaEnabled
+            ? Colors.green.withOpacity(0.1)
+            : Colors.transparent,
+      ),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: _handlePress,
+          borderRadius: BorderRadius.circular(50),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 12),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                RotationTransition(
+                  turns: _rotationAnimation,
+                  child: Icon(
+                    widget.isBetaEnabled ? Icons.check_circle : Icons.science,
+                    color: widget.isBetaEnabled
+                        ? Colors.green
+                        : widget.accentColor,
+                    size: 20,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                AnimatedDefaultTextStyle(
+                  duration: const Duration(milliseconds: 300),
+                  style: TextStyle(
+                    color: widget.isBetaEnabled
+                        ? Colors.green
+                        : widget.accentColor,
+                    fontSize: 16,
+                    fontWeight: FontWeight.w500,
+                  ),
+                  child: Text(
+                    widget.isBetaEnabled ? 'Beta Enabled' : 'Beta Features',
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
     );
   }
 }

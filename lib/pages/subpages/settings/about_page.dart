@@ -39,7 +39,7 @@ class AboutPage extends ConsumerWidget {
                           // Version subtitle
                           Text(
                             'v1.0.0 by golanpiyush',
-                            style: AppTypography.subtitle.copyWith(
+                            style: AppTypography.subtitle(context).copyWith(
                               color: ref.watch(themeTextSecondaryColorProvider),
                               fontSize: 16,
                             ),
@@ -49,7 +49,7 @@ class AboutPage extends ConsumerWidget {
                           // SOCIAL Section
                           Text(
                             'SOCIAL',
-                            style: AppTypography.caption.copyWith(
+                            style: AppTypography.caption(context).copyWith(
                               color: ref.watch(themeIconActiveColorProvider),
                               fontWeight: FontWeight.w600,
                               letterSpacing: 1.2,
@@ -57,6 +57,7 @@ class AboutPage extends ConsumerWidget {
                           ),
                           const SizedBox(height: AppSpacing.lg),
                           _buildClickableItem(
+                            context,
                             'GitHub',
                             'View the source code',
                             ref: ref,
@@ -71,7 +72,7 @@ class AboutPage extends ConsumerWidget {
                           // TROUBLESHOOTING Section
                           Text(
                             'TROUBLESHOOTING',
-                            style: AppTypography.caption.copyWith(
+                            style: AppTypography.caption(context).copyWith(
                               color: ref.watch(themeIconActiveColorProvider),
                               fontWeight: FontWeight.w600,
                               letterSpacing: 1.2,
@@ -79,6 +80,7 @@ class AboutPage extends ConsumerWidget {
                           ),
                           const SizedBox(height: AppSpacing.lg),
                           _buildClickableItem(
+                            context,
                             'Report an issue',
                             'You will be redirected to GitHub',
                             ref: ref,
@@ -90,6 +92,7 @@ class AboutPage extends ConsumerWidget {
                           ),
                           const SizedBox(height: AppSpacing.lg),
                           _buildClickableItem(
+                            context,
                             'Request a feature or suggest an idea',
                             'You will be redirected to GitHub',
                             ref: ref,
@@ -104,7 +107,7 @@ class AboutPage extends ConsumerWidget {
                           // SPECIAL THANKS Section
                           Text(
                             'SPECIAL THANKS TO',
-                            style: AppTypography.caption.copyWith(
+                            style: AppTypography.caption(context).copyWith(
                               color: ref.watch(themeIconActiveColorProvider),
                               fontWeight: FontWeight.w600,
                               letterSpacing: 1.2,
@@ -112,6 +115,7 @@ class AboutPage extends ConsumerWidget {
                           ),
                           const SizedBox(height: AppSpacing.lg),
                           _buildClickableItem(
+                            context,
                             'vfsfitvnm for ViMusic',
                             'And For inspiring this project',
                             ref: ref,
@@ -151,9 +155,9 @@ class AboutPage extends ConsumerWidget {
               alignment: Alignment.centerRight,
               child: Text(
                 'About',
-                style: AppTypography.pageTitle.copyWith(
-                  color: textPrimaryColor,
-                ),
+                style: AppTypography.pageTitle(
+                  context,
+                ).copyWith(color: textPrimaryColor),
               ),
             ),
           ),
@@ -169,12 +173,12 @@ class AboutPage extends ConsumerWidget {
     final sidebarLabelColor = ref.watch(themeTextPrimaryColorProvider);
     final sidebarLabelActiveColor = ref.watch(themeIconActiveColorProvider);
 
-    final sidebarLabelStyle = AppTypography.sidebarLabel.copyWith(
-      color: sidebarLabelColor,
-    );
-    final sidebarLabelActiveStyle = AppTypography.sidebarLabelActive.copyWith(
-      color: sidebarLabelActiveColor,
-    );
+    final sidebarLabelStyle = AppTypography.sidebarLabel(
+      context,
+    ).copyWith(color: sidebarLabelColor);
+    final sidebarLabelActiveStyle = AppTypography.sidebarLabelActive(
+      context,
+    ).copyWith(color: sidebarLabelActiveColor);
 
     return SizedBox(
       width: 65,
@@ -299,6 +303,7 @@ class AboutPage extends ConsumerWidget {
   }
 
   Widget _buildClickableItem(
+    BuildContext context, // ✅ ADD THIS
     String title,
     String subtitle, {
     required WidgetRef ref,
@@ -316,7 +321,7 @@ class AboutPage extends ConsumerWidget {
           children: [
             Text(
               title,
-              style: AppTypography.subtitle.copyWith(
+              style: AppTypography.subtitle(context).copyWith(
                 fontWeight: FontWeight.w500,
                 fontSize: 16,
                 color: textPrimaryColor,
@@ -325,10 +330,9 @@ class AboutPage extends ConsumerWidget {
             const SizedBox(height: 4),
             Text(
               subtitle,
-              style: AppTypography.caption.copyWith(
-                color: textSecondaryColor,
-                fontSize: 14,
-              ),
+              style: AppTypography.caption(
+                context,
+              ).copyWith(fontSize: 14, color: textSecondaryColor),
             ),
           ],
         ),

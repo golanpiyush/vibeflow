@@ -6,13 +6,17 @@ import 'package:path_provider/path_provider.dart';
 import 'package:path/path.dart' as path;
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 
+/// UPDATE-PROOF Download Service
+/// Downloads survive app updates by using permanent storage locations
 class DownloadService {
   static final DownloadService instance = DownloadService._internal();
   factory DownloadService() => instance;
 
-  static const String _currentVersion = '1.0.0';
+  static String? _appVersion;
   static const String _versionKey = 'download_service_version';
+  static const String _lastVersionKey = 'last_app_version';
   static const String _downloadDirKey = 'download_directory_path';
 
   // ULTRA OPTIMIZED: Multiple Dio instances for parallel chunks
@@ -24,6 +28,20 @@ class DownloadService {
 
   DownloadService._internal() {
     _initializeDio();
+    _initializeVersion();
+  }
+
+  /// Get app version from pubspec.yaml
+  Future<void> _initializeVersion() async {
+    if (_appVersion != null) return;
+    try {
+      final packageInfo = await PackageInfo.fromPlatform();
+      _appVersion = packageInfo.version;
+      debugPrint('📦 App version: $_appVersion');
+    } catch (e) {
+      _appVersion = '1.0.0'; // Fallback
+      debugPrint('⚠️ Could not get app version: $e');
+    }
   }
 
   void _initializeDio() {
@@ -75,42 +93,167 @@ class DownloadService {
     };
   }
 
+  /// 🔒 UPDATE-PROOF: Get permanent download directory that survives updates
   Future<Directory> _getDownloadDirectory() async {
     final prefs = await SharedPreferences.getInstance();
     final savedPath = prefs.getString(_downloadDirKey);
 
+    // Verify saved path still exists and is valid
     if (savedPath != null) {
       final savedDir = Directory(savedPath);
-      if (await savedDir.exists()) return savedDir;
+      if (await savedDir.exists()) {
+        debugPrint('✅ Using saved download directory: $savedPath');
+        return savedDir;
+      } else {
+        debugPrint('⚠️ Saved path no longer exists, creating new one');
+      }
     }
 
     Directory downloadDir;
+
     if (Platform.isAndroid) {
       try {
-        final externalDir = await getExternalStorageDirectory();
-        downloadDir = externalDir != null
-            ? Directory('${externalDir.path}/VibeFlow/downloads')
-            : Directory(
-                '${(await getApplicationDocumentsDirectory()).path}/downloads',
-              );
+        // STRATEGY 1: Use public Music/VibeFlow directory (survives updates!)
+        // This is in /storage/emulated/0/Music/VibeFlow
+        final musicDir = Directory('/storage/emulated/0/Music');
+
+        if (await musicDir.exists()) {
+          downloadDir = Directory('${musicDir.path}/VibeFlow');
+          debugPrint('📱 Using public Music directory (update-proof)');
+        } else {
+          // STRATEGY 2: Use app's private but persistent external storage
+          // Falls back if Music directory not accessible
+          final externalDir = await getExternalStorageDirectory();
+          downloadDir = externalDir != null
+              ? Directory('${externalDir.path}/VibeFlow/downloads')
+              : Directory(
+                  '${(await getApplicationDocumentsDirectory()).path}/downloads',
+                );
+          debugPrint('⚠️ Using external storage fallback');
+        }
       } catch (e) {
+        // STRATEGY 3: Last resort - app documents (least ideal but works)
         downloadDir = Directory(
           '${(await getApplicationDocumentsDirectory()).path}/downloads',
         );
+        debugPrint('⚠️ Using app documents fallback: $e');
       }
+    } else if (Platform.isIOS) {
+      // iOS: Use app's Documents directory (survives updates)
+      final docsDir = await getApplicationDocumentsDirectory();
+      downloadDir = Directory('${docsDir.path}/VibeFlow/downloads');
+      debugPrint('🍎 Using iOS Documents directory');
     } else {
+      // Desktop/other platforms
       downloadDir = Directory(
         '${(await getApplicationDocumentsDirectory()).path}/downloads',
       );
+      debugPrint('🖥️ Using desktop documents directory');
     }
 
+    // Create directory if it doesn't exist
     if (!await downloadDir.exists()) {
       await downloadDir.create(recursive: true);
+      debugPrint('📁 Created download directory: ${downloadDir.path}');
     }
 
+    // Save for future use
     await prefs.setString(_downloadDirKey, downloadDir.path);
-    await prefs.setString(_versionKey, _currentVersion);
+    await _initializeVersion();
+    await prefs.setString(_versionKey, _appVersion ?? '1.0.0');
+
+    debugPrint('💾 Download directory: ${downloadDir.path}');
     return downloadDir;
+  }
+
+  /// 🔄 CHECK AFTER UPDATE - Verify downloads survived update
+  static Future<UpdateReport> checkAfterUpdate() async {
+    final report = UpdateReport();
+
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final packageInfo = await PackageInfo.fromPlatform();
+      final currentVersion = packageInfo.version;
+      final lastVersion = prefs.getString(_lastVersionKey);
+
+      debugPrint('🔍 Version check: $lastVersion -> $currentVersion');
+
+      // First launch
+      if (lastVersion == null) {
+        debugPrint('🆕 First launch detected');
+        await prefs.setString(_lastVersionKey, currentVersion);
+        report.isFirstLaunch = true;
+        return report;
+      }
+
+      // Version changed = app was updated
+      if (lastVersion != currentVersion) {
+        debugPrint('🔄 App updated: $lastVersion -> $currentVersion');
+        report.wasUpdated = true;
+        report.oldVersion = lastVersion;
+        report.newVersion = currentVersion;
+
+        // Verify downloads
+        final downloadDir = await instance._getDownloadDirectory();
+        if (await downloadDir.exists()) {
+          final files = await downloadDir.list().toList();
+          int validFiles = 0;
+          int totalBytes = 0;
+          int metadataFiles = 0;
+
+          for (final file in files) {
+            if (file is File) {
+              if (file.path.endsWith('_metadata.json')) {
+                metadataFiles++;
+                try {
+                  final content = await file.readAsString();
+                  final json = jsonDecode(content);
+                  final audioPath = json['audioPath'];
+
+                  if (audioPath != null) {
+                    final audioFile = File(audioPath);
+                    if (await audioFile.exists()) {
+                      validFiles++;
+                      totalBytes += await audioFile.length();
+
+                      // Check thumbnail
+                      final thumbnailPath = json['thumbnailPath'];
+                      if (thumbnailPath != null) {
+                        final thumbFile = File(thumbnailPath);
+                        if (await thumbFile.exists()) {
+                          totalBytes += await thumbFile.length();
+                        }
+                      }
+                    }
+                  }
+                } catch (e) {
+                  debugPrint('⚠️ Error reading metadata: $e');
+                }
+              }
+            }
+          }
+
+          report.validFiles = validFiles;
+          report.totalMetadataFiles = metadataFiles;
+          report.totalStorageBytes = totalBytes;
+
+          debugPrint(
+            '✅ Downloads verified: $validFiles/$metadataFiles files intact',
+          );
+          debugPrint('💾 Total storage: ${report.formattedStorage}');
+        }
+
+        // Update version
+        await prefs.setString(_lastVersionKey, currentVersion);
+      } else {
+        debugPrint('✅ No app update detected');
+      }
+    } catch (e) {
+      debugPrint('❌ Error checking update: $e');
+      report.error = e.toString();
+    }
+
+    return report;
   }
 
   Future<DownloadResult> downloadSong({
@@ -134,7 +277,7 @@ class DownloadService {
       // Check if already downloaded
       final audioFile = File(audioFilePath);
       if (await audioFile.exists() && await audioFile.length() > 10000) {
-        print('✓ Already downloaded: $title');
+        debugPrint('✓ Already downloaded: $title');
         return DownloadResult(
           success: true,
           audioPath: audioFilePath,
@@ -143,7 +286,7 @@ class DownloadService {
         );
       }
 
-      print('🎵 Starting download: $title');
+      debugPrint('🎵 Starting download: $title');
       _updateProgress(videoId, 0.0, 'Starting...');
 
       // Download thumbnail (non-blocking)
@@ -157,13 +300,13 @@ class DownloadService {
         debugPrint('Thumbnail failed: $e');
       });
 
-      print('📥 Downloading audio with parallel chunks...');
+      debugPrint('📥 Downloading audio with parallel chunks...');
 
       // STRATEGY 1: Try parallel chunk download first (fastest)
       bool useParallel = await _supportsRangeRequests(audioUrl);
 
       if (useParallel) {
-        print('⚡ Using parallel chunk download (4 connections)');
+        debugPrint('⚡ Using parallel chunk download (4 connections)');
         await _parallelChunkDownload(
           url: audioUrl,
           savePath: audioFilePath,
@@ -179,7 +322,7 @@ class DownloadService {
             );
 
             if ((progress * 100).floor() % 5 == 0) {
-              print(
+              debugPrint(
                 '📊 ${(progress * 100).toStringAsFixed(1)}% (${(received / (1024 * 1024)).toStringAsFixed(2)}/${(total / (1024 * 1024)).toStringAsFixed(2)} MB)',
               );
             }
@@ -188,7 +331,9 @@ class DownloadService {
         );
       } else {
         // STRATEGY 2: Single connection with optimizations
-        print('📡 Using single connection (server doesn\'t support ranges)');
+        debugPrint(
+          '📡 Using single connection (server doesn\'t support ranges)',
+        );
         await _optimizedSingleDownload(
           url: audioUrl,
           savePath: audioFilePath,
@@ -204,7 +349,7 @@ class DownloadService {
             );
 
             if ((progress * 100).floor() % 5 == 0) {
-              print(
+              debugPrint(
                 '📊 ${(progress * 100).toStringAsFixed(1)}% (${(received / (1024 * 1024)).toStringAsFixed(2)}/${(total / (1024 * 1024)).toStringAsFixed(2)} MB)',
               );
             }
@@ -217,10 +362,11 @@ class DownloadService {
       final fileSize = await File(audioFilePath).length();
       final speedMBps = (fileSize / (1024 * 1024)) / duration.inSeconds;
 
-      print(
+      debugPrint(
         '✅ Complete in ${duration.inSeconds}s (${speedMBps.toStringAsFixed(2)} MB/s)',
       );
 
+      // Save metadata with all info
       await _saveMetadata(
         videoId: videoId,
         title: title,
@@ -241,7 +387,7 @@ class DownloadService {
       );
     } catch (e) {
       _activeDownloads.remove(videoId);
-      print('❌ Download failed: $e');
+      debugPrint('❌ Download failed: $e');
       return DownloadResult(success: false, message: 'Failed: $e');
     }
   }
@@ -289,8 +435,10 @@ class DownloadService {
     await raf.truncate(totalSize);
     await raf.close();
 
-    print('📦 File size: ${(totalSize / (1024 * 1024)).toStringAsFixed(2)} MB');
-    print(
+    debugPrint(
+      '📦 File size: ${(totalSize / (1024 * 1024)).toStringAsFixed(2)} MB',
+    );
+    debugPrint(
       '🔀 Downloading 4 chunks of ${(chunkSize / (1024 * 1024)).toStringAsFixed(2)} MB each',
     );
 
@@ -319,7 +467,7 @@ class DownloadService {
         },
         onComplete: () {
           completedChunks++;
-          print('✓ Chunk ${i + 1}/4 complete');
+          debugPrint('✓ Chunk ${i + 1}/4 complete');
           if (completedChunks == 4) {
             completer.complete();
           }
@@ -424,19 +572,24 @@ class DownloadService {
 
     if (await file.exists()) return thumbnailPath;
 
-    await _mainDio.download(
-      thumbnailUrl,
-      thumbnailPath,
-      cancelToken: cancelToken,
-      options: Options(
-        responseType: ResponseType.bytes,
-        receiveTimeout: const Duration(seconds: 30),
-      ),
-    );
-
-    return thumbnailPath;
+    try {
+      await _mainDio.download(
+        thumbnailUrl,
+        thumbnailPath,
+        cancelToken: cancelToken,
+        options: Options(
+          responseType: ResponseType.bytes,
+          receiveTimeout: const Duration(seconds: 30),
+        ),
+      );
+      return thumbnailPath;
+    } catch (e) {
+      debugPrint('Failed to download thumbnail: $e');
+      return null;
+    }
   }
 
+  /// Save comprehensive metadata (survives updates)
   Future<void> _saveMetadata({
     required String videoId,
     required String title,
@@ -448,6 +601,9 @@ class DownloadService {
     final metadataFile = File(
       path.join(downloadDir.path, '${videoId}_metadata.json'),
     );
+
+    await _initializeVersion();
+
     final metadata = {
       'videoId': videoId,
       'title': title,
@@ -455,6 +611,8 @@ class DownloadService {
       'audioPath': audioPath,
       'thumbnailPath': thumbnailPath,
       'downloadDate': DateTime.now().toIso8601String(),
+      'appVersion': _appVersion,
+      'metadataVersion': '2.0', // Updated metadata format
     };
 
     await metadataFile.writeAsString(
@@ -541,6 +699,7 @@ class DownloadService {
       }
       return true;
     } catch (e) {
+      debugPrint('Error deleting download: $e');
       return false;
     }
   }
@@ -568,6 +727,10 @@ class DownloadService {
     _downloadProgress.clear();
   }
 }
+
+// ============================================================================
+// MODELS
+// ============================================================================
 
 class DownloadResult {
   final bool success;
@@ -616,8 +779,35 @@ class DownloadedSong {
 
   String get formattedFileSize {
     if (fileSize < 1024) return '$fileSize B';
-    if (fileSize < 1024 * 1024)
+    if (fileSize < 1024 * 1024) {
       return '${(fileSize / 1024).toStringAsFixed(1)} KB';
+    }
     return '${(fileSize / (1024 * 1024)).toStringAsFixed(1)} MB';
+  }
+}
+
+/// Report from update check
+class UpdateReport {
+  bool wasUpdated = false;
+  bool isFirstLaunch = false;
+  String? oldVersion;
+  String? newVersion;
+  int validFiles = 0;
+  int totalMetadataFiles = 0;
+  int totalStorageBytes = 0;
+  String? error;
+
+  String get formattedStorage {
+    if (totalStorageBytes < 1024 * 1024) {
+      return '${(totalStorageBytes / 1024).toStringAsFixed(1)} KB';
+    }
+    return '${(totalStorageBytes / (1024 * 1024)).toStringAsFixed(1)} MB';
+  }
+
+  @override
+  String toString() {
+    if (isFirstLaunch) return 'First launch';
+    if (!wasUpdated) return 'No update';
+    return 'Updated $oldVersion → $newVersion: $validFiles files ($formattedStorage)';
   }
 }

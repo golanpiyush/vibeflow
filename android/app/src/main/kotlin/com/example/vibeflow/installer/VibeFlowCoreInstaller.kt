@@ -266,27 +266,43 @@ class VibeFlowCoreInstaller(private val context: Context, flutterEngine: Flutter
         }
     }
 
-    private fun openInstallPermissionSettings() {
-        try {
-            val intent = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES).apply {
-                    data = Uri.parse("package:${context.packageName}")
-                    flags = Intent.FLAG_ACTIVITY_NEW_TASK
-                }
-            } else {
-                Intent(Settings.ACTION_SECURITY_SETTINGS).apply {
-                    flags = Intent.FLAG_ACTIVITY_NEW_TASK
-                }
+   private fun openInstallPermissionSettings() {
+    try {
+        val intent = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            // Direct to VibeFlow's specific "Install unknown apps" permission page
+            Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES).apply {
+                data = Uri.parse("package:${context.packageName}")
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP)
             }
-            
-            context.startActivity(intent)
-            Log.d(TAG, "Opened install permission settings")
-            
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to open install permission settings", e)
+        } else {
+            // For Android 7 and below, go to Security settings
+            Intent(Settings.ACTION_SECURITY_SETTINGS).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP)
+            }
+        }
+        
+        context.startActivity(intent)
+        Log.d(TAG, "✅ Opened VibeFlow install permission settings directly")
+        
+    } catch (e: Exception) {
+        Log.e(TAG, "❌ Failed to open install permission settings", e)
+        
+        // Fallback: Try general app settings
+        try {
+            val fallbackIntent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                data = Uri.parse("package:${context.packageName}")
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            context.startActivity(fallbackIntent)
+            Log.d(TAG, "✅ Opened app settings as fallback")
+        } catch (fallbackError: Exception) {
+            Log.e(TAG, "❌ Fallback also failed", fallbackError)
             throw e
         }
     }
+}
 
     private fun installApk(apkPath: String) {
         Log.d(TAG, "Starting APK installation: $apkPath")

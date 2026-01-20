@@ -517,7 +517,7 @@ class _ProfileSetupScreenState extends ConsumerState<ProfileSetupScreen>
       final secureStorage = SecureStorageService();
       await secureStorage.saveUserId(userId);
       await secureStorage.saveUserEmail(_emailController.text.trim());
-
+      await secureStorage.markProfileSetupCompleted();
       // 8. Invalidate the hasAccessCodeProvider to refresh the UI
       ref.invalidate(hasAccessCodeProvider);
 
@@ -558,7 +558,10 @@ class _ProfileSetupScreenState extends ConsumerState<ProfileSetupScreen>
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(userFriendlyError, style: AppTypography.subtitle),
+                  Text(
+                    userFriendlyError,
+                    style: AppTypography.subtitle(context),
+                  ),
                   const SizedBox(height: 16),
                   if (e.toString().contains('user_already_exists')) ...[
                     Container(
@@ -572,14 +575,14 @@ class _ProfileSetupScreenState extends ConsumerState<ProfileSetupScreen>
                         children: [
                           Text(
                             'Already have an account?',
-                            style: AppTypography.caption.copyWith(
-                              fontWeight: FontWeight.bold,
-                            ),
+                            style: AppTypography.caption(
+                              context,
+                            ).copyWith(fontWeight: FontWeight.bold),
                           ),
                           const SizedBox(height: 4),
                           Text(
                             'Try logging in instead of creating a new account.',
-                            style: AppTypography.caption,
+                            style: AppTypography.caption(context),
                           ),
                         ],
                       ),
@@ -645,19 +648,19 @@ class _ProfileSetupScreenState extends ConsumerState<ProfileSetupScreen>
                 const SizedBox(height: 16),
                 Text(
                   'Account Created!',
-                  style: AppTypography.pageTitle,
+                  style: AppTypography.pageTitle(context),
                   textAlign: TextAlign.center,
                 ),
                 const SizedBox(height: 12),
                 Text(
                   'Your account has been successfully created.',
-                  style: AppTypography.subtitle,
+                  style: AppTypography.subtitle(context),
                   textAlign: TextAlign.center,
                 ),
                 const SizedBox(height: 8),
                 Text(
                   'Welcome, ${_userIdController.text}!',
-                  style: AppTypography.songTitle,
+                  style: AppTypography.songTitle(context),
                   textAlign: TextAlign.center,
                 ),
                 const SizedBox(height: 24),
@@ -670,7 +673,7 @@ class _ProfileSetupScreenState extends ConsumerState<ProfileSetupScreen>
                     },
                     child: Text(
                       'Get Started',
-                      style: AppTypography.subtitle.copyWith(
+                      style: AppTypography.subtitle(context).copyWith(
                         color: Colors.white,
                         fontWeight: FontWeight.w600,
                       ),
@@ -743,7 +746,7 @@ class _ProfileSetupScreenState extends ConsumerState<ProfileSetupScreen>
           Expanded(
             child: Text(
               text,
-              style: AppTypography.caption, // Updated
+              style: AppTypography.caption(context), // Updated
             ),
           ),
         ],
@@ -771,7 +774,7 @@ class _ProfileSetupScreenState extends ConsumerState<ProfileSetupScreen>
           Expanded(
             child: Text(
               text,
-              style: AppTypography.caption.copyWith(
+              style: AppTypography.caption(context).copyWith(
                 color: isMet
                     ? AppColors.success
                     : AppColors.textSecondary, // Updated
@@ -802,7 +805,7 @@ class _ProfileSetupScreenState extends ConsumerState<ProfileSetupScreen>
           Expanded(
             child: Text(
               text,
-              style: AppTypography.subtitle, // Updated
+              style: AppTypography.subtitle(context), // Updated
             ),
           ),
         ],
@@ -826,19 +829,21 @@ class _ProfileSetupScreenState extends ConsumerState<ProfileSetupScreen>
                 const SizedBox(height: 20),
                 Text(
                   'Choose Your User ID',
-                  style: AppTypography.pageTitle, // Updated
+                  style: AppTypography.pageTitle(context), // Updated
                   textAlign: TextAlign.center,
                 ),
                 SizedBox(height: AppSpacing.sm), // Updated
                 Text(
                   'This will be your unique identifier',
                   textAlign: TextAlign.center,
-                  style: AppTypography.subtitle, // Updated
+                  style: AppTypography.subtitle(context), // Updated
                 ),
 
                 const SizedBox(height: 30),
                 TextFormField(
                   controller: _userIdController,
+                  cursorColor: AppColors.textPrimary, // ADD THIS
+                  style: TextStyle(color: AppColors.textPrimary), // ADD THIS
                   decoration: InputDecoration(
                     labelText: 'User ID',
                     hintText: 'e.g., musiclover123',
@@ -870,9 +875,9 @@ class _ProfileSetupScreenState extends ConsumerState<ProfileSetupScreen>
                 const SizedBox(height: 20),
                 Text(
                   'Requirements:',
-                  style: AppTypography.subtitle.copyWith(
-                    fontWeight: FontWeight.bold,
-                  ), // Updated
+                  style: AppTypography.subtitle(
+                    context,
+                  ).copyWith(fontWeight: FontWeight.bold), // Updated
                 ),
                 SizedBox(height: AppSpacing.xs),
                 _buildRequirement('3-30 characters'),
@@ -893,6 +898,7 @@ class _ProfileSetupScreenState extends ConsumerState<ProfileSetupScreen>
       builder: (context, constraints) {
         return SingleChildScrollView(
           controller: _scrollController,
+
           padding: const EdgeInsets.all(20.0),
           child: ConstrainedBox(
             constraints: BoxConstraints(minHeight: constraints.maxHeight),
@@ -904,19 +910,21 @@ class _ProfileSetupScreenState extends ConsumerState<ProfileSetupScreen>
                 const SizedBox(height: 20),
                 Text(
                   'Your Email Address',
-                  style: AppTypography.pageTitle, // Updated
+                  style: AppTypography.pageTitle(context), // Updated
                   textAlign: TextAlign.center,
                 ),
                 SizedBox(height: AppSpacing.sm), // Updated
                 Text(
                   'For account recovery and notifications',
                   textAlign: TextAlign.center,
-                  style: AppTypography.subtitle, // Updated
+                  style: AppTypography.subtitle(context), // Updated
                 ),
 
                 const SizedBox(height: 30),
                 TextFormField(
                   controller: _emailController,
+                  cursorColor: AppColors.textPrimary, // ADD THIS
+                  style: TextStyle(color: AppColors.textPrimary), // ADD THIS
                   decoration: InputDecoration(
                     labelText: 'Email Address',
                     hintText: 'yourmail@gmail.com',
@@ -965,14 +973,14 @@ class _ProfileSetupScreenState extends ConsumerState<ProfileSetupScreen>
                 const SizedBox(height: 20),
                 Text(
                   ' Your Gender',
-                  style: AppTypography.pageTitle, // Updated
+                  style: AppTypography.pageTitle(context), // Updated
                   textAlign: TextAlign.center,
                 ),
                 SizedBox(height: AppSpacing.sm), // Updated
                 Text(
                   'This helps system personalize your experience',
                   textAlign: TextAlign.center,
-                  style: AppTypography.caption, // Updated
+                  style: AppTypography.caption(context), // Updated
                 ),
 
                 const SizedBox(height: 30),
@@ -1018,12 +1026,13 @@ class _ProfileSetupScreenState extends ConsumerState<ProfileSetupScreen>
                               Expanded(
                                 child: Text(
                                   gender,
-                                  style: AppTypography.songTitle.copyWith(
-                                    // Updated
-                                    fontWeight: _selectedGender == gender
-                                        ? FontWeight.bold
-                                        : FontWeight.normal,
-                                  ),
+                                  style: AppTypography.songTitle(context)
+                                      .copyWith(
+                                        // Updated
+                                        fontWeight: _selectedGender == gender
+                                            ? FontWeight.bold
+                                            : FontWeight.normal,
+                                      ),
                                 ),
                               ),
                               if (_selectedGender == gender)
@@ -1042,9 +1051,9 @@ class _ProfileSetupScreenState extends ConsumerState<ProfileSetupScreen>
                 Text(
                   'You can skip this step',
                   textAlign: TextAlign.center,
-                  style: AppTypography.caption.copyWith(
-                    fontStyle: FontStyle.italic,
-                  ), // Updated
+                  style: AppTypography.caption(
+                    context,
+                  ).copyWith(fontStyle: FontStyle.italic), // Updated
                 ),
               ],
             ),
@@ -1070,24 +1079,28 @@ class _ProfileSetupScreenState extends ConsumerState<ProfileSetupScreen>
                 const SizedBox(height: 20),
                 Text(
                   'Create a Password',
-                  style: AppTypography.pageTitle, // Updated
+                  style: AppTypography.pageTitle(context),
                   textAlign: TextAlign.center,
                 ),
-                SizedBox(height: AppSpacing.sm), // Updated
+                SizedBox(height: AppSpacing.sm),
                 Text(
                   'Choose a strong password',
                   textAlign: TextAlign.center,
-                  style: AppTypography.subtitle, // Updated
+                  style: AppTypography.subtitle(context),
                 ),
                 const SizedBox(height: 30),
                 TextFormField(
                   controller: _passwordController,
+                  cursorColor: AppColors.textPrimary,
+                  style: TextStyle(color: AppColors.textPrimary),
                   decoration: InputDecoration(
                     labelText: 'Password',
-                    prefixIcon: const Icon(Icons.lock),
+                    labelStyle: TextStyle(color: AppColors.textSecondary),
+                    prefixIcon: Icon(Icons.lock, color: AppColors.textPrimary),
                     suffixIcon: IconButton(
                       icon: Icon(
                         _showPassword ? Icons.visibility : Icons.visibility_off,
+                        color: AppColors.textPrimary,
                       ),
                       onPressed: () {
                         setState(() {
@@ -1098,7 +1111,35 @@ class _ProfileSetupScreenState extends ConsumerState<ProfileSetupScreen>
                     border: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(
                         AppSpacing.radiusMedium,
-                      ), // Updated
+                      ),
+                      borderSide: BorderSide(color: AppColors.textSecondary),
+                    ),
+                    enabledBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(
+                        AppSpacing.radiusMedium,
+                      ),
+                      borderSide: BorderSide(color: AppColors.textSecondary),
+                    ),
+                    focusedBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(
+                        AppSpacing.radiusMedium,
+                      ),
+                      borderSide: BorderSide(
+                        color: AppColors.textPrimary,
+                        width: 2,
+                      ),
+                    ),
+                    errorBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(
+                        AppSpacing.radiusMedium,
+                      ),
+                      borderSide: BorderSide(color: AppColors.error),
+                    ),
+                    focusedErrorBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(
+                        AppSpacing.radiusMedium,
+                      ),
+                      borderSide: BorderSide(color: AppColors.error, width: 2),
                     ),
                   ),
                   obscureText: !_showPassword,
@@ -1107,14 +1148,21 @@ class _ProfileSetupScreenState extends ConsumerState<ProfileSetupScreen>
                 const SizedBox(height: 20),
                 TextFormField(
                   controller: _confirmPasswordController,
+                  cursorColor: AppColors.textPrimary,
+                  style: TextStyle(color: AppColors.textPrimary),
                   decoration: InputDecoration(
                     labelText: 'Confirm Password',
-                    prefixIcon: const Icon(Icons.lock_reset),
+                    labelStyle: TextStyle(color: AppColors.textSecondary),
+                    prefixIcon: Icon(
+                      Icons.lock_reset,
+                      color: AppColors.textPrimary,
+                    ),
                     suffixIcon: IconButton(
                       icon: Icon(
                         _showConfirmPassword
                             ? Icons.visibility
                             : Icons.visibility_off,
+                        color: AppColors.textPrimary,
                       ),
                       onPressed: () {
                         setState(() {
@@ -1123,23 +1171,54 @@ class _ProfileSetupScreenState extends ConsumerState<ProfileSetupScreen>
                       },
                     ),
                     border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(12),
+                      borderRadius: BorderRadius.circular(
+                        AppSpacing.radiusMedium,
+                      ),
+                      borderSide: BorderSide(color: AppColors.textSecondary),
+                    ),
+                    enabledBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(
+                        AppSpacing.radiusMedium,
+                      ),
+                      borderSide: BorderSide(color: AppColors.textSecondary),
+                    ),
+                    focusedBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(
+                        AppSpacing.radiusMedium,
+                      ),
+                      borderSide: BorderSide(
+                        color: AppColors.textPrimary,
+                        width: 2,
+                      ),
+                    ),
+                    errorBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(
+                        AppSpacing.radiusMedium,
+                      ),
+                      borderSide: BorderSide(color: AppColors.error),
+                    ),
+                    focusedErrorBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(
+                        AppSpacing.radiusMedium,
+                      ),
+                      borderSide: BorderSide(color: AppColors.error, width: 2),
                     ),
                   ),
                   obscureText: !_showConfirmPassword,
                   textInputAction: TextInputAction.done,
                 ),
                 const SizedBox(height: 20),
-                const Text(
+                Text(
                   'Password Requirements:',
-                  style: TextStyle(fontWeight: FontWeight.bold),
+                  style: AppTypography.subtitle(
+                    context,
+                  ).copyWith(fontWeight: FontWeight.bold),
                 ),
                 const SizedBox(height: 10),
                 _buildPasswordRequirement(
                   'At least 6 characters',
-                  _passwordController.text.length >= 8,
+                  _passwordController.text.length >= 6,
                 ),
-
                 _buildPasswordRequirement(
                   'Passwords match',
                   _passwordController.text == _confirmPasswordController.text &&
@@ -1149,9 +1228,9 @@ class _ProfileSetupScreenState extends ConsumerState<ProfileSetupScreen>
                   const SizedBox(height: 20),
                   Text(
                     _errorMessage!,
-                    style: AppTypography.caption.copyWith(
-                      color: AppColors.error,
-                    ), // Updated
+                    style: AppTypography.caption(
+                      context,
+                    ).copyWith(color: AppColors.error),
                     textAlign: TextAlign.center,
                   ),
                 ],
@@ -1179,14 +1258,14 @@ class _ProfileSetupScreenState extends ConsumerState<ProfileSetupScreen>
                 const SizedBox(height: 20),
                 Text(
                   'Profile Picture (Optional)',
-                  style: AppTypography.pageTitle, // Updated
+                  style: AppTypography.pageTitle(context), // Updated
                   textAlign: TextAlign.center,
                 ),
                 SizedBox(height: AppSpacing.sm), // Updated
                 Text(
                   'Personalize your account',
                   textAlign: TextAlign.center,
-                  style: AppTypography.caption, // Updated
+                  style: AppTypography.caption(context), // Updated
                 ),
                 const SizedBox(height: 30),
                 Center(
@@ -1286,7 +1365,7 @@ class _ProfileSetupScreenState extends ConsumerState<ProfileSetupScreen>
                 Text(
                   'Or choose an avatar:',
                   textAlign: TextAlign.center,
-                  style: AppTypography.songTitle, // Updated
+                  style: AppTypography.songTitle(context), // Updated
                 ),
                 const SizedBox(height: 20),
                 Wrap(
@@ -1346,9 +1425,9 @@ class _ProfileSetupScreenState extends ConsumerState<ProfileSetupScreen>
                 Text(
                   'You can change this later',
                   textAlign: TextAlign.center,
-                  style: AppTypography.caption.copyWith(
-                    fontStyle: FontStyle.italic,
-                  ), // Updated
+                  style: AppTypography.caption(
+                    context,
+                  ).copyWith(fontStyle: FontStyle.italic), // Updated
                 ),
               ],
             ),
@@ -1375,7 +1454,7 @@ class _ProfileSetupScreenState extends ConsumerState<ProfileSetupScreen>
 
                 Text(
                   'One Last Thing',
-                  style: AppTypography.pageTitle,
+                  style: AppTypography.pageTitle(context),
                   textAlign: TextAlign.center,
                 ),
 
@@ -1383,22 +1462,38 @@ class _ProfileSetupScreenState extends ConsumerState<ProfileSetupScreen>
 
                 Text(
                   'By using Vibeflow, you agree to:',
-                  style: AppTypography.songTitle,
+                  style: AppTypography.songTitle(context),
                   textAlign: TextAlign.center,
                 ),
 
                 const SizedBox(height: 30),
 
                 _buildSimpleRule(
-                  'Not misuse or attack our servers (no DDoS, bots, abuse)',
+                  'Do not perform or attempt server abuse, including DDoS attacks, bot traffic, request flooding, or infrastructure misuse',
                 ),
-                _buildSimpleRule('Not reverse-engineer or exploit the app'),
-                _buildSimpleRule('No show off free features'),
+
                 _buildSimpleRule(
-                  'Not share the app with unknown or untrusted sources',
+                  'Do not reverse-engineer, decompile, tamper with, or exploit the app, APIs, or network requests (including MITM, packet sniffing, or modified clients)',
                 ),
-                _buildSimpleRule('Use Vibeflow respectfully and legally'),
-                _buildSimpleRule('You can be banned if you violate the rules'),
+
+                _buildSimpleRule(
+                  'Do not redistribute, sideload, mirror, or share the app, builds, access links, or internal features with untrusted or unauthorized users',
+                ),
+
+                _buildSimpleRule(
+                  'Do not attempt to access, collect, infer, or misuse other users’ data, activity, or private content without authorization',
+                ),
+
+                _buildSimpleRule(
+                  'Do not automate, scrape, or overload Vibeflow through abnormal or non-human usage patterns',
+                ),
+
+                _buildSimpleRule('Use Vibeflow respectfully and lawfully'),
+
+                _buildSimpleRule(
+                  'Violation of these rules may result in an account suspension or a permanent ban',
+                ),
+
                 const SizedBox(height: 30),
 
                 Card(
@@ -1442,7 +1537,7 @@ class _ProfileSetupScreenState extends ConsumerState<ProfileSetupScreen>
                           Expanded(
                             child: Text(
                               'I agree to follow these rules',
-                              style: AppTypography.subtitle.copyWith(
+                              style: AppTypography.subtitle(context).copyWith(
                                 fontWeight: _termsAccepted
                                     ? FontWeight.bold
                                     : FontWeight.normal,
@@ -1479,7 +1574,7 @@ class _ProfileSetupScreenState extends ConsumerState<ProfileSetupScreen>
         children: [
           const Icon(Icons.check_circle, size: 20, color: AppColors.accent),
           const SizedBox(width: 12),
-          Expanded(child: Text(text, style: AppTypography.subtitle)),
+          Expanded(child: Text(text, style: AppTypography.subtitle(context))),
         ],
       ),
     );

@@ -119,7 +119,7 @@ class _SearchSuggestionsWidgetState
                 children: [
                   Text(
                     'Recent Searches',
-                    style: AppTypography.sectionHeader.copyWith(
+                    style: AppTypography.sectionHeader(context).copyWith(
                       fontSize: 14,
                       fontWeight: FontWeight.w600,
                       color: textPrimaryColor,
@@ -137,10 +137,9 @@ class _SearchSuggestionsWidgetState
                     ),
                     child: Text(
                       'Clear All',
-                      style: AppTypography.caption.copyWith(
-                        color: accentColor,
-                        fontSize: 12,
-                      ),
+                      style: AppTypography.caption(
+                        context,
+                      ).copyWith(color: accentColor, fontSize: 12),
                     ),
                   ),
                 ],
@@ -198,14 +197,14 @@ class _SearchSuggestionsWidgetState
                       const SizedBox(height: 16),
                       Text(
                         'No recent searches',
-                        style: AppTypography.subtitle.copyWith(
-                          color: textSecondaryColor,
-                        ),
+                        style: AppTypography.subtitle(
+                          context,
+                        ).copyWith(color: textSecondaryColor),
                       ),
                       const SizedBox(height: 6),
                       Text(
                         'Your search history will appear here',
-                        style: AppTypography.caption.copyWith(
+                        style: AppTypography.caption(context).copyWith(
                           color: textSecondaryColor.withOpacity(0.7),
                           fontSize: 12,
                         ),
@@ -262,10 +261,9 @@ class _SearchSuggestionsWidgetState
               Expanded(
                 child: Text(
                   suggestion.text,
-                  style: AppTypography.songTitle.copyWith(
-                    color: textPrimaryColor,
-                    fontSize: 14,
-                  ),
+                  style: AppTypography.songTitle(
+                    context,
+                  ).copyWith(color: textPrimaryColor, fontSize: 14),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                 ),

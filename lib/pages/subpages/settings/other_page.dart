@@ -15,34 +15,187 @@ class OtherPage extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final textSecondaryColor = ref.watch(themeTextSecondaryColorProvider);
+    final textPrimaryColor = ref.watch(themeTextPrimaryColorProvider);
+    final warningColor = Color(0xFFE57373); // Red color for warnings
+
     return _SettingsPageTemplate(
       title: 'Other',
       currentIndex: 3,
       content: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          // ANDROID AUTO SECTION
           Text(
-            'GENERAL',
-            style: AppTypography.caption.copyWith(
+            'ANDROID AUTO',
+            style: AppTypography.caption(context).copyWith(
+              color: ref.watch(themeIconActiveColorProvider),
+              fontWeight: FontWeight.w600,
+              letterSpacing: 1.2,
+            ),
+          ),
+          const SizedBox(height: AppSpacing.md),
+          Text(
+            'Remember to enable "Unknown sources" in the Developer Settings of Android Auto.',
+            style: AppTypography.subtitle(
+              context,
+            ).copyWith(color: textSecondaryColor, height: 1.5),
+          ),
+          const SizedBox(height: AppSpacing.lg),
+          _buildToggleItem(
+            context,
+            ref,
+            'Android Auto',
+            'Enable Android Auto support',
+            false,
+            () {},
+          ),
+          const SizedBox(height: AppSpacing.xl),
+
+          // SEARCH HISTORY SECTION
+          Text(
+            'SEARCH HISTORY',
+            style: AppTypography.caption(context).copyWith(
               color: ref.watch(themeIconActiveColorProvider),
               fontWeight: FontWeight.w600,
               letterSpacing: 1.2,
             ),
           ),
           const SizedBox(height: AppSpacing.lg),
+          _buildToggleItem(
+            context,
+            ref,
+            'Pause search history',
+            'Neither save new searched queries nor show history',
+            false,
+            () {},
+          ),
+          const SizedBox(height: AppSpacing.lg),
+          _buildActionItem(
+            ref,
+            context,
+            'Clear search history',
+            'History is empty',
+            () {},
+          ),
+          const SizedBox(height: AppSpacing.xl),
+
+          // SERVICE LIFETIME SECTION
           Text(
-            'Language',
-            style: AppTypography.subtitle.copyWith(
-              fontWeight: FontWeight.w500,
-              color: ref.watch(themeTextPrimaryColorProvider),
+            'SERVICE LIFETIME',
+            style: AppTypography.caption(context).copyWith(
+              color: ref.watch(themeIconActiveColorProvider),
+              fontWeight: FontWeight.w600,
+              letterSpacing: 1.2,
             ),
+          ),
+          const SizedBox(height: AppSpacing.md),
+          Text(
+            'If battery optimizations are applied, the playback notification can suddenly disappear when paused.',
+            style: AppTypography.subtitle(
+              context,
+            ).copyWith(color: warningColor, height: 1.5),
+          ),
+          const SizedBox(height: AppSpacing.md),
+          Text(
+            'Since Android 12, disabling battery optimizations is required for the "Invincible service" option to take effect.',
+            style: AppTypography.subtitle(
+              context,
+            ).copyWith(color: textSecondaryColor, height: 1.5),
+          ),
+          const SizedBox(height: AppSpacing.lg),
+          _buildActionItem(
+            ref,
+            context,
+            'Ignore battery optimizations',
+            'Disable background restrictions',
+            () {},
+          ),
+          const SizedBox(height: AppSpacing.lg),
+          _buildToggleItem(
+            context,
+            ref,
+            'Invincible service',
+            'When turning off battery optimizations is not enough',
+            false,
+            () {},
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildToggleItem(
+    BuildContext context, // ✅ ADD THIS
+    WidgetRef ref,
+    String title,
+    String subtitle,
+    bool value,
+    VoidCallback onChanged,
+  ) {
+    final textPrimaryColor = ref.watch(themeTextPrimaryColorProvider);
+    final textSecondaryColor = ref.watch(themeTextSecondaryColorProvider);
+    final iconActiveColor = ref.watch(themeIconActiveColorProvider);
+
+    return Row(
+      children: [
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                title,
+                style: AppTypography.subtitle(context).copyWith(
+                  fontWeight: FontWeight.w500,
+                  color: textPrimaryColor,
+                ),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                subtitle,
+                style: AppTypography.caption(
+                  context,
+                ).copyWith(color: textSecondaryColor),
+              ),
+            ],
+          ),
+        ),
+        Switch(
+          value: value,
+          onChanged: (_) => onChanged(),
+          activeColor: iconActiveColor,
+        ),
+      ],
+    );
+  }
+
+  Widget _buildActionItem(
+    WidgetRef ref,
+    BuildContext context,
+    String title,
+    String subtitle,
+    VoidCallback onTap,
+  ) {
+    final textPrimaryColor = ref.watch(themeTextPrimaryColorProvider);
+    final textSecondaryColor = ref.watch(themeTextSecondaryColorProvider);
+
+    return GestureDetector(
+      onTap: onTap,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            title,
+            style: AppTypography.subtitle(
+              context,
+            ).copyWith(fontWeight: FontWeight.w500, color: textPrimaryColor),
           ),
           const SizedBox(height: 4),
           Text(
-            'English',
-            style: AppTypography.caption.copyWith(
-              color: ref.watch(themeTextSecondaryColorProvider),
-            ),
+            subtitle,
+            style: AppTypography.caption(
+              context,
+            ).copyWith(color: textSecondaryColor),
           ),
         ],
       ),
@@ -110,9 +263,9 @@ class _SettingsPageTemplate extends ConsumerWidget {
               alignment: Alignment.centerRight,
               child: Text(
                 title,
-                style: AppTypography.pageTitle.copyWith(
-                  color: textPrimaryColor,
-                ),
+                style: AppTypography.pageTitle(
+                  context,
+                ).copyWith(color: textPrimaryColor),
               ),
             ),
           ),
@@ -128,12 +281,12 @@ class _SettingsPageTemplate extends ConsumerWidget {
     final sidebarLabelColor = ref.watch(themeTextPrimaryColorProvider);
     final sidebarLabelActiveColor = ref.watch(themeIconActiveColorProvider);
 
-    final sidebarLabelStyle = AppTypography.sidebarLabel.copyWith(
-      color: sidebarLabelColor,
-    );
-    final sidebarLabelActiveStyle = AppTypography.sidebarLabelActive.copyWith(
-      color: sidebarLabelActiveColor,
-    );
+    final sidebarLabelStyle = AppTypography.sidebarLabel(
+      context,
+    ).copyWith(color: sidebarLabelColor);
+    final sidebarLabelActiveStyle = AppTypography.sidebarLabelActive(
+      context,
+    ).copyWith(color: sidebarLabelActiveColor);
 
     return SizedBox(
       width: 65,

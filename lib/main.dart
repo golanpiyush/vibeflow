@@ -1,9 +1,11 @@
-// lib/main.dart - UPDATED WITH ACCESS CODE SYSTEM
+// lib/main.dart - WITH UPDATE CHECK ADDED
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:awesome_notifications/awesome_notifications.dart';
 import 'package:vibeflow/database/database_service.dart';
+import 'package:vibeflow/installer_services/update_manager_service.dart';
+import 'package:vibeflow/managers/download_manager.dart';
 import 'package:vibeflow/pages/access_code_management_screen.dart';
 import 'package:vibeflow/pages/authOnboard/access_code_screen.dart';
 import 'package:vibeflow/pages/authOnboard/profile_setup_screen.dart';
@@ -11,15 +13,17 @@ import 'package:vibeflow/pages/home_page.dart';
 import 'package:vibeflow/services/access_code_wrapper.dart';
 import 'package:vibeflow/services/audio_service.dart';
 import 'package:vibeflow/services/haptic_feedback_service.dart';
+import 'package:vibeflow/utils/secure_storage.dart';
 import 'package:vibeflow/utils/theme_provider.dart';
 import 'package:vibeflow/services/supabase_initializer.dart';
+import 'package:vibeflow/widgets/ban_wrapper.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
   // 🗄️ Initialize Database FIRST
   final dbService = DatabaseService();
-  await dbService.database; // This ensures DB is created and ready
+  await dbService.database;
   print('✅ Local database initialized');
 
   // 🔐 Initialize Supabase
@@ -30,6 +34,21 @@ Future<void> main() async {
   await AudioServices.init();
   print('✅ Audio service initialized');
 
+  // 📥 Check downloads after app update (INTEGRATED)
+  final updateReport = await DownloadService.checkAfterUpdate();
+  if (updateReport.wasUpdated) {
+    print(
+      '🔄 App updated: ${updateReport.oldVersion} -> ${updateReport.newVersion}',
+    );
+    print(
+      '📦 Downloads verified: ${updateReport.validFiles} files intact (${updateReport.formattedStorage})',
+    );
+  } else if (updateReport.isFirstLaunch) {
+    print('🆕 First launch - Welcome to VibeFlow!');
+  } else {
+    print('✅ Downloads verified (no update)');
+  }
+
   // 🔔 Initialize Awesome Notifications
   await _initAwesomeNotifications();
   print('✅ Notifications initialized');
@@ -37,6 +56,31 @@ Future<void> main() async {
   // 📱 Initialize haptic feedback
   await HapticFeedbackService().initialize();
   print('✅ Haptic feedback initialized');
+
+  // // 🔄 CHECK FOR UPDATES FROM GITHUB - ADD THIS SECTION
+  // print('🔍 Checking for app updates from GitHub...');
+  // try {
+  //   final updateResult = await UpdateManagerService.checkForUpdate();
+
+  //   switch (updateResult.status) {
+  //     case UpdateStatus.available:
+  //       print('🎉 ${updateResult.message}');
+  //       if (updateResult.updateInfo != null) {
+  //         print('   Current: v${updateResult.updateInfo!.currentVersion}');
+  //         print('   Latest: v${updateResult.updateInfo!.latestVersion}');
+  //         print('   Size: ${updateResult.updateInfo!.fileSizeFormatted}');
+  //       }
+  //       break;
+  //     case UpdateStatus.upToDate:
+  //       print('✅ ${updateResult.message}');
+  //       break;
+  //     case UpdateStatus.error:
+  //       print('⚠️ ${updateResult.message}');
+  //       break;
+  //   }
+  // } catch (e) {
+  //   print('⚠️ Update check failed: $e');
+  // }
 
   // 🎛 System UI styling
   SystemChrome.setSystemUIOverlayStyle(
@@ -88,14 +132,26 @@ Future<void> _initAwesomeNotifications() async {
         enableVibration: true,
       ),
     ],
-    debug: false, // Set to false in production
+    debug: false,
   );
 
-  // Android 13+ permission (handled safely)
   final isAllowed = await AwesomeNotifications().isNotificationAllowed();
   if (!isAllowed) {
     await AwesomeNotifications().requestPermissionToSendNotifications();
   }
+}
+
+Future<Widget> _determineInitialRoute() async {
+  // Check for orphan access code first
+  final hasOrphan = await AccessCodeScreen.hasOrphanAccessCode();
+  if (hasOrphan) {
+    final secureStorage = SecureStorageService();
+    final accessCode = await secureStorage.getAccessCode();
+    return ProfileSetupScreen(accessCode: accessCode ?? '');
+  }
+
+  // Default route - AccessCodeWrapper will handle the rest
+  return const AccessCodeWrapper();
 }
 
 class VibeFlowApp extends ConsumerWidget {
@@ -103,7 +159,6 @@ class VibeFlowApp extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    // Watch theme providers
     final themeState = ref.watch(themeProvider);
     final lightTheme = ref.watch(lightThemeProvider);
     final darkTheme = ref.watch(darkThemeProvider);
@@ -115,10 +170,19 @@ class VibeFlowApp extends ConsumerWidget {
       theme: lightTheme,
       darkTheme: darkTheme,
       themeMode: themeNotifier.themeMode,
-      home: const AccessCodeWrapper(), // Updated to use AccessCodeWrapper
-      // Define your routes here
+      home: FutureBuilder<Widget>(
+        future: _determineInitialRoute(),
+        builder: (context, snapshot) {
+          if (snapshot.connectionState == ConnectionState.waiting) {
+            return const Scaffold(
+              body: Center(child: CircularProgressIndicator()),
+            );
+          }
+          return snapshot.data ?? const AccessCodeWrapper();
+        },
+      ),
       routes: {
-        '/home': (context) => const HomePage(), // Add this line
+        '/home': (context) => BanWrapper(child: const HomePage()),
         '/access-code': (context) =>
             const AccessCodeScreen(showSkipButton: true),
         '/profile-setup': (context) => ProfileSetupScreen(accessCode: ''),
@@ -130,7 +194,6 @@ class VibeFlowApp extends ConsumerWidget {
   }
 }
 
-// Audio Error Handler (same as before)
 class AudioErrorHandler {
   static final AudioErrorHandler _instance = AudioErrorHandler._internal();
   factory AudioErrorHandler() => _instance;

@@ -1,4 +1,3 @@
-// lib/services/access_code_wrapper.dart
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -43,32 +42,45 @@ class _AccessCodeWrapperState extends ConsumerState<AccessCodeWrapper> {
         // User is logged in, skip access code check and go to HomePage
         debugPrint('✅ User authenticated, going to HomePage');
         setState(() {
-          _hasAccessCode = true; // Set to true to show HomePage
+          _hasAccessCode = true;
           _isChecking = false;
         });
         _initRealtimeIfNeeded();
         return;
       }
 
-      // User not authenticated, check for access code
+      // User not authenticated, check for access code OR skip status
       final secureStorage = SecureStorageService();
-      final hasCode = await secureStorage.hasAccessCode();
+      final status = await secureStorage.getAccessCodeStatus();
 
-      if (hasCode) {
+      debugPrint('🔍 Access code status: $status');
+
+      // Allow user to proceed if they have validated code OR skipped
+      if (status == 'validated') {
         final validatedAt = await secureStorage.getAccessCodeValidatedAt();
         if (validatedAt != null &&
             DateTime.now().difference(validatedAt).inDays < 30) {
+          debugPrint('✅ Valid access code found');
           setState(() {
             _hasAccessCode = true;
             _isChecking = false;
           });
           return;
         }
+      } else if (status == 'skipped') {
+        // User previously skipped - let them through
+        debugPrint('✅ User previously skipped access code');
+        setState(() {
+          _hasAccessCode = true; // Allow access
+          _isChecking = false;
+        });
+        return;
       }
     } catch (e) {
       debugPrint('Error checking auth/access code: $e');
     }
 
+    // No valid code and no skip - show access code screen
     setState(() {
       _hasAccessCode = false;
       _isChecking = false;
@@ -101,7 +113,6 @@ class _AccessCodeWrapperState extends ConsumerState<AccessCodeWrapper> {
   void _initRealtimeIfNeeded() {
     if (_realtimeInitialized) return;
 
-    // Use a post-frame callback to safely access ref after build
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
 

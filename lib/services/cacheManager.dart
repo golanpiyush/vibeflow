@@ -3,10 +3,12 @@ import 'package:vibeflow/models/quick_picks_model.dart';
 
 /// Audio URL cache with metadata using SharedPreferences
 /// Caches: videoId, audioUrl, title, artists, thumbnail, duration, and timestamp
+/// Supports dynamic cache expiry (1-6 hours, default 2 hours)
 class AudioUrlCache {
   static const String _prefix = 'audio_cache_';
   static const String _timestampSuffix = '_timestamp';
-  static const Duration _cacheExpiry = Duration(hours: 2);
+  static const String _cacheExpiryKey = 'cache_expiry_hours';
+  static const Duration _defaultCacheExpiry = Duration(hours: 2);
 
   static AudioUrlCache? _instance;
   SharedPreferences? _prefs;
@@ -22,6 +24,15 @@ class AudioUrlCache {
     if (_prefs == null) {
       _prefs = await SharedPreferences.getInstance();
     }
+  }
+
+  /// Get current cache expiry duration from user settings
+  Future<Duration> _getCacheExpiry() async {
+    await _init();
+    final hours = _prefs!.getInt(_cacheExpiryKey) ?? 2;
+    // Clamp between 1-6 hours
+    final clampedHours = hours.clamp(1, 6);
+    return Duration(hours: clampedHours);
   }
 
   /// Cache a song with all metadata
@@ -77,7 +88,8 @@ class AudioUrlCache {
       milliseconds: DateTime.now().millisecondsSinceEpoch - timestamp,
     );
 
-    if (cacheAge > _cacheExpiry) {
+    final cacheExpiry = await _getCacheExpiry();
+    if (cacheAge > cacheExpiry) {
       // Auto-clean expired cache
       await remove(videoId);
       return null;
@@ -112,7 +124,8 @@ class AudioUrlCache {
       milliseconds: DateTime.now().millisecondsSinceEpoch - timestamp,
     );
 
-    if (cacheAge > _cacheExpiry) {
+    final cacheExpiry = await _getCacheExpiry();
+    if (cacheAge > cacheExpiry) {
       await remove(videoId);
       return null;
     }
@@ -173,7 +186,8 @@ class AudioUrlCache {
       milliseconds: DateTime.now().millisecondsSinceEpoch - timestamp,
     );
 
-    if (cacheAge > _cacheExpiry) {
+    final cacheExpiry = await _getCacheExpiry();
+    if (cacheAge > cacheExpiry) {
       await remove(videoId);
       return null;
     }
@@ -212,7 +226,8 @@ class AudioUrlCache {
       milliseconds: DateTime.now().millisecondsSinceEpoch - timestamp,
     );
 
-    if (cacheAge > _cacheExpiry) {
+    final cacheExpiry = await _getCacheExpiry();
+    if (cacheAge > cacheExpiry) {
       await remove(videoId);
       return false;
     }
@@ -221,16 +236,14 @@ class AudioUrlCache {
     return url != null && url.isNotEmpty;
   }
 
-  /// Check if cache is expired (older than specified duration)
-  Future<bool> isCacheExpired(
-    String videoId, {
-    Duration maxAge = const Duration(hours: 2),
-  }) async {
+  /// Check if cache is expired (uses dynamic expiry or specified maxAge)
+  Future<bool> isCacheExpired(String videoId, {Duration? maxAge}) async {
     final cacheTime = await getCacheTime(videoId);
     if (cacheTime == null) return true;
 
     final age = DateTime.now().difference(cacheTime);
-    return age > maxAge;
+    final expiry = maxAge ?? await _getCacheExpiry();
+    return age > expiry;
   }
 
   /// Remove a specific cache entry (PUBLIC - async)
@@ -314,15 +327,16 @@ class AudioUrlCache {
     );
   }
 
-  /// Clean expired cache entries
+  /// Clean expired cache entries (uses dynamic expiry)
   Future<int> cleanExpired() async {
     await _init();
 
     final allCached = await getAllCached();
+    final cacheExpiry = await _getCacheExpiry();
     int removedCount = 0;
 
     for (final cached in allCached) {
-      if (cached.age > _cacheExpiry) {
+      if (cached.age > cacheExpiry) {
         await remove(cached.videoId);
         removedCount++;
       }
@@ -387,8 +401,8 @@ class CachedAudio {
     );
   }
 
-  /// Check if cache is still valid
-  bool get isValid => age.inHours < 2;
+  /// Check if cache is still valid (uses dynamic expiry)
+  bool get isValid => age.inHours < 6; // Maximum possible expiry
 
   @override
   String toString() {

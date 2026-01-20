@@ -4,6 +4,7 @@ import 'package:vibeflow/constants/app_colors.dart';
 import 'package:vibeflow/managers/download_maintener.dart';
 import 'package:vibeflow/managers/download_manager.dart';
 import 'package:vibeflow/models/quick_picks_model.dart';
+import 'package:vibeflow/pages/newPlayerPage.dart';
 import 'package:vibeflow/pages/player_page.dart';
 import 'package:vibeflow/services/audio_service.dart';
 import 'package:vibeflow/utils/page_transitions.dart';
@@ -143,7 +144,7 @@ class _SavedSongsScreenState extends State<SavedSongsScreen> {
     await _audioService.playSong(song);
 
     if (mounted) {
-      Navigator.of(context).pushFade(PlayerScreen(song: song));
+      NewPlayerPage.open(context, song);
     }
   }
 

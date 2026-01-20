@@ -1,6 +1,6 @@
 // FIXED REAL-TIME LISTENING TRACKING SYSTEM
 import 'dart:async';
-import 'package:just_audio/just_audio.dart'; // ✅ ADD THIS
+import 'package:just_audio/just_audio.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:vibeflow/database/listening_activity_service.dart';
 import 'package:vibeflow/models/quick_picks_model.dart';
@@ -13,14 +13,14 @@ class RealtimeListeningTracker {
   String? _currentActivityId;
   bool _isPlaying = false;
 
-  // ✅ NEW: Store reference to audio player
+  // Store reference to audio player
   AudioPlayer? _audioPlayer;
 
   final SupabaseClient _supabase;
 
   RealtimeListeningTracker() : _supabase = Supabase.instance.client;
 
-  // ✅ NEW: Set the audio player reference
+  // Set the audio player reference
   void setAudioPlayer(AudioPlayer player) {
     _audioPlayer = player;
     print('✅ [REALTIME] Audio player reference set');
@@ -42,7 +42,7 @@ class RealtimeListeningTracker {
     }
     print('✅ [REALTIME] User authenticated: ${user.id}');
 
-    // ✅ NEW: Check if user has access code
+    // Check if user has access code
     final hasAccessCode = await _checkUserAccessCode(user.id);
     if (!hasAccessCode) {
       print(
@@ -52,7 +52,7 @@ class RealtimeListeningTracker {
     }
     print('✅ [REALTIME] User has access code');
 
-    // ✅ NEW: Check if user has listening activity enabled
+    // Check if user has listening activity enabled
     final showListeningActivity = await _checkListeningActivitySetting(user.id);
     if (!showListeningActivity) {
       print(
@@ -62,12 +62,12 @@ class RealtimeListeningTracker {
     }
     print('✅ [REALTIME] User has listening activity enabled');
 
-    // Stop previous tracking first
+    // 🔧 FIX 1: Stop previous tracking with longer delay to ensure cleanup
     await stopTracking();
     print('✅ [REALTIME] Previous tracking stopped');
 
-    // Small delay to ensure cleanup completed
-    await Future.delayed(const Duration(milliseconds: 200));
+    // 🔧 FIX 2: Longer delay to ensure DB cleanup completed
+    await Future.delayed(const Duration(milliseconds: 500));
 
     // Set current song
     _currentSong = song;
@@ -103,6 +103,9 @@ class RealtimeListeningTracker {
     // Mark activity as completed
     if (_currentActivityId != null) {
       await _markAsCompleted();
+
+      // 🔧 FIX 3: Add small delay after marking complete
+      await Future.delayed(const Duration(milliseconds: 100));
     }
 
     // Reset state
@@ -137,8 +140,8 @@ class RealtimeListeningTracker {
     // Stop old tracking
     stopTracking();
 
-    // Start new tracking after a brief delay
-    Future.delayed(const Duration(milliseconds: 500), () {
+    // 🔧 FIX 4: Longer delay before starting new tracking
+    Future.delayed(const Duration(milliseconds: 800), () {
       startTracking(newSong);
     });
   }
@@ -155,11 +158,21 @@ class RealtimeListeningTracker {
       }
       print('✅ [CREATE] User ID: ${user.id}');
 
-      // Calculate total duration from song info
-      final totalDurationMs = song.duration != null
-          ? _parseDurationToMs(song.duration!)
-          : 180000; // Default 3 minutes if no duration
-      print('📏 [CREATE] Duration: ${totalDurationMs}ms (${song.duration})');
+      // 🔧 FIX 5: Get ACTUAL duration from audio player if available
+      int totalDurationMs;
+
+      if (_audioPlayer?.duration != null) {
+        totalDurationMs = _audioPlayer!.duration!.inMilliseconds;
+        print('📏 [CREATE] Using player duration: ${totalDurationMs}ms');
+      } else if (song.duration != null) {
+        totalDurationMs = _parseDurationToMs(song.duration!);
+        print(
+          '📏 [CREATE] Using song duration: ${totalDurationMs}ms (${song.duration})',
+        );
+      } else {
+        totalDurationMs = 180000; // Fallback to 3 minutes
+        print('⚠️ [CREATE] Using fallback duration: ${totalDurationMs}ms');
+      }
 
       final songId = ListeningActivityService.generateSongId(
         song.title,
@@ -167,7 +180,7 @@ class RealtimeListeningTracker {
       );
       print('🆔 [CREATE] Generated song_id: $songId');
 
-      // ✅ FIRST: Delete ANY old activity for this user
+      // Delete ANY old activity for this user
       print('🧹 [CREATE] Deleting old activities...');
       try {
         final deleteResult = await _supabase
@@ -182,9 +195,9 @@ class RealtimeListeningTracker {
       }
 
       // Small delay after delete
-      await Future.delayed(const Duration(milliseconds: 100));
+      await Future.delayed(const Duration(milliseconds: 150));
 
-      // ✅ SECOND: Create new activity
+      // Create new activity
       final nowUtc = DateTime.now().toUtc();
       final activityData = {
         'user_id': user.id,
@@ -193,7 +206,7 @@ class RealtimeListeningTracker {
         'song_title': song.title,
         'song_artists': song.artists.split(',').map((e) => e.trim()).toList(),
         'song_thumbnail': song.thumbnail,
-        'duration_ms': totalDurationMs,
+        'duration_ms': totalDurationMs, // 🔧 Now uses actual duration
         'current_position_ms': 0,
         'is_currently_playing': true,
         'played_at': nowUtc.toIso8601String(),
@@ -269,12 +282,12 @@ class RealtimeListeningTracker {
     print('⏱️ [REALTIME] Started real-time updates (every 10s)');
   }
 
-  // 📍 UPDATE CURRENT POSITION - FIXED VERSION
+  // 📍 UPDATE CURRENT POSITION
   Future<void> _updateCurrentPosition() async {
     if (_currentActivityId == null) return;
 
     try {
-      // ✅ FIX: Get ACTUAL position from audio player
+      // Get ACTUAL position from audio player
       int currentPositionMs;
 
       if (_audioPlayer != null) {
@@ -295,7 +308,7 @@ class RealtimeListeningTracker {
         );
       }
 
-      // ✅ Update with ACTUAL current position AND timestamp
+      // Update with ACTUAL current position AND timestamp
       await _supabase
           .from('listening_activity')
           .update({
@@ -315,8 +328,10 @@ class RealtimeListeningTracker {
 
   // ✅ MARK ACTIVITY AS COMPLETED
   Future<void> _markAsCompleted() async {
+    if (_currentActivityId == null) return;
+
     try {
-      // ✅ Get final position before marking complete
+      // Get final position before marking complete
       int finalPositionMs = 0;
       if (_audioPlayer != null) {
         finalPositionMs = _audioPlayer!.position.inMilliseconds;
@@ -354,7 +369,7 @@ class RealtimeListeningTracker {
     return 0;
   }
 
-  // ✅ NEW: Check if user has access code
+  // Check if user has access code
   Future<bool> _checkUserAccessCode(String userId) async {
     try {
       final response = await _supabase
@@ -372,7 +387,7 @@ class RealtimeListeningTracker {
     }
   }
 
-  // ✅ NEW: Check if user has listening activity enabled
+  // Check if user has listening activity enabled
   Future<bool> _checkListeningActivitySetting(String userId) async {
     try {
       final response = await _supabase

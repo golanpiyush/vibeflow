@@ -1,41 +1,48 @@
-// lib/providers/theme_provider.dart
+// lib/utils/theme_provider.dart
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_riverpod/legacy.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:google_fonts/google_fonts.dart';
 
 // ============================================================================
-// THEME PROVIDER - Now with 3 Theme Types
+// FONT FAMILY ENUM
 // ============================================================================
-
-// Theme Type Enum - REPLACES AppThemeMode
-enum ThemeType {
-  light, // Custom Light Theme (your original design)
-  material, // Material You Dynamic Theme
-  pureBlack, // Pure Black Theme
+enum AppFontFamily {
+  system, // System default
+  inter,
+  poppins,
+  roboto,
+  montserrat,
+  notoSans,
 }
 
-// Theme Mode Enum (for system dark/light)
+// ============================================================================
+// THEME PROVIDER - Now with Font Support
+// ============================================================================
+
+enum ThemeType { light, material, pureBlack }
+
 enum AppThemeMode { light, dark }
 
-enum ThumbnailRoundness {
-  light, // 2%
-  medium, // 5%
-  heavy, // 10%
-}
+enum ThumbnailRoundness { light, medium, heavy }
 
-// Theme State Class - UPDATED
+// Theme State Class - FIXED with proper fontFamily field
 class ThemeState {
-  final ThemeType themeType; // Which theme: light/material/pureBlack
-  final AppThemeMode systemThemeMode; // For material theme: light/dark
-  final Color? seedColor; // For material theme
+  final ThemeType themeType;
+  final AppThemeMode systemThemeMode;
+  final Color? seedColor;
   final ThumbnailRoundness thumbnailRoundness;
+  final AppFontFamily fontFamily; // ✅ This is a field, not a getter
+  final bool applyFontPadding;
 
   const ThemeState({
-    this.themeType = ThemeType.pureBlack, // Default to PureBlack
+    this.themeType = ThemeType.pureBlack,
     this.systemThemeMode = AppThemeMode.dark,
     this.seedColor,
     this.thumbnailRoundness = ThumbnailRoundness.heavy,
+    this.fontFamily = AppFontFamily.system, // ✅ DEFAULT
+    this.applyFontPadding = false,
   });
 
   ThemeState copyWith({
@@ -43,17 +50,21 @@ class ThemeState {
     AppThemeMode? systemThemeMode,
     Color? seedColor,
     ThumbnailRoundness? thumbnailRoundness,
+    AppFontFamily? fontFamily,
+    bool? applyFontPadding,
   }) {
     return ThemeState(
       themeType: themeType ?? this.themeType,
       systemThemeMode: systemThemeMode ?? this.systemThemeMode,
       seedColor: seedColor ?? this.seedColor,
       thumbnailRoundness: thumbnailRoundness ?? this.thumbnailRoundness,
+      fontFamily: fontFamily ?? this.fontFamily,
+      applyFontPadding: applyFontPadding ?? this.applyFontPadding,
     );
   }
 }
 
-// Theme Notifier - UPDATED
+// Theme Notifier
 class ThemeNotifier extends StateNotifier<ThemeState> {
   ThemeNotifier() : super(const ThemeState()) {
     _loadThemePreferences();
@@ -63,33 +74,35 @@ class ThemeNotifier extends StateNotifier<ThemeState> {
   static const String _systemThemeModeKey = 'system_theme_mode';
   static const String _seedColorKey = 'seed_color';
   static const String _thumbnailRoundnessKey = 'thumbnail_roundness';
+  static const String _fontFamilyKey = 'font_family';
+  static const String _applyFontPaddingKey = 'apply_font_padding';
 
   Future<void> _loadThemePreferences() async {
     final prefs = await SharedPreferences.getInstance();
 
-    final themeTypeIndex =
-        prefs.getInt(_themeTypeKey) ?? 2; // Default to PureBlack
-    final systemModeIndex =
-        prefs.getInt(_systemThemeModeKey) ?? 1; // Default to dark
+    final themeTypeIndex = prefs.getInt(_themeTypeKey) ?? 2;
+    final systemModeIndex = prefs.getInt(_systemThemeModeKey) ?? 1;
     final seedColorValue = prefs.getInt(_seedColorKey);
     final roundnessIndex = prefs.getInt(_thumbnailRoundnessKey) ?? 2;
+    final fontFamilyIndex = prefs.getInt(_fontFamilyKey) ?? 0;
+    final applyFontPadding = prefs.getBool(_applyFontPaddingKey) ?? false;
 
     state = ThemeState(
       themeType: ThemeType.values[themeTypeIndex],
       systemThemeMode: AppThemeMode.values[systemModeIndex],
       seedColor: seedColorValue != null ? Color(seedColorValue) : null,
       thumbnailRoundness: ThumbnailRoundness.values[roundnessIndex],
+      fontFamily: AppFontFamily.values[fontFamilyIndex],
+      applyFontPadding: applyFontPadding,
     );
   }
 
-  // Set the theme type (Light/Material/PureBlack)
   Future<void> setThemeType(ThemeType type) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setInt(_themeTypeKey, type.index);
     state = state.copyWith(themeType: type);
   }
 
-  // Set light/dark mode for Material theme
   Future<void> setSystemThemeMode(AppThemeMode mode) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setInt(_systemThemeModeKey, mode.index);
@@ -112,7 +125,18 @@ class ThemeNotifier extends StateNotifier<ThemeState> {
     state = state.copyWith(thumbnailRoundness: roundness);
   }
 
-  // Helper to get ThemeMode for MaterialApp
+  Future<void> setFontFamily(AppFontFamily font) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt(_fontFamilyKey, font.index);
+    state = state.copyWith(fontFamily: font);
+  }
+
+  Future<void> setApplyFontPadding(bool apply) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_applyFontPaddingKey, apply);
+    state = state.copyWith(applyFontPadding: apply);
+  }
+
   ThemeMode get themeMode {
     if (state.themeType == ThemeType.material) {
       switch (state.systemThemeMode) {
@@ -122,12 +146,11 @@ class ThemeNotifier extends StateNotifier<ThemeState> {
           return ThemeMode.dark;
       }
     }
-    // For Light and PureBlack themes, use light/dark respectively
     switch (state.themeType) {
       case ThemeType.light:
         return ThemeMode.light;
       case ThemeType.material:
-        return ThemeMode.system; // Shouldn't reach here
+        return ThemeMode.system;
       case ThemeType.pureBlack:
         return ThemeMode.dark;
     }
@@ -139,8 +162,36 @@ final themeProvider = StateNotifierProvider<ThemeNotifier, ThemeState>((ref) {
   return ThemeNotifier();
 });
 
+// Font Family Provider
+final fontFamilyProvider = Provider<AppFontFamily>((ref) {
+  return ref.watch(themeProvider).fontFamily;
+});
+
+// Font Padding Provider
+final fontPaddingProvider = Provider<bool>((ref) {
+  return ref.watch(themeProvider).applyFontPadding;
+});
+
+// Helper to get TextTheme based on selected font
+TextTheme _getTextTheme(AppFontFamily fontFamily) {
+  switch (fontFamily) {
+    case AppFontFamily.system:
+      return ThemeData.light().textTheme;
+    case AppFontFamily.inter:
+      return GoogleFonts.interTextTheme();
+    case AppFontFamily.poppins:
+      return GoogleFonts.poppinsTextTheme();
+    case AppFontFamily.roboto:
+      return GoogleFonts.robotoTextTheme();
+    case AppFontFamily.montserrat:
+      return GoogleFonts.montserratTextTheme();
+    case AppFontFamily.notoSans:
+      return GoogleFonts.notoSansTextTheme();
+  }
+}
+
 // Helper function to build custom light theme
-ThemeData _buildCustomLightTheme() {
+ThemeData _buildCustomLightTheme(AppFontFamily fontFamily) {
   return ThemeData(
     useMaterial3: true,
     brightness: Brightness.light,
@@ -153,6 +204,7 @@ ThemeData _buildCustomLightTheme() {
       background: Colors.white,
       error: Color(0xFFFF3B30),
     ),
+    textTheme: _getTextTheme(fontFamily),
     appBarTheme: const AppBarTheme(
       backgroundColor: Colors.white,
       foregroundColor: Colors.black,
@@ -165,7 +217,7 @@ ThemeData _buildCustomLightTheme() {
 }
 
 // Helper function to build pure black theme
-ThemeData _buildPureBlackTheme() {
+ThemeData _buildPureBlackTheme(AppFontFamily fontFamily) {
   return ThemeData(
     useMaterial3: true,
     brightness: Brightness.dark,
@@ -182,6 +234,7 @@ ThemeData _buildPureBlackTheme() {
       onSurface: Colors.white,
       onBackground: Colors.white,
     ),
+    textTheme: _getTextTheme(fontFamily),
     appBarTheme: const AppBarTheme(
       backgroundColor: Colors.black,
       foregroundColor: Colors.white,
@@ -196,70 +249,68 @@ ThemeData _buildPureBlackTheme() {
   );
 }
 
-// Theme Data Providers - FIXED (no circular dependency)
+// Theme Data Providers
 final lightThemeProvider = Provider<ThemeData>((ref) {
   final themeState = ref.watch(themeProvider);
+  final fontFamily = themeState.fontFamily;
 
   switch (themeState.themeType) {
     case ThemeType.light:
-      // Custom Light Theme (your original design)
-      return _buildCustomLightTheme();
+      return _buildCustomLightTheme(fontFamily);
 
     case ThemeType.material:
-      // Material You Light Theme
-      if (themeState.seedColor != null) {
-        return ThemeData(
-          useMaterial3: true,
-          colorScheme: ColorScheme.fromSeed(
-            seedColor: themeState.seedColor!,
-            brightness: Brightness.light,
-          ),
-        );
-      }
-      return ThemeData(
-        useMaterial3: true,
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: const Color(0xFF6B4CE8),
-          brightness: Brightness.light,
-        ),
-      );
+      final baseTheme = themeState.seedColor != null
+          ? ThemeData(
+              useMaterial3: true,
+              colorScheme: ColorScheme.fromSeed(
+                seedColor: themeState.seedColor!,
+                brightness: Brightness.light,
+              ),
+            )
+          : ThemeData(
+              useMaterial3: true,
+              colorScheme: ColorScheme.fromSeed(
+                seedColor: const Color(0xFF6B4CE8),
+                brightness: Brightness.light,
+              ),
+            );
+
+      return baseTheme.copyWith(textTheme: _getTextTheme(fontFamily));
 
     case ThemeType.pureBlack:
-      // Pure Black Theme - return dark theme for consistency
-      return _buildPureBlackTheme();
+      return _buildPureBlackTheme(fontFamily);
   }
 });
 
 final darkThemeProvider = Provider<ThemeData>((ref) {
   final themeState = ref.watch(themeProvider);
+  final fontFamily = themeState.fontFamily;
 
   switch (themeState.themeType) {
     case ThemeType.light:
-      // Light theme - return light theme for consistency
-      return _buildCustomLightTheme();
+      return _buildCustomLightTheme(fontFamily);
 
     case ThemeType.material:
-      // Material You Dark Theme
-      if (themeState.seedColor != null) {
-        return ThemeData(
-          useMaterial3: true,
-          colorScheme: ColorScheme.fromSeed(
-            seedColor: themeState.seedColor!,
-            brightness: Brightness.dark,
-          ),
-        );
-      }
-      return ThemeData(
-        useMaterial3: true,
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: const Color(0xFF6B4CE8),
-          brightness: Brightness.dark,
-        ),
-      );
+      final baseTheme = themeState.seedColor != null
+          ? ThemeData(
+              useMaterial3: true,
+              colorScheme: ColorScheme.fromSeed(
+                seedColor: themeState.seedColor!,
+                brightness: Brightness.dark,
+              ),
+            )
+          : ThemeData(
+              useMaterial3: true,
+              colorScheme: ColorScheme.fromSeed(
+                seedColor: const Color(0xFF6B4CE8),
+                brightness: Brightness.dark,
+              ),
+            );
+
+      return baseTheme.copyWith(textTheme: _getTextTheme(fontFamily));
 
     case ThemeType.pureBlack:
-      // PURE BLACK THEME
-      return _buildPureBlackTheme();
+      return _buildPureBlackTheme(fontFamily);
   }
 });
 
@@ -268,10 +319,10 @@ final thumbnailRadiusProvider = Provider<double>((ref) {
 
   switch (roundness) {
     case ThumbnailRoundness.light:
-      return 0.02; // 2%
+      return 0.02;
     case ThumbnailRoundness.medium:
-      return 0.05; // 5%
+      return 0.05;
     case ThumbnailRoundness.heavy:
-      return 0.10; // 10%
+      return 0.10;
   }
 });

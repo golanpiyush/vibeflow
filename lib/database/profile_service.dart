@@ -110,77 +110,44 @@ class ProfileService {
   }
 
   /// Upload profile picture - SIMPLIFIED VERSION
+  // In profile_service.dart
   Future<String?> uploadProfilePicture(String userId, String imagePath) async {
     try {
-      print('📤 Starting upload...');
-      print('📂 File path: $imagePath');
-
       final file = File(imagePath);
+      final bytes = await file.readAsBytes();
+      final fileExt = imagePath.split('.').last;
 
-      // Check if file exists
-      if (!await file.exists()) {
-        print('❌ File does not exist at path: $imagePath');
-        throw Exception('Image file not found');
-      }
+      // ✅ CORRECT: Use userId as the filename directly
+      final fileName = '$userId.$fileExt';
+      final filePath = fileName; // Just the filename, bucket handles the rest
 
-      // Read file bytes
-      final fileBytes = await file.readAsBytes();
-      print('📊 File size: ${fileBytes.length} bytes');
+      print('📤 Uploading profile picture...');
+      print('   User ID: $userId');
+      print('   File path in bucket: $filePath');
 
-      // Determine file extension
-      final fileExtension = imagePath.split('.').last.toLowerCase();
-      final normalizedExt = fileExtension == 'jpg' ? 'jpeg' : fileExtension;
-      final fileName = 'profile_$userId.$normalizedExt';
-
-      print('📝 Uploading as: $fileName');
-      print('🎯 Bucket: profile-pictures');
-
-      // Upload directly without bucket check
+      // Upload to Supabase Storage
       await _supabase.storage
           .from('profile-pictures')
           .uploadBinary(
-            fileName,
-            fileBytes,
+            filePath,
+            bytes,
             fileOptions: FileOptions(
-              upsert: true,
-              contentType: 'image/$normalizedExt',
+              contentType: 'image/${fileExt}',
+              upsert: true, // Replace if exists
             ),
           );
-
-      print('✅ Upload successful!');
 
       // Get public URL
       final publicUrl = _supabase.storage
           .from('profile-pictures')
-          .getPublicUrl(fileName);
+          .getPublicUrl(filePath);
 
-      print('🔗 Public URL: $publicUrl');
+      print('✅ Profile picture uploaded successfully');
+      print('   Public URL: $publicUrl');
 
       return publicUrl;
-    } on StorageException catch (e) {
-      print('❌ Storage Error: ${e.message}');
-      print('❌ Status Code: ${e.statusCode}');
-
-      if (e.statusCode == 404) {
-        print('');
-        print('🔧 BUCKET NOT FOUND - Please create it:');
-        print('1. Go to Supabase Dashboard');
-        print('2. Storage → New Bucket');
-        print('3. Name: profile-pictures');
-        print('4. Make it PUBLIC');
-        print('5. Add storage policies');
-        print('');
-      } else if (e.statusCode == 403) {
-        print('');
-        print('🔧 PERMISSION DENIED - Check your policies:');
-        print('You need INSERT policy for authenticated users');
-        print('');
-      }
-
-      return null;
     } catch (e) {
-      print('❌ Unexpected error: $e');
-      print('❌ Error type: ${e.runtimeType}');
+      print('❌ Error uploading profile picture: $e');
       return null;
     }
   }

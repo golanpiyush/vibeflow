@@ -77,43 +77,65 @@ class YTMusicArtistsScraper {
   }
 
   /// Get trending artists with caching
-  Future<List<Artist>> getTrendingArtists({int limit = 50}) async {
+  /// Get trending artists with proper pagination support
+  Future<List<Artist>> getTrendingArtists({
+    int limit = 50,
+    int offset = 0,
+  }) async {
     try {
-      // Check memory cache first
-      if (_trendingArtistsCache != null && _trendingArtistsCache!.isNotEmpty) {
-        print('📦 Using cached trending artists');
-        return _trendingArtistsCache!.take(limit).toList();
-      }
-
-      // Check disk cache
-      final cachedData = await _cacheManager.get<List<Artist>>(
-        'trending_artists',
+      print(
+        '🔍 [YTMusicArtistsScraper] Fetching trending artists (limit: $limit, offset: $offset)...',
       );
-      if (cachedData != null && cachedData.isNotEmpty) {
-        print('💾 Using disk cached trending artists');
-        _trendingArtistsCache = cachedData;
-        return cachedData.take(limit).toList();
+
+      // For offset 0, check cache
+      if (offset == 0) {
+        if (_trendingArtistsCache != null &&
+            _trendingArtistsCache!.isNotEmpty) {
+          print('📦 Using cached trending artists');
+          return _trendingArtistsCache!.take(limit).toList();
+        }
+
+        final cachedData = await _cacheManager.get<List<Artist>>(
+          'trending_artists',
+        );
+        if (cachedData != null && cachedData.isNotEmpty) {
+          print('💾 Using disk cached trending artists');
+          _trendingArtistsCache = cachedData;
+          return cachedData.take(limit).toList();
+        }
       }
 
-      print('🔍 [YTMusicArtistsScraper] Fetching trending artists...');
-
-      // Fetch artists from multiple popular genres
-      final allArtists = <Artist>[];
-      final seenIds = <String>{};
-
+      // Calculate which genres to fetch based on offset
       final popularGenres = [
         MusicGenre.pop,
         MusicGenre.rap,
         MusicGenre.rock,
         MusicGenre.edm,
         MusicGenre.rnb,
+        MusicGenre.indie,
+        MusicGenre.country,
+        MusicGenre.jazz,
+        MusicGenre.metal,
+        MusicGenre.classical,
       ];
 
-      for (final genre in popularGenres) {
-        final genreArtists = await getArtistsByGenre(
-          genre,
-          limit: (limit ~/ popularGenres.length) + 5,
-        );
+      // Use different genre combinations for each batch
+      final batchIndex = offset ~/ limit;
+      final seed = batchIndex;
+      final genreRandom = Random(seed);
+
+      // Shuffle genres differently for each batch
+      final shuffledGenres = List<MusicGenre>.from(popularGenres)
+        ..shuffle(genreRandom);
+
+      final allArtists = <Artist>[];
+      final seenIds = <String>{};
+
+      // Fetch from 3-4 genres per batch to get variety
+      final genresToFetch = shuffledGenres.take(4).toList();
+
+      for (final genre in genresToFetch) {
+        final genreArtists = await getArtistsByGenre(genre, limit: 50);
 
         for (final artist in genreArtists) {
           if (!seenIds.contains(artist.id)) {
@@ -122,56 +144,69 @@ class YTMusicArtistsScraper {
           }
         }
 
-        if (allArtists.length >= limit) break;
+        // Stop if we have enough artists
+        if (allArtists.length >= limit * 2) break;
       }
 
+      if (allArtists.isEmpty) {
+        print('⚠️ No artists found');
+        return offset == 0 ? _getFallbackArtists() : [];
+      }
+
+      // Shuffle to mix artists from different genres
       allArtists.shuffle(_random);
-      final trendingArtists = allArtists.take(limit).toList();
 
-      if (trendingArtists.isEmpty) {
-        print('⚠️ No artists found, using fallback');
-        return _getFallbackArtists();
+      // For pagination: take artists based on local offset within this batch
+      final localOffset = offset % limit;
+      final startIndex = localOffset.clamp(0, allArtists.length);
+      final endIndex = (startIndex + limit).clamp(0, allArtists.length);
+
+      final trendingArtists = allArtists.sublist(startIndex, endIndex);
+
+      // Cache only the first batch
+      if (offset == 0 && trendingArtists.isNotEmpty) {
+        _trendingArtistsCache = trendingArtists;
+        await _cacheManager.set('trending_artists', trendingArtists);
       }
-
-      // Cache the results
-      _trendingArtistsCache = trendingArtists;
-      await _cacheManager.set('trending_artists', trendingArtists);
 
       print(
-        '✅ [YTMusicArtistsScraper] Found ${trendingArtists.length} artists',
+        '✅ [YTMusicArtistsScraper] Returning ${trendingArtists.length} artists (from ${allArtists.length} fetched)',
       );
       return trendingArtists;
     } catch (e) {
       print('❌ [YTMusicArtistsScraper] Error: $e');
-      return _getFallbackArtists();
+      return offset == 0 ? _getFallbackArtists() : [];
     }
   }
 
-  /// Get artists by specific genre with HQ images and subscriber counts
-  /// Get artists by genre with caching
+  /// Get artists by genre with caching - UPDATED to bypass cache for pagination
   Future<List<Artist>> getArtistsByGenre(
     MusicGenre genre, {
     int limit = 50,
+    bool useCache = true,
   }) async {
     final genreKey = genre.toString();
 
     try {
-      // Check memory cache first
-      if (_genreArtistsCache.containsKey(genreKey)) {
-        final cached = _genreArtistsCache[genreKey]!;
-        if (cached.isNotEmpty) {
-          print('📦 Using cached $genreKey artists');
-          return cached.take(limit).toList();
+      // Only use cache if explicitly requested
+      if (useCache) {
+        // Check memory cache first
+        if (_genreArtistsCache.containsKey(genreKey)) {
+          final cached = _genreArtistsCache[genreKey]!;
+          if (cached.isNotEmpty) {
+            print('📦 Using cached $genreKey artists');
+            return cached.take(limit).toList();
+          }
         }
-      }
 
-      // Check disk cache
-      final cacheKey = 'artists_genre_$genreKey';
-      final cachedData = await _cacheManager.get<List<Artist>>(cacheKey);
-      if (cachedData != null && cachedData.isNotEmpty) {
-        print('💾 Using disk cached $genreKey artists');
-        _genreArtistsCache[genreKey] = cachedData;
-        return cachedData.take(limit).toList();
+        // Check disk cache
+        final cacheKey = 'artists_genre_$genreKey';
+        final cachedData = await _cacheManager.get<List<Artist>>(cacheKey);
+        if (cachedData != null && cachedData.isNotEmpty) {
+          print('💾 Using disk cached $genreKey artists');
+          _genreArtistsCache[genreKey] = cachedData;
+          return cachedData.take(limit).toList();
+        }
       }
 
       final genreName = _getGenreName(genre);
@@ -198,9 +233,11 @@ class YTMusicArtistsScraper {
         return _getGenreFallbackArtists(genre);
       }
 
-      // Cache the results
-      _genreArtistsCache[genreKey] = artists;
-      await _cacheManager.set(cacheKey, artists);
+      // Cache the results only if using cache
+      if (useCache) {
+        _genreArtistsCache[genreKey] = artists;
+        await _cacheManager.set('artists_genre_$genreKey', artists);
+      }
 
       print(
         '✅ [YTMusicArtistsScraper] Found ${artists.length} $genreName artists',

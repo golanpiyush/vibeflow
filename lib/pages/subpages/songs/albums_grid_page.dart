@@ -152,12 +152,12 @@ class _AlbumsGridPageState extends ConsumerState<AlbumsGridPage> {
     final sidebarLabelColor = ref.watch(themeTextPrimaryColorProvider);
     final sidebarLabelActiveColor = ref.watch(themeIconActiveColorProvider);
 
-    final sidebarLabelStyle = AppTypography.sidebarLabel.copyWith(
-      color: sidebarLabelColor,
-    );
-    final sidebarLabelActiveStyle = AppTypography.sidebarLabelActive.copyWith(
-      color: sidebarLabelActiveColor,
-    );
+    final sidebarLabelStyle = AppTypography.sidebarLabel(
+      context,
+    ).copyWith(color: sidebarLabelColor);
+    final sidebarLabelActiveStyle = AppTypography.sidebarLabelActive(
+      context,
+    ).copyWith(color: sidebarLabelActiveColor);
 
     return SizedBox(
       width: 65,
@@ -290,12 +290,12 @@ class _AlbumsGridPageState extends ConsumerState<AlbumsGridPage> {
     final textSecondaryColor = ref.watch(themeTextSecondaryColorProvider);
     final iconActiveColor = ref.watch(themeIconActiveColorProvider);
 
-    final pageTitleStyle = AppTypography.pageTitle.copyWith(
-      color: textPrimaryColor,
-    );
-    final hintStyle = AppTypography.pageTitle.copyWith(
-      color: textSecondaryColor.withOpacity(0.5),
-    );
+    final pageTitleStyle = AppTypography.pageTitle(
+      context,
+    ).copyWith(color: textPrimaryColor);
+    final hintStyle = AppTypography.pageTitle(
+      context,
+    ).copyWith(color: textSecondaryColor.withOpacity(0.5));
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
@@ -404,17 +404,17 @@ class _AlbumsGridPageState extends ConsumerState<AlbumsGridPage> {
               const SizedBox(height: 16),
               Text(
                 isSearchMode ? 'No albums found' : 'No albums available',
-                style: AppTypography.subtitle.copyWith(
-                  color: textSecondaryColor,
-                ),
+                style: AppTypography.subtitle(
+                  context,
+                ).copyWith(color: textSecondaryColor),
               ),
               if (isSearchMode) ...[
                 const SizedBox(height: 8),
                 Text(
                   'Try a different search term',
-                  style: AppTypography.caption.copyWith(
-                    color: textSecondaryColor.withOpacity(0.7),
-                  ),
+                  style: AppTypography.caption(
+                    context,
+                  ).copyWith(color: textSecondaryColor.withOpacity(0.7)),
                 ),
               ],
             ],
@@ -546,7 +546,7 @@ class _AlbumsGridPageState extends ConsumerState<AlbumsGridPage> {
                 children: [
                   Text(
                     album.title,
-                    style: AppTypography.subtitle.copyWith(
+                    style: AppTypography.subtitle(context).copyWith(
                       color: textPrimaryColor,
                       fontWeight: FontWeight.w600,
                     ),
@@ -556,9 +556,9 @@ class _AlbumsGridPageState extends ConsumerState<AlbumsGridPage> {
                   const SizedBox(height: 4),
                   Text(
                     album.artist,
-                    style: AppTypography.caption.copyWith(
-                      color: textSecondaryColor,
-                    ),
+                    style: AppTypography.caption(
+                      context,
+                    ).copyWith(color: textSecondaryColor),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                   ),
@@ -566,9 +566,9 @@ class _AlbumsGridPageState extends ConsumerState<AlbumsGridPage> {
                     const SizedBox(height: 2),
                     Text(
                       album.year.toString(),
-                      style: AppTypography.captionSmall.copyWith(
-                        color: textSecondaryColor.withOpacity(0.7),
-                      ),
+                      style: AppTypography.captionSmall(
+                        context,
+                      ).copyWith(color: textSecondaryColor.withOpacity(0.7)),
                     ),
                   ],
                 ],

@@ -126,7 +126,9 @@ class _LoginPageState extends ConsumerState<LoginPage> {
                   const SizedBox(height: AppSpacing.sm),
                   Text(
                     'Welcome back',
-                    style: AppTypography.subtitle.copyWith(fontSize: 16),
+                    style: AppTypography.subtitle(
+                      context,
+                    ).copyWith(fontSize: 16),
                     textAlign: TextAlign.center,
                   ),
                   const SizedBox(height: AppSpacing.xxxl),
@@ -156,10 +158,9 @@ class _LoginPageState extends ConsumerState<LoginPage> {
                           Expanded(
                             child: Text(
                               _errorMessage!,
-                              style: AppTypography.caption.copyWith(
-                                color: AppColors.error,
-                                fontSize: 13,
-                              ),
+                              style: AppTypography.caption(
+                                context,
+                              ).copyWith(color: AppColors.error, fontSize: 13),
                             ),
                           ),
                         ],
@@ -170,15 +171,14 @@ class _LoginPageState extends ConsumerState<LoginPage> {
                   TextFormField(
                     controller: _emailUsernameController,
                     keyboardType: TextInputType.emailAddress,
-                    style: AppTypography.subtitle.copyWith(
-                      color: AppColors.textPrimary,
-                    ),
+                    style: AppTypography.subtitle(
+                      context,
+                    ).copyWith(color: AppColors.textPrimary),
                     decoration: InputDecoration(
                       labelText: 'Email or Username',
-                      labelStyle: AppTypography.caption.copyWith(
-                        color: AppColors.textSecondary,
-                        fontSize: 14,
-                      ),
+                      labelStyle: AppTypography.caption(
+                        context,
+                      ).copyWith(color: AppColors.textSecondary, fontSize: 14),
                       prefixIcon: const Icon(
                         Icons.person_outline,
                         color: AppColors.iconActive,
@@ -232,15 +232,14 @@ class _LoginPageState extends ConsumerState<LoginPage> {
                   TextFormField(
                     controller: _passwordController,
                     obscureText: _obscurePassword,
-                    style: AppTypography.subtitle.copyWith(
-                      color: AppColors.textPrimary,
-                    ),
+                    style: AppTypography.subtitle(
+                      context,
+                    ).copyWith(color: AppColors.textPrimary),
                     decoration: InputDecoration(
                       labelText: 'Password',
-                      labelStyle: AppTypography.caption.copyWith(
-                        color: AppColors.textSecondary,
-                        fontSize: 14,
-                      ),
+                      labelStyle: AppTypography.caption(
+                        context,
+                      ).copyWith(color: AppColors.textSecondary, fontSize: 14),
                       prefixIcon: const Icon(
                         Icons.lock_outline,
                         color: AppColors.iconActive,
@@ -315,7 +314,7 @@ class _LoginPageState extends ConsumerState<LoginPage> {
                       },
                       child: Text(
                         'Forgot Password?',
-                        style: AppTypography.caption.copyWith(
+                        style: AppTypography.caption(context).copyWith(
                           color: AppColors.accent,
                           fontSize: 13,
                           fontWeight: FontWeight.w600,
@@ -354,7 +353,7 @@ class _LoginPageState extends ConsumerState<LoginPage> {
                           )
                         : Text(
                             'Login',
-                            style: AppTypography.subtitle.copyWith(
+                            style: AppTypography.subtitle(context).copyWith(
                               fontWeight: FontWeight.w600,
                               color: AppColors.background,
                             ),
@@ -368,7 +367,9 @@ class _LoginPageState extends ConsumerState<LoginPage> {
                     children: [
                       Text(
                         'Don\'t have an account? ',
-                        style: AppTypography.caption.copyWith(fontSize: 14),
+                        style: AppTypography.caption(
+                          context,
+                        ).copyWith(fontSize: 14),
                       ),
                       TextButton(
                         onPressed: () {
@@ -381,7 +382,7 @@ class _LoginPageState extends ConsumerState<LoginPage> {
                         ),
                         child: Text(
                           'Sign Up',
-                          style: AppTypography.caption.copyWith(
+                          style: AppTypography.caption(context).copyWith(
                             color: AppColors.accent,
                             fontSize: 14,
                             fontWeight: FontWeight.w600,

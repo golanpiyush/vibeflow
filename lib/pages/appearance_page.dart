@@ -72,9 +72,9 @@ class _AppearancePageState extends ConsumerState<AppearancePage> {
   Widget _buildTopBar(WidgetRef ref) {
     final textPrimaryColor = ref.watch(themeTextPrimaryColorProvider);
 
-    final pageTitleStyle = AppTypography.pageTitle.copyWith(
-      color: textPrimaryColor,
-    );
+    final pageTitleStyle = AppTypography.pageTitle(
+      context,
+    ).copyWith(color: textPrimaryColor);
 
     return Container(
       padding: const EdgeInsets.only(
@@ -203,10 +203,9 @@ class _AppearancePageState extends ConsumerState<AppearancePage> {
               child: Text(
                 label,
                 textAlign: TextAlign.center,
-                style: AppTypography.sidebarLabel.copyWith(
-                  color: labelColor,
-                  fontSize: 16,
-                ),
+                style: AppTypography.sidebarLabel(
+                  context,
+                ).copyWith(color: labelColor, fontSize: 16),
               ),
             ),
           ],
@@ -264,7 +263,7 @@ class _AppearancePageState extends ConsumerState<AppearancePage> {
       children: [
         Text(
           'COLORS',
-          style: AppTypography.caption.copyWith(
+          style: AppTypography.caption(context).copyWith(
             color: iconActiveColor,
             fontWeight: FontWeight.w600,
             letterSpacing: 1.2,
@@ -394,9 +393,9 @@ class _AppearancePageState extends ConsumerState<AppearancePage> {
             ),
             Text(
               'Select Color',
-              style: AppTypography.sectionHeader.copyWith(
-                color: textPrimaryColor,
-              ),
+              style: AppTypography.sectionHeader(
+                context,
+              ).copyWith(color: textPrimaryColor),
             ),
             const SizedBox(height: 20),
             Wrap(
@@ -453,9 +452,9 @@ class _AppearancePageState extends ConsumerState<AppearancePage> {
             ),
             Text(
               'Select Theme Mode',
-              style: AppTypography.sectionHeader.copyWith(
-                color: textPrimaryColor,
-              ),
+              style: AppTypography.sectionHeader(
+                context,
+              ).copyWith(color: textPrimaryColor),
             ),
             const SizedBox(height: 20),
             ...AppThemeMode.values.map((mode) {
@@ -469,7 +468,7 @@ class _AppearancePageState extends ConsumerState<AppearancePage> {
                 ),
                 title: Text(
                   _getThemeModeLabel(mode),
-                  style: AppTypography.subtitle.copyWith(
+                  style: AppTypography.subtitle(context).copyWith(
                     color: isSelected ? iconActiveColor : textPrimaryColor,
                     fontWeight: isSelected
                         ? FontWeight.w600
@@ -523,9 +522,9 @@ class _AppearancePageState extends ConsumerState<AppearancePage> {
             ),
             Text(
               'Select Theme',
-              style: AppTypography.sectionHeader.copyWith(
-                color: textPrimaryColor,
-              ),
+              style: AppTypography.sectionHeader(
+                context,
+              ).copyWith(color: textPrimaryColor),
             ),
             const SizedBox(height: 20),
             ...ThemeType.values.map((type) {
@@ -540,7 +539,7 @@ class _AppearancePageState extends ConsumerState<AppearancePage> {
                 ),
                 title: Text(
                   _getThemeTypeLabel(type),
-                  style: AppTypography.subtitle.copyWith(
+                  style: AppTypography.subtitle(context).copyWith(
                     color: isSelected ? iconActiveColor : textPrimaryColor,
                     fontWeight: isSelected
                         ? FontWeight.w600
@@ -549,10 +548,9 @@ class _AppearancePageState extends ConsumerState<AppearancePage> {
                 ),
                 subtitle: Text(
                   description,
-                  style: AppTypography.caption.copyWith(
-                    color: textSecondaryColor,
-                    fontSize: 11,
-                  ),
+                  style: AppTypography.caption(
+                    context,
+                  ).copyWith(color: textSecondaryColor, fontSize: 11),
                 ),
                 trailing: isSelected
                     ? Icon(Icons.check, color: iconActiveColor)
@@ -605,7 +603,7 @@ class _AppearancePageState extends ConsumerState<AppearancePage> {
             ),
             Text(
               'Select Thumbnail Roundness',
-              style: AppTypography.sectionHeader,
+              style: AppTypography.sectionHeader(context),
             ),
             const SizedBox(height: 20),
             ...ThumbnailRoundness.values.map((roundness) {
@@ -624,7 +622,7 @@ class _AppearancePageState extends ConsumerState<AppearancePage> {
                 ),
                 title: Text(
                   _getRoundnessLabel(roundness),
-                  style: AppTypography.subtitle.copyWith(
+                  style: AppTypography.subtitle(context).copyWith(
                     color: isSelected
                         ? AppColors.iconActive
                         : AppColors.textPrimary,
@@ -682,9 +680,9 @@ class _AppearancePageState extends ConsumerState<AppearancePage> {
             ),
             Text(
               'Select Lyrics Provider',
-              style: AppTypography.sectionHeader.copyWith(
-                color: textPrimaryColor,
-              ),
+              style: AppTypography.sectionHeader(
+                context,
+              ).copyWith(color: textPrimaryColor),
             ),
             const SizedBox(height: 20),
             ...lyrics_provider.LyricsSource.values.map((source) {
@@ -692,7 +690,7 @@ class _AppearancePageState extends ConsumerState<AppearancePage> {
               return ListTile(
                 title: Text(
                   _getLyricsProviderLabel(source),
-                  style: AppTypography.subtitle.copyWith(
+                  style: AppTypography.subtitle(context).copyWith(
                     color: isSelected ? iconActiveColor : textPrimaryColor,
                     fontWeight: isSelected
                         ? FontWeight.w600
@@ -703,10 +701,9 @@ class _AppearancePageState extends ConsumerState<AppearancePage> {
                   source == lyrics_provider.LyricsSource.kugou
                       ? 'Synchronized word by word timing'
                       : 'Simple line by line format',
-                  style: AppTypography.caption.copyWith(
-                    color: textSecondaryColor,
-                    fontSize: 12,
-                  ),
+                  style: AppTypography.caption(
+                    context,
+                  ).copyWith(color: textSecondaryColor, fontSize: 12),
                 ),
                 trailing: isSelected
                     ? Icon(Icons.check, color: iconActiveColor)
@@ -772,7 +769,7 @@ class _AppearancePageState extends ConsumerState<AppearancePage> {
           const SizedBox(height: 8),
           Text(
             label,
-            style: AppTypography.caption.copyWith(
+            style: AppTypography.caption(context).copyWith(
               color: isSelected ? iconActiveColor : textPrimaryColor,
               fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
             ),
@@ -798,7 +795,7 @@ class _AppearancePageState extends ConsumerState<AppearancePage> {
       children: [
         Text(
           'SHAPES',
-          style: AppTypography.caption.copyWith(
+          style: AppTypography.caption(context).copyWith(
             color: iconActiveColor,
             fontWeight: FontWeight.w600,
             letterSpacing: 1.2,
@@ -815,7 +812,7 @@ class _AppearancePageState extends ConsumerState<AppearancePage> {
                   children: [
                     Text(
                       'Thumbnail roundness',
-                      style: AppTypography.subtitle.copyWith(
+                      style: AppTypography.subtitle(context).copyWith(
                         fontWeight: FontWeight.w500,
                         color: textPrimaryColor,
                       ),
@@ -823,9 +820,9 @@ class _AppearancePageState extends ConsumerState<AppearancePage> {
                     const SizedBox(height: 4),
                     Text(
                       _getRoundnessLabel(themeState.thumbnailRoundness),
-                      style: AppTypography.caption.copyWith(
-                        color: textSecondaryColor,
-                      ),
+                      style: AppTypography.caption(
+                        context,
+                      ).copyWith(color: textSecondaryColor),
                     ),
                   ],
                 ),
@@ -847,46 +844,44 @@ class _AppearancePageState extends ConsumerState<AppearancePage> {
   }
 
   Widget _buildTextSection(WidgetRef ref) {
+    final themeState = ref.watch(themeProvider);
     final iconActiveColor = ref.watch(themeIconActiveColorProvider);
     final textSecondaryColor = ref.watch(themeTextSecondaryColorProvider);
     final textPrimaryColor = ref.watch(themeTextPrimaryColorProvider);
-    final cardBackgroundColor = ref.watch(themeCardBackgroundColorProvider);
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
           'TEXT',
-          style: AppTypography.caption.copyWith(
+          style: AppTypography.caption(context).copyWith(
             color: iconActiveColor,
             fontWeight: FontWeight.w600,
             letterSpacing: 1.2,
           ),
         ),
         const SizedBox(height: AppSpacing.lg),
-        _buildSwitchItem(
-          title: 'Use system font',
-          subtitle: 'Use the font applied by the system',
-          value: useSystemFont,
-          textPrimaryColor: textPrimaryColor,
+
+        // ✅ Font Family Setting
+        _buildSettingItem(
+          title: 'Font family',
+          subtitle: _getFontFamilyLabel(themeState.fontFamily),
           textSecondaryColor: textSecondaryColor,
-          onChanged: (value) {
-            setState(() {
-              useSystemFont = value;
-            });
+          onTap: () {
+            _showFontFamilyPicker();
           },
         ),
         const SizedBox(height: AppSpacing.lg),
+
+        // Apply Font Padding Switch
         _buildSwitchItem(
           title: 'Apply font padding',
           subtitle: 'Add spacing around texts',
-          value: applyFontPadding,
+          value: themeState.applyFontPadding,
           textPrimaryColor: textPrimaryColor,
           textSecondaryColor: textSecondaryColor,
           onChanged: (value) {
-            setState(() {
-              applyFontPadding = value;
-            });
+            ref.read(themeProvider.notifier).setApplyFontPadding(value);
           },
         ),
       ],
@@ -904,7 +899,7 @@ class _AppearancePageState extends ConsumerState<AppearancePage> {
       children: [
         Text(
           'LYRICS',
-          style: AppTypography.caption.copyWith(
+          style: AppTypography.caption(context).copyWith(
             color: iconActiveColor,
             fontWeight: FontWeight.w600,
             letterSpacing: 1.2,
@@ -924,10 +919,9 @@ class _AppearancePageState extends ConsumerState<AppearancePage> {
           settings.lyricsProvider == lyrics_provider.LyricsSource.kugou
               ? 'Word by word synchronized lyrics'
               : 'Line by line lyrics',
-          style: AppTypography.caption.copyWith(
-            color: textSecondaryColor.withOpacity(0.7),
-            fontSize: 12,
-          ),
+          style: AppTypography.caption(
+            context,
+          ).copyWith(color: textSecondaryColor.withOpacity(0.7), fontSize: 12),
         ),
       ],
     );
@@ -950,15 +944,16 @@ class _AppearancePageState extends ConsumerState<AppearancePage> {
           children: [
             Text(
               title,
-              style: AppTypography.subtitle.copyWith(
-                fontWeight: FontWeight.w500,
-                color: textPrimaryColor,
-              ),
+              style: AppTypography.subtitle(
+                context,
+              ).copyWith(fontWeight: FontWeight.w500, color: textPrimaryColor),
             ),
             const SizedBox(height: 4),
             Text(
               subtitle,
-              style: AppTypography.caption.copyWith(color: textSecondaryColor),
+              style: AppTypography.caption(
+                context,
+              ).copyWith(color: textSecondaryColor),
             ),
           ],
         ),
@@ -985,7 +980,7 @@ class _AppearancePageState extends ConsumerState<AppearancePage> {
             children: [
               Text(
                 title,
-                style: AppTypography.subtitle.copyWith(
+                style: AppTypography.subtitle(context).copyWith(
                   fontWeight: FontWeight.w500,
                   color: textPrimaryColor,
                 ),
@@ -993,9 +988,9 @@ class _AppearancePageState extends ConsumerState<AppearancePage> {
               const SizedBox(height: 4),
               Text(
                 subtitle,
-                style: AppTypography.caption.copyWith(
-                  color: textSecondaryColor,
-                ),
+                style: AppTypography.caption(
+                  context,
+                ).copyWith(color: textSecondaryColor),
               ),
             ],
           ),
@@ -1008,6 +1003,196 @@ class _AppearancePageState extends ConsumerState<AppearancePage> {
           inactiveTrackColor: cardBackgroundColor,
         ),
       ],
+    );
+  }
+
+  String _getFontFamilyLabel(AppFontFamily font) {
+    switch (font) {
+      case AppFontFamily.system:
+        return 'System Default';
+      case AppFontFamily.inter:
+        return 'Inter';
+      case AppFontFamily.poppins:
+        return 'Poppins';
+      case AppFontFamily.roboto:
+        return 'Roboto';
+      case AppFontFamily.montserrat:
+        return 'Montserrat';
+      case AppFontFamily.notoSans:
+        return 'Noto Sans';
+    }
+  }
+
+  String _getFontFamilyDescription(AppFontFamily font) {
+    switch (font) {
+      case AppFontFamily.system:
+        return 'Use device default font';
+      case AppFontFamily.inter:
+        return 'Modern & clean design';
+      case AppFontFamily.poppins:
+        return 'Geometric sans-serif';
+      case AppFontFamily.roboto:
+        return 'Google\'s signature font';
+      case AppFontFamily.montserrat:
+        return 'Elegant & versatile';
+      case AppFontFamily.notoSans:
+        return 'Highly readable';
+    }
+  }
+
+  // Replace your _showFontFamilyPicker method in appearance_page.dart with this:
+
+  void _showFontFamilyPicker() {
+    final themeNotifier = ref.read(themeProvider.notifier);
+    final currentFont = ref.read(themeProvider).fontFamily;
+    final cardBackgroundColor = ref.watch(themeCardBackgroundColorProvider);
+    final textPrimaryColor = ref.watch(themeTextPrimaryColorProvider);
+    final textSecondaryColor = ref.watch(themeTextSecondaryColorProvider);
+    final iconActiveColor = ref.watch(themeIconActiveColorProvider);
+
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: cardBackgroundColor,
+      isScrollControlled: true, // ✅ IMPORTANT: Allows custom height
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (context) => DraggableScrollableSheet(
+        initialChildSize: 0.7, // Start at 70% of screen height
+        minChildSize: 0.5, // Minimum 50% of screen height
+        maxChildSize: 0.9, // Maximum 90% of screen height
+        expand: false,
+        builder: (context, scrollController) => Container(
+          padding: const EdgeInsets.all(20),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // Drag handle
+              Container(
+                width: 40,
+                height: 4,
+                margin: const EdgeInsets.only(bottom: 20),
+                decoration: BoxDecoration(
+                  color: textSecondaryColor.withOpacity(0.3),
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+
+              // Title
+              Text(
+                'Select Font Family',
+                style: AppTypography.sectionHeader(
+                  context,
+                ).copyWith(color: textPrimaryColor),
+              ),
+              const SizedBox(height: 20),
+
+              // ✅ Scrollable content
+              Expanded(
+                child: SingleChildScrollView(
+                  controller: scrollController,
+                  child: Column(
+                    children: [
+                      // System Font Option with special styling
+                      Container(
+                        margin: const EdgeInsets.only(bottom: 8),
+                        decoration: BoxDecoration(
+                          border: Border.all(
+                            color: currentFont == AppFontFamily.system
+                                ? iconActiveColor
+                                : textSecondaryColor.withOpacity(0.3),
+                            width: currentFont == AppFontFamily.system ? 2 : 1,
+                          ),
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: ListTile(
+                          leading: Icon(
+                            Icons.smartphone,
+                            color: currentFont == AppFontFamily.system
+                                ? iconActiveColor
+                                : textPrimaryColor,
+                          ),
+                          title: Text(
+                            'System Default',
+                            style: AppTypography.subtitle(context).copyWith(
+                              color: currentFont == AppFontFamily.system
+                                  ? iconActiveColor
+                                  : textPrimaryColor,
+                              fontWeight: currentFont == AppFontFamily.system
+                                  ? FontWeight.w600
+                                  : FontWeight.normal,
+                            ),
+                          ),
+                          subtitle: Text(
+                            'Use device default font',
+                            style: AppTypography.caption(
+                              context,
+                            ).copyWith(color: textSecondaryColor, fontSize: 12),
+                          ),
+                          trailing: currentFont == AppFontFamily.system
+                              ? Icon(Icons.check, color: iconActiveColor)
+                              : null,
+                          onTap: () {
+                            themeNotifier.setFontFamily(AppFontFamily.system);
+                            Navigator.pop(context);
+                          },
+                        ),
+                      ),
+
+                      const SizedBox(height: 12),
+
+                      // Other font options
+                      ...AppFontFamily.values
+                          .where((font) => font != AppFontFamily.system)
+                          .map((font) {
+                            final isSelected = currentFont == font;
+                            return Padding(
+                              padding: const EdgeInsets.only(bottom: 4),
+                              child: ListTile(
+                                title: Text(
+                                  _getFontFamilyLabel(font),
+                                  style: AppTypography.subtitle(context)
+                                      .copyWith(
+                                        color: isSelected
+                                            ? iconActiveColor
+                                            : textPrimaryColor,
+                                        fontWeight: isSelected
+                                            ? FontWeight.w600
+                                            : FontWeight.normal,
+                                      ),
+                                ),
+                                subtitle: Text(
+                                  _getFontFamilyDescription(font),
+                                  style: AppTypography.caption(context)
+                                      .copyWith(
+                                        color: textSecondaryColor,
+                                        fontSize: 12,
+                                      ),
+                                ),
+                                trailing: isSelected
+                                    ? Icon(Icons.check, color: iconActiveColor)
+                                    : null,
+                                onTap: () {
+                                  themeNotifier.setFontFamily(font);
+                                  Navigator.pop(context);
+                                },
+                              ),
+                            );
+                          })
+                          .toList(),
+
+                      // Bottom padding for safe area
+                      SizedBox(
+                        height: MediaQuery.of(context).padding.bottom + 20,
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 

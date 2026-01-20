@@ -7,11 +7,14 @@ import 'package:vibeflow/api_base/db_actions.dart';
 import 'package:vibeflow/constants/app_spacing.dart';
 import 'package:vibeflow/constants/app_typography.dart';
 import 'package:vibeflow/constants/theme_colors.dart';
+import 'package:vibeflow/database/access_code_service.dart';
 import 'package:vibeflow/database/listening_activity_service.dart';
+import 'package:vibeflow/database/profile_service.dart';
 import 'package:vibeflow/models/listening_activity_modelandProvider.dart'
     hide supabaseClientProvider;
 import 'package:vibeflow/pages/authOnboard/Screens/edit_profile.dart';
 import 'package:vibeflow/pages/authOnboard/Screens/profiles_discovery_page.dart';
+import 'package:vibeflow/pages/authOnboard/listen_together/listen_together_home_screen.dart';
 import 'package:vibeflow/providers/realtime_activity_provider.dart';
 import 'package:vibeflow/utils/theme_provider.dart';
 import 'dart:async';
@@ -228,12 +231,42 @@ class _SocialScreenState extends ConsumerState<SocialScreen> {
     final sidebarLabelActiveColor = ref.watch(themeIconActiveColorProvider);
 
     // Create theme-aware text styles
-    final sidebarLabelStyle = AppTypography.sidebarLabel.copyWith(
-      color: sidebarLabelColor,
-    );
-    final sidebarLabelActiveStyle = AppTypography.sidebarLabelActive.copyWith(
-      color: sidebarLabelActiveColor,
-    );
+    final sidebarLabelStyle = AppTypography.sidebarLabel(
+      context,
+    ).copyWith(color: sidebarLabelColor);
+    final sidebarLabelActiveStyle = AppTypography.sidebarLabelActive(
+      context,
+    ).copyWith(color: sidebarLabelActiveColor);
+
+    // Function to check if Jammer should be shown
+    Future<bool> _shouldShowJammer() async {
+      try {
+        final currentUser = Supabase.instance.client.auth.currentUser;
+        if (currentUser == null) return false;
+
+        final supabase = Supabase.instance.client;
+        final accessCodeService = AccessCodeService(supabase);
+        final profileService = ProfileService(supabase);
+
+        // Check if user has access code
+        final hasAccessCode = await accessCodeService.checkIfUserHasAccessCode(
+          currentUser.id,
+        );
+        if (!hasAccessCode) return false;
+
+        // Get user profile
+        final profile = await profileService.getUserProfileById(currentUser.id);
+        if (profile == null) return false;
+
+        // Check if user is beta tester
+        final isBetaTester = profile['is_beta_tester'] == true;
+
+        return isBetaTester;
+      } catch (e) {
+        print('Error checking Jammer access: $e');
+        return false;
+      }
+    }
 
     return SizedBox(
       width: 65,
@@ -266,6 +299,63 @@ class _SocialScreenState extends ConsumerState<SocialScreen> {
                   ref.read(socialSidebarIndexProvider.notifier).state = 1,
             ),
             const SizedBox(height: 24),
+
+            // Conditional Jammer item
+            FutureBuilder<bool>(
+              future: _shouldShowJammer(),
+              builder: (context, snapshot) {
+                // Show loading as empty space to maintain layout consistency
+                if (snapshot.connectionState == ConnectionState.waiting) {
+                  return const SizedBox(
+                    height: 56,
+                  ); // Match the height of a sidebar item
+                }
+
+                // If error or shouldn't show, return empty
+                if (snapshot.hasError || !snapshot.hasData || !snapshot.data!) {
+                  return const SizedBox.shrink();
+                }
+
+                // Show Jammer item
+                return Column(
+                  children: [
+                    _buildSidebarItem(
+                      label: 'Jammer',
+                      isActive: selectedIndex == 3,
+                      iconActiveColor: iconActiveColor,
+                      iconInactiveColor: iconInactiveColor,
+                      labelStyle: selectedIndex == 3
+                          ? sidebarLabelActiveStyle
+                          : sidebarLabelStyle,
+                      onTap: () => Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => const ListenTogetherHomeScreen(),
+                        ),
+                      ),
+                    ),
+
+                    // _buildSidebarItem(
+                    //   label: 'Jammer',
+                    //   isActive: selectedIndex == 3,
+                    //   iconActiveColor: iconActiveColor,
+                    //   iconInactiveColor: iconInactiveColor,
+                    //   labelStyle: selectedIndex == 3
+                    //       ? sidebarLabelActiveStyle
+                    //       : sidebarLabelStyle,
+                    //   onTap: () => Navigator.push(
+                    //     context,
+                    //     MaterialPageRoute(
+                    //       builder: (_) => const ListenTogetherHomeScreen(),
+                    //     ),
+                    //   ),
+                    // ),
+                    const SizedBox(height: 24),
+                  ],
+                );
+              },
+            ),
+
             _buildSidebarItem(
               label: 'Edit Profile',
               isActive: selectedIndex == 2,
@@ -318,9 +408,9 @@ class _SocialScreenState extends ConsumerState<SocialScreen> {
     final iconActiveColor = ref.watch(themeIconActiveColorProvider);
     final backgroundColor = ref.watch(themeBackgroundColorProvider);
 
-    final pageTitleStyle = AppTypography.pageTitle.copyWith(
-      color: textPrimaryColor,
-    );
+    final pageTitleStyle = AppTypography.pageTitle(
+      context,
+    ).copyWith(color: textPrimaryColor);
 
     String pageTitle = '';
     switch (selectedIndex) {
@@ -359,9 +449,9 @@ class _SocialScreenState extends ConsumerState<SocialScreen> {
                   SnackBar(
                     content: Text(
                       'Refreshing feed...',
-                      style: AppTypography.caption.copyWith(
-                        color: Colors.white,
-                      ),
+                      style: AppTypography.caption(
+                        context,
+                      ).copyWith(color: Colors.white),
                     ),
                     duration: const Duration(seconds: 1),
                     backgroundColor: iconActiveColor.withOpacity(0.8),
@@ -459,17 +549,18 @@ class _FriendsActivityContent extends ConsumerWidget {
                                   children: [
                                     Text(
                                       'Start listening',
-                                      style: AppTypography.subtitle.copyWith(
-                                        color: textPrimaryColor,
-                                        fontWeight: FontWeight.w600,
-                                      ),
+                                      style: AppTypography.subtitle(context)
+                                          .copyWith(
+                                            color: textPrimaryColor,
+                                            fontWeight: FontWeight.w600,
+                                          ),
                                     ),
                                     const SizedBox(height: 4),
                                     Text(
                                       'Play a song to share with your friends',
-                                      style: AppTypography.caption.copyWith(
-                                        color: textSecondaryColor,
-                                      ),
+                                      style: AppTypography.caption(
+                                        context,
+                                      ).copyWith(color: textSecondaryColor),
                                     ),
                                   ],
                                 ),
@@ -501,7 +592,7 @@ class _FriendsActivityContent extends ConsumerWidget {
                                 currentUserActivity.isCurrentlyPlaying
                                     ? '🎵 You\'re listening now'
                                     : '⏸️ Your last listen',
-                                style: AppTypography.caption.copyWith(
+                                style: AppTypography.caption(context).copyWith(
                                   color: currentUserActivity.isCurrentlyPlaying
                                       ? Colors.green
                                       : textSecondaryColor,
@@ -536,12 +627,13 @@ class _FriendsActivityContent extends ConsumerWidget {
                                       const SizedBox(width: 4),
                                       Text(
                                         'LIVE',
-                                        style: AppTypography.caption.copyWith(
-                                          color: Colors.green,
-                                          fontSize: 9,
-                                          fontWeight: FontWeight.w700,
-                                          letterSpacing: 0.5,
-                                        ),
+                                        style: AppTypography.caption(context)
+                                            .copyWith(
+                                              color: Colors.green,
+                                              fontSize: 9,
+                                              fontWeight: FontWeight.w700,
+                                              letterSpacing: 0.5,
+                                            ),
                                       ),
                                     ],
                                   ),
@@ -607,9 +699,9 @@ class _FriendsActivityContent extends ConsumerWidget {
                           Expanded(
                             child: Text(
                               'Could not load your activity',
-                              style: AppTypography.caption.copyWith(
-                                color: textPrimaryColor,
-                              ),
+                              style: AppTypography.caption(
+                                context,
+                              ).copyWith(color: textPrimaryColor),
                             ),
                           ),
                         ],
@@ -630,7 +722,7 @@ class _FriendsActivityContent extends ConsumerWidget {
                   ),
                   child: Text(
                     'Friends Activity',
-                    style: AppTypography.caption.copyWith(
+                    style: AppTypography.caption(context).copyWith(
                       color: textSecondaryColor,
                       fontSize: 11,
                       fontWeight: FontWeight.w600,
@@ -655,16 +747,16 @@ class _FriendsActivityContent extends ConsumerWidget {
                         const SizedBox(height: 16),
                         Text(
                           'No friend activity yet',
-                          style: AppTypography.subtitle.copyWith(
-                            color: textPrimaryColor,
-                          ),
+                          style: AppTypography.subtitle(
+                            context,
+                          ).copyWith(color: textPrimaryColor),
                         ),
                         const SizedBox(height: 8),
                         Text(
                           'Your friends haven\'t listened to anything recently',
-                          style: AppTypography.caption.copyWith(
-                            color: textSecondaryColor,
-                          ),
+                          style: AppTypography.caption(
+                            context,
+                          ).copyWith(color: textSecondaryColor),
                           textAlign: TextAlign.center,
                         ),
                       ],
@@ -709,16 +801,18 @@ class _FriendsActivityContent extends ConsumerWidget {
               const SizedBox(height: 16),
               Text(
                 'Error loading activities',
-                style: AppTypography.subtitle.copyWith(color: textPrimaryColor),
+                style: AppTypography.subtitle(
+                  context,
+                ).copyWith(color: textPrimaryColor),
               ),
               const SizedBox(height: 8),
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 32),
                 child: Text(
                   error.toString(),
-                  style: AppTypography.caption.copyWith(
-                    color: textSecondaryColor,
-                  ),
+                  style: AppTypography.caption(
+                    context,
+                  ).copyWith(color: textSecondaryColor),
                   textAlign: TextAlign.center,
                 ),
               ),
@@ -982,7 +1076,7 @@ class _ActivityCardState extends State<_ActivityCard> {
                     Expanded(
                       child: Text(
                         widget.activity.username,
-                        style: AppTypography.caption.copyWith(
+                        style: AppTypography.caption(context).copyWith(
                           fontWeight: FontWeight.w600,
                           color: textPrimaryColor,
                           fontSize: 13,
@@ -1005,7 +1099,7 @@ class _ActivityCardState extends State<_ActivityCard> {
                       ),
                       child: Text(
                         widget.activity.isCurrentlyPlaying ? 'LIVE' : 'OFFLINE',
-                        style: AppTypography.caption.copyWith(
+                        style: AppTypography.caption(context).copyWith(
                           color: widget.activity.isCurrentlyPlaying
                               ? Colors.green
                               : textSecondaryColor,
@@ -1022,7 +1116,7 @@ class _ActivityCardState extends State<_ActivityCard> {
                 // Song Title
                 Text(
                   widget.activity.songTitle,
-                  style: AppTypography.songTitle.copyWith(
+                  style: AppTypography.songTitle(context).copyWith(
                     fontWeight: FontWeight.w600,
                     color: textPrimaryColor,
                     fontSize: 15,
@@ -1038,10 +1132,9 @@ class _ActivityCardState extends State<_ActivityCard> {
                     Expanded(
                       child: Text(
                         artists,
-                        style: AppTypography.caption.copyWith(
-                          color: textSecondaryColor,
-                          fontSize: 12,
-                        ),
+                        style: AppTypography.caption(
+                          context,
+                        ).copyWith(color: textSecondaryColor, fontSize: 12),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                       ),
@@ -1049,7 +1142,7 @@ class _ActivityCardState extends State<_ActivityCard> {
                     const SizedBox(width: 8),
                     Text(
                       '• $statusText',
-                      style: AppTypography.caption.copyWith(
+                      style: AppTypography.caption(context).copyWith(
                         color: widget.activity.isCurrentlyPlaying
                             ? Colors.green
                             : textSecondaryColor,
@@ -1088,17 +1181,15 @@ class _ActivityCardState extends State<_ActivityCard> {
                             _formatDuration(
                               widget.activity.realtimeCurrentPositionMs,
                             ),
-                            style: AppTypography.caption.copyWith(
-                              color: textSecondaryColor,
-                              fontSize: 10,
-                            ),
+                            style: AppTypography.caption(
+                              context,
+                            ).copyWith(color: textSecondaryColor, fontSize: 10),
                           ),
                           Text(
                             _formatDuration(widget.activity.durationMs),
-                            style: AppTypography.caption.copyWith(
-                              color: textSecondaryColor,
-                              fontSize: 10,
-                            ),
+                            style: AppTypography.caption(
+                              context,
+                            ).copyWith(color: textSecondaryColor, fontSize: 10),
                           ),
                         ],
                       ),

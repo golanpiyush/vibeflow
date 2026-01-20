@@ -124,9 +124,9 @@ class _AccessCodeManagementScreenState
       appBar: AppBar(
         title: Text(
           'Access Code',
-          style: AppTypography.sectionHeader.copyWith(
-            color: colorScheme.onSurface,
-          ),
+          style: AppTypography.sectionHeader(
+            context,
+          ).copyWith(color: colorScheme.onSurface),
         ),
       ),
       body: Stack(
@@ -171,9 +171,9 @@ class _AccessCodeManagementScreenState
         Text(
           'Clearing your access code disables all social features.',
           textAlign: TextAlign.center,
-          style: AppTypography.caption.copyWith(
-            color: colorScheme.onSurface.withOpacity(0.6),
-          ),
+          style: AppTypography.caption(
+            context,
+          ).copyWith(color: colorScheme.onSurface.withOpacity(0.6)),
         ),
         const SizedBox(height: AppSpacing.xxxl),
         _faqSection(colorScheme),
@@ -202,7 +202,10 @@ class _AccessCodeManagementScreenState
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Text('Access Status', style: AppTypography.sectionHeader),
+                Text(
+                  'Access Status',
+                  style: AppTypography.sectionHeader(context),
+                ),
                 _pill(
                   text: isAuthenticated
                       ? 'AUTHENTICATED'
@@ -297,14 +300,14 @@ class _AccessCodeManagementScreenState
             children: [
               Text(
                 title,
-                style: AppTypography.caption.copyWith(
-                  color: colorScheme.onSurface.withOpacity(0.6),
-                ),
+                style: AppTypography.caption(
+                  context,
+                ).copyWith(color: colorScheme.onSurface.withOpacity(0.6)),
               ),
               const SizedBox(height: 4),
               Text(
                 value,
-                style: AppTypography.subtitle.copyWith(
+                style: AppTypography.subtitle(context).copyWith(
                   color: warning ? Colors.orange : colorScheme.onSurface,
                 ),
               ),
@@ -344,13 +347,13 @@ class _AccessCodeManagementScreenState
           children: [
             Icon(Icons.lock_open, size: 64, color: scheme.primary),
             const SizedBox(height: AppSpacing.lg),
-            Text('No Access Code', style: AppTypography.sectionHeader),
+            Text('No Access Code', style: AppTypography.sectionHeader(context)),
             const SizedBox(height: AppSpacing.sm),
             Text(
               'Enter an access code to unlock social features.',
-              style: AppTypography.subtitle.copyWith(
-                color: scheme.onSurface.withOpacity(0.7),
-              ),
+              style: AppTypography.subtitle(
+                context,
+              ).copyWith(color: scheme.onSurface.withOpacity(0.7)),
               textAlign: TextAlign.center,
             ),
             const SizedBox(height: AppSpacing.xl),
@@ -402,7 +405,9 @@ class _AccessCodeManagementScreenState
               Expanded(
                 child: Text(
                   'You are logged in. Logging out will remove social features.',
-                  style: AppTypography.subtitle.copyWith(color: textColor),
+                  style: AppTypography.subtitle(
+                    context,
+                  ).copyWith(color: textColor),
                 ),
               ),
             ],
@@ -438,7 +443,9 @@ class _AccessCodeManagementScreenState
                 isValid
                     ? 'Clearing the access code will remove social features and sign you out.'
                     : 'Your access code has expired.',
-                style: AppTypography.subtitle.copyWith(color: textColor),
+                style: AppTypography.subtitle(
+                  context,
+                ).copyWith(color: textColor),
               ),
             ),
           ],
@@ -482,15 +489,17 @@ class _AccessCodeManagementScreenState
     return AlertDialog(
       title: Text(
         isAuthenticated ? 'Sign Out' : 'Clear Access Code',
-        style: AppTypography.dialogTitle.copyWith(color: colorScheme.onSurface),
+        style: AppTypography.dialogTitle(
+          context,
+        ).copyWith(color: colorScheme.onSurface),
       ),
       content: Text(
         isAuthenticated
             ? 'You will be logged out and lose access to social features.'
             : 'This action cannot be undone. And you will be logged out.',
-        style: AppTypography.subtitle.copyWith(
-          color: colorScheme.onSurface.withOpacity(0.7),
-        ),
+        style: AppTypography.subtitle(
+          context,
+        ).copyWith(color: colorScheme.onSurface.withOpacity(0.7)),
       ),
       actions: [
         TextButton(
@@ -523,7 +532,10 @@ class _AccessCodeManagementScreenState
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('About Access Codes', style: AppTypography.sectionHeader),
+            Text(
+              'About Access Codes',
+              style: AppTypography.sectionHeader(context),
+            ),
             const SizedBox(height: AppSpacing.lg),
             _faq(
               'What is it?',
@@ -546,7 +558,7 @@ class _AccessCodeManagementScreenState
         children: [
           Text(
             q,
-            style: AppTypography.subtitle.copyWith(
+            style: AppTypography.subtitle(context).copyWith(
               fontWeight: FontWeight.w600,
               color: colorScheme.onSurface,
             ),
@@ -554,9 +566,9 @@ class _AccessCodeManagementScreenState
           const SizedBox(height: 4),
           Text(
             a,
-            style: AppTypography.caption.copyWith(
-              color: colorScheme.onSurface.withOpacity(0.7),
-            ),
+            style: AppTypography.caption(
+              context,
+            ).copyWith(color: colorScheme.onSurface.withOpacity(0.7)),
           ),
         ],
       ),
@@ -572,10 +584,9 @@ class _AccessCodeManagementScreenState
       ),
       child: Text(
         text,
-        style: AppTypography.caption.copyWith(
-          color: color,
-          fontWeight: FontWeight.w600,
-        ),
+        style: AppTypography.caption(
+          context,
+        ).copyWith(color: color, fontWeight: FontWeight.w600),
       ),
     );
   }

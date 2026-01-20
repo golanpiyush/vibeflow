@@ -11,6 +11,7 @@ import 'package:vibeflow/constants/theme_colors.dart';
 import 'package:vibeflow/models/artist_model.dart';
 import 'package:vibeflow/models/album_model.dart';
 import 'package:vibeflow/models/quick_picks_model.dart';
+import 'package:vibeflow/pages/newPlayerPage.dart';
 import 'package:vibeflow/pages/player_page.dart';
 import 'package:vibeflow/pages/album_view.dart';
 import 'package:wikipedia/wikipedia.dart';
@@ -204,12 +205,12 @@ class _ArtistPageState extends ConsumerState<ArtistPage> {
     final sidebarLabelColor = ref.watch(themeTextPrimaryColorProvider);
     final sidebarLabelActiveColor = ref.watch(themeIconActiveColorProvider);
 
-    final sidebarLabelStyle = AppTypography.sidebarLabel.copyWith(
-      color: sidebarLabelColor,
-    );
-    final sidebarLabelActiveStyle = AppTypography.sidebarLabelActive.copyWith(
-      color: sidebarLabelActiveColor,
-    );
+    final sidebarLabelStyle = AppTypography.sidebarLabel(
+      context,
+    ).copyWith(color: sidebarLabelColor);
+    final sidebarLabelActiveStyle = AppTypography.sidebarLabelActive(
+      context,
+    ).copyWith(color: sidebarLabelActiveColor);
 
     return SizedBox(
       width: 80,
@@ -299,9 +300,9 @@ class _ArtistPageState extends ConsumerState<ArtistPage> {
             Expanded(
               child: Text(
                 widget.artist.name,
-                style: AppTypography.pageTitle.copyWith(
-                  color: textPrimaryColor,
-                ),
+                style: AppTypography.pageTitle(
+                  context,
+                ).copyWith(color: textPrimaryColor),
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
               ),
@@ -340,10 +341,9 @@ class _ArtistPageState extends ConsumerState<ArtistPage> {
             ),
             child: Text(
               'Shuffle',
-              style: AppTypography.subtitle.copyWith(
-                color: textPrimaryColor,
-                fontWeight: FontWeight.w600,
-              ),
+              style: AppTypography.subtitle(
+                context,
+              ).copyWith(color: textPrimaryColor, fontWeight: FontWeight.w600),
             ),
           ),
         ),
@@ -417,7 +417,9 @@ class _ArtistPageState extends ConsumerState<ArtistPage> {
       children: [
         Text(
           'Albums',
-          style: AppTypography.sectionHeader.copyWith(color: textPrimaryColor),
+          style: AppTypography.sectionHeader(
+            context,
+          ).copyWith(color: textPrimaryColor),
         ),
         const SizedBox(height: AppSpacing.lg),
         SizedBox(
@@ -553,19 +555,17 @@ class _ArtistPageState extends ConsumerState<ArtistPage> {
             const SizedBox(height: 8),
             Text(
               album.title,
-              style: AppTypography.subtitle.copyWith(
-                fontSize: 14,
-                color: textPrimaryColor,
-              ),
+              style: AppTypography.subtitle(
+                context,
+              ).copyWith(fontSize: 14, color: textPrimaryColor),
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
             ),
             Text(
               album.year > 0 ? album.year.toString() : '',
-              style: AppTypography.caption.copyWith(
-                color: textSecondaryColor,
-                fontSize: 12,
-              ),
+              style: AppTypography.caption(
+                context,
+              ).copyWith(color: textSecondaryColor, fontSize: 12),
             ),
           ],
         ),
@@ -631,7 +631,9 @@ class _ArtistPageState extends ConsumerState<ArtistPage> {
           padding: const EdgeInsets.all(40),
           child: Text(
             'No singles available',
-            style: AppTypography.subtitle.copyWith(color: textSecondaryColor),
+            style: AppTypography.subtitle(
+              context,
+            ).copyWith(color: textSecondaryColor),
           ),
         ),
       );
@@ -777,7 +779,7 @@ class _ArtistPageState extends ConsumerState<ArtistPage> {
               Expanded(
                 child: Text(
                   artistBio,
-                  style: AppTypography.subtitle.copyWith(
+                  style: AppTypography.subtitle(context).copyWith(
                     color: textPrimaryColor.withOpacity(0.9),
                     height: 1.6,
                   ),
@@ -867,7 +869,9 @@ class _ArtistPageState extends ConsumerState<ArtistPage> {
           padding: const EdgeInsets.all(40),
           child: Text(
             'No songs available',
-            style: AppTypography.subtitle.copyWith(color: textSecondaryColor),
+            style: AppTypography.subtitle(
+              context,
+            ).copyWith(color: textSecondaryColor),
           ),
         ),
       );
@@ -881,10 +885,9 @@ class _ArtistPageState extends ConsumerState<ArtistPage> {
           padding: const EdgeInsets.only(bottom: 16),
           child: Text(
             '${artistDetails!.topSongs.length} songs',
-            style: AppTypography.sectionHeader.copyWith(
-              color: textPrimaryColor,
-              fontSize: 18,
-            ),
+            style: AppTypography.sectionHeader(
+              context,
+            ).copyWith(color: textPrimaryColor, fontSize: 18),
           ),
         ),
         ...artistDetails!.topSongs.map((song) {
@@ -920,12 +923,7 @@ class _ArtistPageState extends ConsumerState<ArtistPage> {
           duration: song.duration,
         );
 
-        Navigator.push(
-          context,
-          MaterialPageRoute(
-            builder: (context) => PlayerScreen(song: quickPick),
-          ),
-        );
+        NewPlayerPage.open(context, quickPick);
       },
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 12),
@@ -975,7 +973,7 @@ class _ArtistPageState extends ConsumerState<ArtistPage> {
                   // Song title
                   Text(
                     song.title,
-                    style: AppTypography.songTitle.copyWith(
+                    style: AppTypography.songTitle(context).copyWith(
                       fontWeight: FontWeight.w500,
                       fontSize: 15,
                       color: textPrimaryColor,
@@ -987,10 +985,9 @@ class _ArtistPageState extends ConsumerState<ArtistPage> {
                   // Artist names
                   Text(
                     song.artists.join(', '),
-                    style: AppTypography.caption.copyWith(
-                      color: textSecondaryColor,
-                      fontSize: 13,
-                    ),
+                    style: AppTypography.caption(
+                      context,
+                    ).copyWith(color: textSecondaryColor, fontSize: 13),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                   ),
@@ -1004,10 +1001,9 @@ class _ArtistPageState extends ConsumerState<ArtistPage> {
                 padding: const EdgeInsets.only(left: 8),
                 child: Text(
                   song.duration.toString(),
-                  style: AppTypography.caption.copyWith(
-                    color: textSecondaryColor,
-                    fontSize: 12,
-                  ),
+                  style: AppTypography.caption(
+                    context,
+                  ).copyWith(color: textSecondaryColor, fontSize: 12),
                   textAlign: TextAlign.right,
                 ),
               ),
@@ -1024,7 +1020,9 @@ class _ArtistPageState extends ConsumerState<ArtistPage> {
       return Center(
         child: Text(
           'No albums available',
-          style: AppTypography.subtitle.copyWith(color: textSecondaryColor),
+          style: AppTypography.subtitle(
+            context,
+          ).copyWith(color: textSecondaryColor),
         ),
       );
     }

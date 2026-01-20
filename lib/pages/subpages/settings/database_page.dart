@@ -10,39 +10,123 @@ import 'package:vibeflow/pages/subpages/settings/player_settings_page.dart';
 import 'package:vibeflow/utils/page_transitions.dart';
 
 // lib/pages/settings/database_page.dart
+// lib/pages/settings/database_page.dart
 class DatabasePage extends ConsumerWidget {
   const DatabasePage({Key? key}) : super(key: key);
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final textSecondaryColor = ref.watch(themeTextSecondaryColorProvider);
+    final textPrimaryColor = ref.watch(themeTextPrimaryColorProvider);
+    final warningColor = Color(0xFFE57373); // Red color for warnings
+
     return _SettingsPageTemplate(
       title: 'Database',
       currentIndex: 2,
       content: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          // CLEANUP SECTION
           Text(
-            'DATA',
-            style: AppTypography.caption.copyWith(
+            'CLEANUP',
+            style: AppTypography.caption(context).copyWith(
               color: ref.watch(themeIconActiveColorProvider),
               fontWeight: FontWeight.w600,
               letterSpacing: 1.2,
             ),
           ),
           const SizedBox(height: AppSpacing.lg),
+          _buildActionItem(
+            ref,
+            context,
+            'Reset quick picks',
+            'Quick picks are cleared',
+            () {},
+          ),
+          const SizedBox(height: AppSpacing.xl),
+
+          // BACKUP SECTION
           Text(
-            'Total songs',
-            style: AppTypography.subtitle.copyWith(
-              fontWeight: FontWeight.w500,
-              color: ref.watch(themeTextPrimaryColorProvider),
+            'BACKUP',
+            style: AppTypography.caption(context).copyWith(
+              color: ref.watch(themeIconActiveColorProvider),
+              fontWeight: FontWeight.w600,
+              letterSpacing: 1.2,
             ),
+          ),
+          const SizedBox(height: AppSpacing.md),
+          Text(
+            'Personal preferences (i.e. the theme mode) and the cache are excluded.',
+            style: AppTypography.subtitle(
+              context,
+            ).copyWith(color: textSecondaryColor, height: 1.5),
+          ),
+          const SizedBox(height: AppSpacing.lg),
+          _buildActionItem(
+            ref,
+            context,
+            'Backup',
+            'Export the database to the external storage',
+            () {},
+          ),
+          const SizedBox(height: AppSpacing.xl),
+
+          // RESTORE SECTION
+          Text(
+            'RESTORE',
+            style: AppTypography.caption(context).copyWith(
+              color: ref.watch(themeIconActiveColorProvider),
+              fontWeight: FontWeight.w600,
+              letterSpacing: 1.2,
+            ),
+          ),
+          const SizedBox(height: AppSpacing.md),
+          Text(
+            'Existing data will be overwritten.\n VibeFlow will automatically close itself after restoring the database.',
+            style: AppTypography.subtitle(
+              context,
+            ).copyWith(color: warningColor, height: 1.5),
+          ),
+          const SizedBox(height: AppSpacing.lg),
+          _buildActionItem(
+            ref,
+            context,
+            'Restore',
+            'Import the database from the external storage',
+            () {},
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildActionItem(
+    WidgetRef ref,
+    BuildContext context,
+    String title,
+    String subtitle,
+    VoidCallback onTap,
+  ) {
+    final textPrimaryColor = ref.watch(themeTextPrimaryColorProvider);
+    final textSecondaryColor = ref.watch(themeTextSecondaryColorProvider);
+
+    return GestureDetector(
+      onTap: onTap,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            title,
+            style: AppTypography.subtitle(
+              context,
+            ).copyWith(fontWeight: FontWeight.w500, color: textPrimaryColor),
           ),
           const SizedBox(height: 4),
           Text(
-            '1,234',
-            style: AppTypography.caption.copyWith(
-              color: ref.watch(themeTextSecondaryColorProvider),
-            ),
+            subtitle,
+            style: AppTypography.caption(
+              context,
+            ).copyWith(color: textSecondaryColor),
           ),
         ],
       ),

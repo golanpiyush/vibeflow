@@ -133,6 +133,50 @@ class HapticFeedbackService {
   }
 
   // ============================================================================
+  // ACCESS / PERMISSION PATTERNS
+  // ============================================================================
+
+  /// Not allowed / forbidden action pattern (❌ nope)
+  /// Pattern: short, short, long
+  /// Use for disabled actions, permission denied, limits reached
+  Future<void> vibratingForNotAllowed() async {
+    await _ensureInitialized();
+
+    if (!_hasVibrator) {
+      // Fallback: quick double heavy impact
+      HapticFeedback.heavyImpact();
+      await Future.delayed(const Duration(milliseconds: 80));
+      HapticFeedback.heavyImpact();
+      return;
+    }
+
+    try {
+      print('📳 [HapticFeedback] Not allowed pattern');
+
+      await Vibration.vibrate(
+        pattern: [
+          0, // start immediately
+          60, // short buzz
+          60, // pause
+          60, // short buzz
+          120, // pause
+          200, // long buzz (final "no")
+        ],
+        intensities: [0, 180, 0, 180, 0, 220],
+      );
+    } catch (e) {
+      print('❌ [HapticFeedback] Not allowed vibration failed: $e');
+
+      // Fallback approximation
+      HapticFeedback.heavyImpact();
+      await Future.delayed(const Duration(milliseconds: 80));
+      HapticFeedback.heavyImpact();
+      await Future.delayed(const Duration(milliseconds: 120));
+      HapticFeedback.heavyImpact();
+    }
+  }
+
+  // ============================================================================
   // SUCCESS PATTERNS
   // ============================================================================
 
@@ -303,42 +347,3 @@ class HapticFeedbackService {
     }
   }
 }
-
-// ============================================================================
-// EXAMPLES
-// ============================================================================
-
-
-/// Example 2: Download Complete
-/// 
-/// ```dart
-/// if (result.success) {
-///   await HapticFeedbackService().vibrateDownloadComplete();
-///   _showNotification(title: 'Download Complete');
-/// }
-/// ```
-
-/// Example 3: Button Taps
-/// 
-/// ```dart
-/// IconButton(
-///   icon: Icon(Icons.favorite),
-///   onPressed: () {
-///     HapticFeedbackService().lightTap();
-///     // Handle favorite...
-///   },
-/// )
-/// ```
-
-/// Example 4: Initialize in main.dart
-/// 
-/// ```dart
-/// Future<void> main() async {
-///   WidgetsFlutterBinding.ensureInitialized();
-///   
-///   // Initialize haptic feedback
-///   await HapticFeedbackService().initialize();
-///   
-///   runApp(MyApp());
-/// }
-/// ```

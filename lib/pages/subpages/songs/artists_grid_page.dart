@@ -10,9 +10,7 @@ import 'package:vibeflow/constants/theme_colors.dart';
 import 'package:vibeflow/models/artist_model.dart';
 import 'package:vibeflow/pages/appearance_page.dart';
 import 'package:vibeflow/pages/artist_view.dart';
-import 'package:vibeflow/pages/subpages/songs/albums.dart';
 import 'package:vibeflow/pages/subpages/songs/albums_grid_page.dart';
-import 'package:vibeflow/pages/subpages/songs/artists.dart';
 import 'package:vibeflow/pages/subpages/songs/playlists.dart';
 import 'package:vibeflow/pages/subpages/songs/savedSongs.dart';
 import 'package:vibeflow/utils/material_transitions.dart';
@@ -37,59 +35,149 @@ class _ArtistsGridPageState extends ConsumerState<ArtistsGridPage> {
   bool isLoadingArtists = false;
   bool isSearchMode = false;
   Timer? _debounceTimer;
+  bool isLoadingMore = false;
+  bool hasMoreArtists = true;
+  static const int artistsPerPage = 50;
+  int currentOffset = 0;
 
   @override
   void initState() {
     super.initState();
     _loadArtists();
+    _scrollController.addListener(_onScroll);
   }
 
   Future<void> _loadArtists() async {
-    if (!mounted) return;
+    if (!mounted || isLoadingArtists || isLoadingMore) {
+      print('⏸️ Skipping load - already loading');
+      return;
+    }
 
-    setState(() => isLoadingArtists = true);
+    setState(() {
+      if (currentOffset == 0) {
+        isLoadingArtists = true;
+      } else {
+        isLoadingMore = true;
+      }
+    });
 
     try {
+      print('🔄 Loading artists with offset: $currentOffset');
+
       final fetchedArtists = await _artistsScraper.getTrendingArtists(
-        limit: 150,
+        limit: artistsPerPage,
+        offset: currentOffset,
       );
-      print('✅ Found ${fetchedArtists.length} artists');
+
+      print(
+        '✅ Fetched ${fetchedArtists.length} artists (offset: $currentOffset)',
+      );
 
       if (!mounted) return;
 
+      if (fetchedArtists.isEmpty) {
+        print('⚠️ No more artists to load');
+        setState(() {
+          hasMoreArtists = false;
+          isLoadingArtists = false;
+          isLoadingMore = false;
+        });
+        return;
+      }
+
       setState(() {
-        artists = fetchedArtists;
-        filteredArtists = fetchedArtists;
+        if (currentOffset == 0) {
+          // Initial load
+          artists = fetchedArtists;
+          filteredArtists = List.from(fetchedArtists);
+        } else {
+          // Pagination - add new artists
+          final existingIds = artists.map((a) => a.id).toSet();
+          final newArtists = fetchedArtists
+              .where((a) => !existingIds.contains(a.id))
+              .toList();
+
+          print('📦 Adding ${newArtists.length} new unique artists');
+
+          artists.addAll(newArtists);
+
+          // Re-apply search filter if in search mode
+          if (_searchController.text.isEmpty) {
+            filteredArtists = List.from(artists);
+          } else {
+            final query = _searchController.text.toLowerCase();
+            filteredArtists = artists.where((artist) {
+              return artist.name.toLowerCase().contains(query);
+            }).toList();
+          }
+        }
+
+        // Update pagination state
+        // Always increment offset by the requested page size
+        currentOffset += artistsPerPage;
+
+        // Keep loading more unless we got fewer artists than requested
+        hasMoreArtists = fetchedArtists.length >= artistsPerPage;
+
         isLoadingArtists = false;
+        isLoadingMore = false;
       });
 
-      print('📋 filteredArtists now has ${filteredArtists.length} items');
+      print(
+        '📋 Total: ${artists.length} artists, Filtered: ${filteredArtists.length}, HasMore: $hasMoreArtists',
+      );
     } catch (e, stack) {
       print('❌ Error loading artists: $e');
       print('Stack: ${stack.toString().split('\n').take(3).join('\n')}');
       if (!mounted) return;
-      setState(() => isLoadingArtists = false);
+      setState(() {
+        isLoadingArtists = false;
+        isLoadingMore = false;
+        hasMoreArtists = false;
+      });
+    }
+  }
+
+  void _onScroll() {
+    if (_scrollController.position.pixels >=
+        _scrollController.position.maxScrollExtent - 500) {
+      if (!isLoadingMore && hasMoreArtists && !isSearchMode) {
+        print('📜 Scroll threshold reached, loading more...');
+        _loadArtists();
+      }
     }
   }
 
   void _onSearchChanged(String query) {
-    // Cancel any existing timer
     _debounceTimer?.cancel();
 
-    // Start a new timer for debouncing
     _debounceTimer = Timer(const Duration(milliseconds: 300), () {
       if (mounted) {
         setState(() {
           if (query.isEmpty) {
-            filteredArtists = artists;
+            filteredArtists = List.from(artists);
           } else {
+            final lowerQuery = query.toLowerCase();
             filteredArtists = artists.where((artist) {
-              return artist.name.toLowerCase().contains(query.toLowerCase());
+              return artist.name.toLowerCase().contains(lowerQuery);
             }).toList();
           }
         });
+        print(
+          '🔍 Search: ${filteredArtists.length} artists found for "$query"',
+        );
       }
     });
+  }
+
+  @override
+  void dispose() {
+    _scrollController.removeListener(_onScroll);
+    _scrollController.dispose();
+    _searchController.dispose();
+    _searchFocusNode.dispose();
+    _debounceTimer?.cancel();
+    super.dispose();
   }
 
   @override
@@ -129,7 +217,7 @@ class _ArtistsGridPageState extends ConsumerState<ArtistsGridPage> {
               } else {
                 _searchController.clear();
                 _searchFocusNode.unfocus();
-                filteredArtists = artists;
+                filteredArtists = List.from(artists);
               }
             });
           },
@@ -150,12 +238,12 @@ class _ArtistsGridPageState extends ConsumerState<ArtistsGridPage> {
     final sidebarLabelColor = ref.watch(themeTextPrimaryColorProvider);
     final sidebarLabelActiveColor = ref.watch(themeIconActiveColorProvider);
 
-    final sidebarLabelStyle = AppTypography.sidebarLabel.copyWith(
-      color: sidebarLabelColor,
-    );
-    final sidebarLabelActiveStyle = AppTypography.sidebarLabelActive.copyWith(
-      color: sidebarLabelActiveColor,
-    );
+    final sidebarLabelStyle = AppTypography.sidebarLabel(
+      context,
+    ).copyWith(color: sidebarLabelColor);
+    final sidebarLabelActiveStyle = AppTypography.sidebarLabelActive(
+      context,
+    ).copyWith(color: sidebarLabelActiveColor);
 
     return SizedBox(
       width: 65,
@@ -220,11 +308,7 @@ class _ArtistsGridPageState extends ConsumerState<ArtistsGridPage> {
               iconActiveColor: iconActiveColor,
               iconInactiveColor: iconInactiveColor,
               labelStyle: sidebarLabelActiveStyle,
-              onTap: () {
-                Navigator.of(
-                  context,
-                ).pushMaterialVertical(const AlbumsGridPage(), slideUp: true);
-              },
+              onTap: () {},
             ),
             const SizedBox(height: 24),
             _buildSidebarItem(
@@ -288,12 +372,12 @@ class _ArtistsGridPageState extends ConsumerState<ArtistsGridPage> {
     final textSecondaryColor = ref.watch(themeTextSecondaryColorProvider);
     final iconActiveColor = ref.watch(themeIconActiveColorProvider);
 
-    final pageTitleStyle = AppTypography.pageTitle.copyWith(
-      color: textPrimaryColor,
-    );
-    final hintStyle = AppTypography.pageTitle.copyWith(
-      color: textSecondaryColor.withOpacity(0.5),
-    );
+    final pageTitleStyle = AppTypography.pageTitle(
+      context,
+    ).copyWith(color: textPrimaryColor);
+    final hintStyle = AppTypography.pageTitle(
+      context,
+    ).copyWith(color: textSecondaryColor.withOpacity(0.5));
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
@@ -307,7 +391,7 @@ class _ArtistsGridPageState extends ConsumerState<ArtistsGridPage> {
                   isSearchMode = false;
                   _searchController.clear();
                   _searchFocusNode.unfocus();
-                  filteredArtists = artists;
+                  filteredArtists = List.from(artists);
                 });
               },
               icon: Icon(Icons.arrow_back, color: iconActiveColor, size: 28),
@@ -373,17 +457,15 @@ class _ArtistsGridPageState extends ConsumerState<ArtistsGridPage> {
   }
 
   Widget _buildArtistsGrid() {
-    final textPrimaryColor = ref.watch(themeTextPrimaryColorProvider);
     final textSecondaryColor = ref.watch(themeTextSecondaryColorProvider);
 
-    if (filteredArtists.isEmpty) {
+    if (filteredArtists.isEmpty && !isLoadingArtists) {
       return Center(
         child: Padding(
           padding: const EdgeInsets.all(32.0),
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              // Lottie animation for "not found" state
               SizedBox(
                 height: 380,
                 width: 380,
@@ -397,17 +479,17 @@ class _ArtistsGridPageState extends ConsumerState<ArtistsGridPage> {
               const SizedBox(height: 16),
               Text(
                 isSearchMode ? 'No artists found' : 'No artists available',
-                style: AppTypography.subtitle.copyWith(
-                  color: textSecondaryColor,
-                ),
+                style: AppTypography.subtitle(
+                  context,
+                ).copyWith(color: textSecondaryColor),
               ),
               if (isSearchMode) ...[
                 const SizedBox(height: 8),
                 Text(
                   'Try a different search term',
-                  style: AppTypography.caption.copyWith(
-                    color: textSecondaryColor.withOpacity(0.7),
-                  ),
+                  style: AppTypography.caption(
+                    context,
+                  ).copyWith(color: textSecondaryColor.withOpacity(0.7)),
                 ),
               ],
             ],
@@ -425,8 +507,21 @@ class _ArtistsGridPageState extends ConsumerState<ArtistsGridPage> {
         crossAxisSpacing: AppSpacing.lg,
         mainAxisSpacing: AppSpacing.xl,
       ),
-      itemCount: filteredArtists.length,
+      itemCount: filteredArtists.length + (isLoadingMore ? 2 : 0),
       itemBuilder: (context, index) {
+        if (index >= filteredArtists.length) {
+          return Center(
+            child: Padding(
+              padding: const EdgeInsets.all(16.0),
+              child: CircularProgressIndicator(
+                strokeWidth: 2,
+                valueColor: AlwaysStoppedAnimation<Color>(
+                  ref.watch(themeIconActiveColorProvider),
+                ),
+              ),
+            ),
+          );
+        }
         return _buildArtistCard(filteredArtists[index]);
       },
     );
@@ -491,10 +586,9 @@ class _ArtistsGridPageState extends ConsumerState<ArtistsGridPage> {
           const SizedBox(height: AppSpacing.sm),
           Text(
             artist.name,
-            style: AppTypography.subtitle.copyWith(
-              color: textPrimaryColor,
-              fontWeight: FontWeight.w600,
-            ),
+            style: AppTypography.subtitle(
+              context,
+            ).copyWith(color: textPrimaryColor, fontWeight: FontWeight.w600),
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             textAlign: TextAlign.center,
@@ -502,9 +596,9 @@ class _ArtistsGridPageState extends ConsumerState<ArtistsGridPage> {
           const SizedBox(height: AppSpacing.xs / 2),
           Text(
             artist.subscribers,
-            style: AppTypography.captionSmall.copyWith(
-              color: textSecondaryColor,
-            ),
+            style: AppTypography.captionSmall(
+              context,
+            ).copyWith(color: textSecondaryColor),
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             textAlign: TextAlign.center,
@@ -512,14 +606,5 @@ class _ArtistsGridPageState extends ConsumerState<ArtistsGridPage> {
         ],
       ),
     );
-  }
-
-  @override
-  void dispose() {
-    _scrollController.dispose();
-    _searchController.dispose();
-    _searchFocusNode.dispose();
-    _debounceTimer?.cancel();
-    super.dispose();
   }
 }

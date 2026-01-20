@@ -1,11 +1,9 @@
-// lib/services/update_manager_service.dart - ENHANCED VERSION
-import 'dart:convert';
+// lib/services/update_manager_service.dart - COMPLETE WITH RESUME SUPPORT
 import 'dart:io';
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:path_provider/path_provider.dart';
-import 'package:vibeflow/installer_services/apk_installer_service.dart';
 import 'package:dio/dio.dart';
 
 enum UpdateStatus { available, upToDate, error }
@@ -18,22 +16,27 @@ class UpdateManagerService {
   static String get GITHUB_RELEASE_URL =>
       'https://api.github.com/repos/$GITHUB_OWNER/$GITHUB_REPO/releases/latest';
 
-  /// Enhanced check with architecture detection
-  /// Enhanced check with architecture detection and status message
+  /// Enhanced check with better logging and architecture detection
   static Future<UpdateCheckResult> checkForUpdate() async {
     try {
-      debugPrint('🔍 Checking for updates from GitHub...');
+      debugPrint('🔍 ========== UPDATE CHECK STARTED ==========');
 
       // Get current app info using package_info_plus
       final currentInfo = await PackageInfo.fromPlatform();
       final currentVersion = currentInfo.version;
       final currentVersionCode = int.tryParse(currentInfo.buildNumber) ?? 1;
 
+      debugPrint(
+        '📱 Current App Version: $currentVersion (build $currentVersionCode)',
+      );
+
       // Detect device architecture
       final arch = await _detectDeviceArchitecture();
-      debugPrint('📱 Device architecture: $arch');
+      debugPrint('🏗️ Device Architecture: $arch');
 
       // Fetch latest release from GitHub
+      debugPrint('🌐 Fetching from: $GITHUB_RELEASE_URL');
+
       final dio = Dio();
       final response = await dio.get(
         GITHUB_RELEASE_URL,
@@ -46,46 +49,80 @@ class UpdateManagerService {
         ),
       );
 
+      debugPrint('📡 Response Status: ${response.statusCode}');
+
       // Handle 404 - Repository not found or no releases
       if (response.statusCode == 404) {
-        debugPrint('❌ Repository not found or no releases published');
+        debugPrint('❌ ISSUE: No releases found on GitHub!');
+        debugPrint(
+          '💡 Solution: Go to https://github.com/$GITHUB_OWNER/$GITHUB_REPO/releases/new',
+        );
         return UpdateCheckResult(
           status: UpdateStatus.error,
-          message: 'Unable to check for updates. Repository not found.',
+          message: 'No releases published yet. Please create a GitHub release.',
         );
       }
 
       if (response.statusCode != 200) {
-        debugPrint('❌ GitHub API error: ${response.statusCode}');
+        debugPrint('❌ GitHub API Error: ${response.statusCode}');
         return UpdateCheckResult(
           status: UpdateStatus.error,
-          message: 'Failed to check for updates. Please try again later.',
+          message:
+              'Failed to check for updates. Status: ${response.statusCode}',
         );
       }
 
       final data = response.data;
       final tagName = data['tag_name'] as String? ?? '0.0.0';
 
+      debugPrint('🏷️ Latest Release Tag: $tagName');
+
       // Extract version from tag
       final latestVersion = _extractVersionFromTag(tagName);
       final latestVersionCode = _versionToCode(latestVersion);
 
-      debugPrint('🆕 Latest version: $latestVersion ($latestVersionCode)');
+      debugPrint(
+        '🆕 Latest Version: $latestVersion (code: $latestVersionCode)',
+      );
+      debugPrint(
+        '📊 Current Version: $currentVersion (code: $currentVersionCode)',
+      );
+      debugPrint(
+        '🔢 Version Comparison: $latestVersionCode > $currentVersionCode = ${latestVersionCode > currentVersionCode}',
+      );
 
       // Find compatible APK based on architecture
       final assets = data['assets'] as List? ?? [];
+      debugPrint('📦 Total Assets Found: ${assets.length}');
+
+      // Log all available assets
+      for (var i = 0; i < assets.length; i++) {
+        debugPrint('   Asset $i: ${assets[i]['name']}');
+      }
+
       final compatibleAsset = _findCompatibleAsset(assets, arch);
 
       if (compatibleAsset == null) {
         debugPrint('❌ No compatible APK found for architecture: $arch');
+        debugPrint('💡 Make sure your release includes APK files named like:');
+        debugPrint('   - vibeflow_v1.1.0_arm64-v8a_release.apk');
+        debugPrint('   - vibeflow_v1.1.0_armeabi-v7a_release.apk');
+        debugPrint('   - vibeflow_v1.1.0_universal_release.apk');
         return UpdateCheckResult(
           status: UpdateStatus.error,
-          message: 'No compatible update found for your device.',
+          message: 'No compatible APK found. Please check release assets.',
         );
       }
 
+      debugPrint('✅ Compatible APK Found: ${compatibleAsset['name']}');
+
       // Check if update is available
+      // Check if update is available - FIXED LOGIC
       if (latestVersionCode > currentVersionCode) {
+        debugPrint('🎉 UPDATE AVAILABLE!');
+        debugPrint('   Current: v$currentVersion ($currentVersionCode)');
+        debugPrint('   Latest:  v$latestVersion ($latestVersionCode)');
+
         final updateInfo = UpdateInfo(
           currentVersion: currentVersion,
           currentVersionCode: currentVersionCode,
@@ -101,57 +138,71 @@ class UpdateManagerService {
           architecture: arch,
         );
 
+        debugPrint('🔍 ========== UPDATE CHECK COMPLETE ==========');
+
         return UpdateCheckResult(
           status: UpdateStatus.available,
           message: 'Update available: v$latestVersion',
           updateInfo: updateInfo,
         );
       } else {
-        debugPrint('✅ App is up to date');
+        // App is either up-to-date OR newer than GitHub release
+        // In BOTH cases, NO UPDATE is needed
+        debugPrint('✅ No updates available');
+        debugPrint('   Current: v$currentVersion ($currentVersionCode)');
+        debugPrint('   GitHub:  v$latestVersion ($latestVersionCode)');
+        debugPrint('🔍 ========== UPDATE CHECK COMPLETE ==========');
+
         return UpdateCheckResult(
           status: UpdateStatus.upToDate,
-          message: 'You\'re using the latest version (v$currentVersion)',
+          message: 'No updates available',
         );
       }
-    } catch (e) {
-      debugPrint('❌ Error checking for update: $e');
+    } catch (e, stackTrace) {
+      debugPrint('❌ ERROR during update check: $e');
+      debugPrint('📋 Stack Trace: $stackTrace');
+      debugPrint('🔍 ========== UPDATE CHECK FAILED ==========');
+
       return UpdateCheckResult(
         status: UpdateStatus.error,
-        message:
-            'Failed to check for updates. Please check your internet connection.',
+        message: 'Failed to check for updates: ${e.toString()}',
       );
     }
   }
 
-  /// Detect device architecture
+  /// Detect device architecture with better logging
   static Future<String> _detectDeviceArchitecture() async {
     try {
       final abi = await _getAbi();
+      debugPrint('🔧 Detected ABI: $abi');
 
-      // Map ABI to architecture names
+      // Map ABI to simplified architecture names
       const abiMap = {
-        'armeabi-v7a': 'v7a',
-        'arm64-v8a': 'v8a',
+        'armeabi-v7a': 'armeabi-v7a',
+        'arm64-v8a': 'arm64-v8a',
         'x86': 'x86',
         'x86_64': 'x86_64',
-        'universal': 'universal',
       };
 
-      return abiMap[abi] ?? abi;
+      final mappedArch = abiMap[abi] ?? abi;
+      debugPrint('🗺️ Mapped Architecture: $mappedArch');
+      return mappedArch;
     } catch (e) {
-      debugPrint('⚠️ Could not detect architecture, defaulting to universal');
+      debugPrint('⚠️ Could not detect architecture: $e');
+      debugPrint('   Defaulting to: universal');
       return 'universal';
     }
   }
 
   /// Get ABI information
   static Future<String> _getAbi() async {
-    // Method 1: Use Platform.operatingSystemVersion
     if (Platform.isAndroid) {
       try {
         // Check CPU ABI through Process
         final result = await Process.run('getprop', ['ro.product.cpu.abi']);
         final abi = (result.stdout as String).trim().toLowerCase();
+
+        debugPrint('🔍 Raw ABI from getprop: $abi');
 
         if (abi.contains('arm64-v8a') || abi.contains('aarch64')) {
           return 'arm64-v8a';
@@ -162,58 +213,53 @@ class UpdateManagerService {
         } else if (abi.contains('x86')) {
           return 'x86';
         }
+
+        return abi.isNotEmpty ? abi : 'arm64-v8a';
       } catch (e) {
         debugPrint('⚠️ Could not detect ABI via getprop: $e');
       }
     }
 
-    // Default based on platform
     return Platform.isAndroid ? 'arm64-v8a' : 'unknown';
   }
 
-  /// Find compatible APK asset based on architecture
+  /// Find compatible APK asset - IMPROVED VERSION
   static Map<String, dynamic>? _findCompatibleAsset(
     List<dynamic> assets,
     String architecture,
   ) {
-    // Priority order for architecture matching
-    final List<String> architecturePatterns = [
-      architecture,
-      'universal',
-      'noarch',
-      'multi',
-      'all',
-    ];
+    debugPrint('🔍 Searching for compatible APK...');
+    debugPrint('   Target Architecture: $architecture');
 
-    // Common APK naming patterns
-    final List<String> apkPatterns = [
-      'app-release',
-      'release',
-      'vibeflow',
-      '.apk',
-    ];
+    // First priority: Exact architecture match
+    for (final asset in assets) {
+      final assetName = asset['name'].toString().toLowerCase();
 
-    for (final pattern in architecturePatterns) {
-      for (final asset in assets) {
-        final assetName = asset['name'].toString().toLowerCase();
-
-        // Check if it's an APK
-        final isApk = assetName.endsWith('.apk');
-
-        // Check architecture pattern
-        final hasArchPattern = assetName.contains(pattern.toLowerCase());
-
-        // Check for common APK naming
-        final hasApkPattern = apkPatterns.any((p) => assetName.contains(p));
-
-        if (isApk && (hasArchPattern || pattern == 'universal')) {
-          debugPrint('✅ Found compatible APK: ${asset['name']}');
-          return asset as Map<String, dynamic>;
-        }
+      if (assetName.endsWith('.apk') &&
+          assetName.contains(architecture.toLowerCase())) {
+        debugPrint('✅ Found exact match: ${asset['name']}');
+        return asset as Map<String, dynamic>;
       }
     }
 
-    // Fallback: Any APK
+    debugPrint('   No exact match, looking for universal APK...');
+
+    // Second priority: Universal APK
+    for (final asset in assets) {
+      final assetName = asset['name'].toString().toLowerCase();
+
+      if (assetName.endsWith('.apk') &&
+          (assetName.contains('universal') ||
+              assetName.contains('all') ||
+              assetName.contains('multi'))) {
+        debugPrint('✅ Found universal APK: ${asset['name']}');
+        return asset as Map<String, dynamic>;
+      }
+    }
+
+    debugPrint('   No universal APK, looking for any APK...');
+
+    // Fallback: Any APK file
     for (final asset in assets) {
       final assetName = asset['name'].toString().toLowerCase();
       if (assetName.endsWith('.apk')) {
@@ -222,104 +268,141 @@ class UpdateManagerService {
       }
     }
 
+    debugPrint('❌ No APK files found in release assets!');
     return null;
   }
 
-  /// Optimized download using Dio with progress
+  /// Optimized download using Dio with progress (legacy method - calls resume version)
   static Future<String> downloadUpdate(
     UpdateInfo updateInfo,
     Function(double progress, int downloaded, int total) onProgress,
   ) async {
+    return downloadUpdateWithResume(updateInfo, onProgress);
+  }
+
+  /// Optimized download with resume support and chunked download
+  static Future<String> downloadUpdateWithResume(
+    UpdateInfo updateInfo,
+    Function(double progress, int downloaded, int total) onProgress,
+  ) async {
     try {
-      debugPrint('📥 Starting download: ${updateInfo.assetName}');
+      debugPrint('📥 ========== DOWNLOAD STARTED ==========');
+      debugPrint('📥 File: ${updateInfo.assetName}');
       debugPrint('📁 Size: ${updateInfo.fileSizeFormatted}');
-      debugPrint('📥 URL: ${updateInfo.downloadUrl}');
+      debugPrint('🔗 URL: ${updateInfo.downloadUrl}');
 
       final tempDir = await getTemporaryDirectory();
-      final filePath =
-          '${tempDir.path}/vibeflow_${updateInfo.latestVersion}_${updateInfo.architecture}.apk';
+      final fileName =
+          'vibeflow_${updateInfo.latestVersion}_${updateInfo.architecture}.apk';
+      final filePath = '${tempDir.path}/$fileName';
       final file = File(filePath);
 
-      // Clean up previous downloads
-      await _cleanOldDownloads(tempDir);
+      // Check if partial download exists
+      int downloadedBytes = 0;
+      if (await file.exists()) {
+        downloadedBytes = await file.length();
+        debugPrint(
+          '📦 Found partial download: ${formatFileSize(downloadedBytes)}',
+        );
+
+        // If file is complete, verify and return
+        if (updateInfo.fileSize > 0 && downloadedBytes == updateInfo.fileSize) {
+          debugPrint('✅ File already downloaded completely');
+          return filePath;
+        }
+      }
 
       // Configure Dio with better settings
       final dio = Dio(
         BaseOptions(
           connectTimeout: const Duration(seconds: 30),
-          receiveTimeout: const Duration(seconds: 60),
+          receiveTimeout: const Duration(minutes: 10),
           headers: {'User-Agent': 'VibeFlow-Updater/1.0', 'Accept': '*/*'},
         ),
       );
 
-      // Download with progress
+      // Download with resume support
       await dio.download(
         updateInfo.downloadUrl,
         filePath,
         onReceiveProgress: (received, total) {
-          if (total > 0) {
-            final progress = received / total;
-            onProgress(progress, received, total);
+          final totalReceived = downloadedBytes + received;
+          final totalSize = total > 0 ? total : updateInfo.fileSize;
 
-            if (received % (1024 * 1024) < 1024) {
-              // Log every MB
+          if (totalSize > 0) {
+            final progress = totalReceived / totalSize;
+            onProgress(progress, totalReceived, totalSize);
+
+            if (received % (512 * 1024) < 8192) {
               debugPrint(
-                '📥 Download: ${(progress * 100).toStringAsFixed(1)}%',
+                '📥 Progress: ${(progress * 100).toStringAsFixed(1)}% ($totalReceived / $totalSize bytes)',
               );
             }
           }
         },
-        deleteOnError: true,
+        deleteOnError: false, // Don't delete on error to allow resume
+        options: Options(
+          headers: downloadedBytes > 0
+              ? {'Range': 'bytes=$downloadedBytes-'}
+              : {},
+        ),
       );
 
       // Verify download
-      final downloadedSize = await file.length();
-      if (downloadedSize != updateInfo.fileSize && updateInfo.fileSize > 0) {
+      final finalSize = await file.length();
+      debugPrint('✅ Download complete!');
+      debugPrint('📁 File path: $filePath');
+      debugPrint('📊 Downloaded: ${formatFileSize(finalSize)}');
+
+      if (updateInfo.fileSize > 0 && finalSize != updateInfo.fileSize) {
         debugPrint(
-          '⚠️ Size mismatch: $downloadedSize vs ${updateInfo.fileSize}',
+          '⚠️ Size mismatch: Expected ${updateInfo.fileSize}, Got $finalSize',
         );
       }
 
-      debugPrint('✅ Download complete: $filePath');
-      debugPrint(
-        '📁 Final size: ${UpdateManagerService.formatFileSize(downloadedSize)}',
-      );
+      // Clean up old downloads (but keep current one)
+      await _cleanOldDownloads(tempDir, exclude: fileName);
 
+      debugPrint('📥 ========== DOWNLOAD COMPLETE ==========');
       return filePath;
-    } catch (e) {
+    } catch (e, stackTrace) {
       debugPrint('❌ Download failed: $e');
+      debugPrint('📋 Stack trace: $stackTrace');
 
-      // Clean up partial download
-      try {
-        final tempDir = await getTemporaryDirectory();
-        final files = await tempDir.list().toList();
-        for (final file in files) {
-          if (file.path.contains('vibeflow_')) {
-            await file.delete();
-          }
-        }
-      } catch (_) {}
-
+      // Don't clean up on error - allow resume
       rethrow;
     }
   }
 
-  /// Clean old download files
-  static Future<void> _cleanOldDownloads(Directory tempDir) async {
+  /// Clean old download files (with exclusion support)
+  static Future<void> _cleanOldDownloads(
+    Directory tempDir, {
+    String? exclude,
+  }) async {
     try {
       final files = await tempDir.list().toList();
       final now = DateTime.now();
+      int cleaned = 0;
 
       for (final file in files) {
         if (file is File && file.path.contains('vibeflow_')) {
+          // Skip the file we want to exclude
+          if (exclude != null && file.path.endsWith(exclude)) {
+            continue;
+          }
+
           final stat = await file.stat();
           final age = now.difference(stat.modified);
 
-          if (age > const Duration(hours: 1)) {
+          if (age > const Duration(hours: 24)) {
             await file.delete();
-            debugPrint('🗑️ Cleaned old file: ${file.path}');
+            cleaned++;
           }
         }
+      }
+
+      if (cleaned > 0) {
+        debugPrint('🗑️ Cleaned $cleaned old download file(s)');
       }
     } catch (e) {
       debugPrint('⚠️ Error cleaning old downloads: $e');
@@ -328,11 +411,9 @@ class UpdateManagerService {
 
   /// Extract version number from Git tag (e.g., "v1.2.3" -> "1.2.3")
   static String _extractVersionFromTag(String tag) {
-    // Remove 'v' prefix if present
     final version = tag.replaceFirst(RegExp(r'^v', caseSensitive: false), '');
-
-    // Validate format (should be x.y.z)
     final versionPattern = RegExp(r'^\d+\.\d+\.\d+');
+
     if (versionPattern.hasMatch(version)) {
       return version;
     }
@@ -353,8 +434,8 @@ class UpdateManagerService {
         final patch = int.tryParse(parts[2]) ?? 0;
 
         // Format: MAJOR * 10000 + MINOR * 100 + PATCH
-        // Supports up to 99.99.99
-        return (major * 10000) + (minor * 100) + patch;
+        final code = (major * 10000) + (minor * 100) + patch;
+        return code;
       }
 
       debugPrint('⚠️ Invalid version format: $version');
@@ -378,7 +459,6 @@ class UpdateManagerService {
       suffixIndex++;
     }
 
-    // Format with appropriate decimal places
     final formattedSize = suffixIndex == 0
         ? size.toStringAsFixed(0)
         : size.toStringAsFixed(2);
@@ -399,7 +479,6 @@ class UpdateCheckResult {
   });
 }
 
-// Update the UpdateInfo class
 class UpdateInfo {
   final String currentVersion;
   final int currentVersionCode;
@@ -443,7 +522,6 @@ class UpdateInfo {
   }
 
   String get formattedReleaseNotes {
-    // Basic markdown formatting for display
     return releaseNotes
         .replaceAll('# ', '## ')
         .replaceAll('* ', '• ')

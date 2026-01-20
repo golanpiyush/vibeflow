@@ -10,6 +10,7 @@ import 'package:vibeflow/constants/theme_colors.dart';
 import 'package:vibeflow/models/album_model.dart';
 import 'package:vibeflow/models/quick_picks_model.dart';
 import 'package:vibeflow/pages/artist_view.dart';
+import 'package:vibeflow/pages/newPlayerPage.dart';
 import 'package:vibeflow/pages/player_page.dart';
 
 class AlbumPage extends ConsumerStatefulWidget {
@@ -207,12 +208,12 @@ class _AlbumPageState extends ConsumerState<AlbumPage> {
     final sidebarLabelColor = ref.watch(themeTextPrimaryColorProvider);
     final sidebarLabelActiveColor = ref.watch(themeIconActiveColorProvider);
 
-    final sidebarLabelStyle = AppTypography.sidebarLabel.copyWith(
-      color: sidebarLabelColor,
-    );
-    final sidebarLabelActiveStyle = AppTypography.sidebarLabelActive.copyWith(
-      color: sidebarLabelActiveColor,
-    );
+    final sidebarLabelStyle = AppTypography.sidebarLabel(
+      context,
+    ).copyWith(color: sidebarLabelColor);
+    final sidebarLabelActiveStyle = AppTypography.sidebarLabelActive(
+      context,
+    ).copyWith(color: sidebarLabelActiveColor);
 
     return SizedBox(
       width: 80,
@@ -315,9 +316,9 @@ class _AlbumPageState extends ConsumerState<AlbumPage> {
               alignment: Alignment.centerRight,
               child: Text(
                 widget.album.title,
-                style: AppTypography.pageTitle.copyWith(
-                  color: textPrimaryColor,
-                ),
+                style: AppTypography.pageTitle(
+                  context,
+                ).copyWith(color: textPrimaryColor),
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
               ),
@@ -371,7 +372,7 @@ class _AlbumPageState extends ConsumerState<AlbumPage> {
               ),
               child: Text(
                 'Enqueue',
-                style: AppTypography.subtitle.copyWith(
+                style: AppTypography.subtitle(context).copyWith(
                   color: textPrimaryColor,
                   fontWeight: FontWeight.w600,
                 ),
@@ -449,7 +450,9 @@ class _AlbumPageState extends ConsumerState<AlbumPage> {
           const SizedBox(height: AppSpacing.xs),
           Text(
             displayAlbum.year.toString(),
-            style: AppTypography.caption.copyWith(color: textSecondaryColor),
+            style: AppTypography.caption(
+              context,
+            ).copyWith(color: textSecondaryColor),
             textAlign: TextAlign.center,
           ),
         ],
@@ -523,9 +526,9 @@ class _AlbumPageState extends ConsumerState<AlbumPage> {
               const SizedBox(height: 16),
               Text(
                 _versionsErrorMessage!,
-                style: AppTypography.subtitle.copyWith(
-                  color: textSecondaryColor,
-                ),
+                style: AppTypography.subtitle(
+                  context,
+                ).copyWith(color: textSecondaryColor),
                 textAlign: TextAlign.center,
               ),
               const SizedBox(height: 16),
@@ -563,16 +566,16 @@ class _AlbumPageState extends ConsumerState<AlbumPage> {
               const SizedBox(height: 16),
               Text(
                 'No other versions found',
-                style: AppTypography.subtitle.copyWith(
-                  color: textSecondaryColor,
-                ),
+                style: AppTypography.subtitle(
+                  context,
+                ).copyWith(color: textSecondaryColor),
               ),
               const SizedBox(height: 8),
               Text(
                 'This album has no alternate versions',
-                style: AppTypography.caption.copyWith(
-                  color: textSecondaryColor.withOpacity(0.7),
-                ),
+                style: AppTypography.caption(
+                  context,
+                ).copyWith(color: textSecondaryColor.withOpacity(0.7)),
               ),
             ],
           ),
@@ -586,7 +589,9 @@ class _AlbumPageState extends ConsumerState<AlbumPage> {
       children: [
         Text(
           'Found ${_versions.length} other version${_versions.length != 1 ? 's' : ''}',
-          style: AppTypography.subtitle.copyWith(color: textSecondaryColor),
+          style: AppTypography.subtitle(
+            context,
+          ).copyWith(color: textSecondaryColor),
         ),
         const SizedBox(height: AppSpacing.lg),
         GridView.builder(
@@ -679,7 +684,7 @@ class _AlbumPageState extends ConsumerState<AlbumPage> {
                 children: [
                   Text(
                     album.title,
-                    style: AppTypography.subtitle.copyWith(
+                    style: AppTypography.subtitle(context).copyWith(
                       fontWeight: FontWeight.w600,
                       color: textPrimaryColor,
                     ),
@@ -689,9 +694,9 @@ class _AlbumPageState extends ConsumerState<AlbumPage> {
                   const SizedBox(height: 4),
                   Text(
                     album.artist,
-                    style: AppTypography.caption.copyWith(
-                      color: textSecondaryColor,
-                    ),
+                    style: AppTypography.caption(
+                      context,
+                    ).copyWith(color: textSecondaryColor),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                   ),
@@ -699,9 +704,9 @@ class _AlbumPageState extends ConsumerState<AlbumPage> {
                     const SizedBox(height: 4),
                     Text(
                       album.year.toString(),
-                      style: AppTypography.captionSmall.copyWith(
-                        color: textSecondaryColor.withOpacity(0.7),
-                      ),
+                      style: AppTypography.captionSmall(
+                        context,
+                      ).copyWith(color: textSecondaryColor.withOpacity(0.7)),
                     ),
                   ],
                 ],
@@ -810,9 +815,9 @@ class _AlbumPageState extends ConsumerState<AlbumPage> {
               const SizedBox(height: 16),
               Text(
                 _errorMessage!,
-                style: AppTypography.subtitle.copyWith(
-                  color: textSecondaryColor,
-                ),
+                style: AppTypography.subtitle(
+                  context,
+                ).copyWith(color: textSecondaryColor),
                 textAlign: TextAlign.center,
               ),
               const SizedBox(height: 16),
@@ -845,9 +850,9 @@ class _AlbumPageState extends ConsumerState<AlbumPage> {
               const SizedBox(height: 16),
               Text(
                 'No songs available',
-                style: AppTypography.subtitle.copyWith(
-                  color: textSecondaryColor,
-                ),
+                style: AppTypography.subtitle(
+                  context,
+                ).copyWith(color: textSecondaryColor),
               ),
             ],
           ),
@@ -900,12 +905,7 @@ class _AlbumPageState extends ConsumerState<AlbumPage> {
           duration: song.duration,
         );
 
-        Navigator.push(
-          context,
-          MaterialPageRoute(
-            builder: (context) => PlayerScreen(song: quickPick),
-          ),
-        );
+        NewPlayerPage.open(context, quickPick);
       },
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 12),
@@ -971,7 +971,7 @@ class _AlbumPageState extends ConsumerState<AlbumPage> {
                     ),
                     child: Text(
                       song.title,
-                      style: AppTypography.songTitle.copyWith(
+                      style: AppTypography.songTitle(context).copyWith(
                         fontWeight: FontWeight.w500,
                         fontSize: 15,
                         color: textPrimaryColor,
@@ -987,10 +987,9 @@ class _AlbumPageState extends ConsumerState<AlbumPage> {
                     ),
                     child: Text(
                       song.artists.join(', '),
-                      style: AppTypography.caption.copyWith(
-                        color: textSecondaryColor,
-                        fontSize: 13,
-                      ),
+                      style: AppTypography.caption(
+                        context,
+                      ).copyWith(color: textSecondaryColor, fontSize: 13),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                     ),
@@ -1006,10 +1005,9 @@ class _AlbumPageState extends ConsumerState<AlbumPage> {
                   padding: const EdgeInsets.only(left: 8),
                   child: Text(
                     song.duration.toString(),
-                    style: AppTypography.caption.copyWith(
-                      color: textSecondaryColor,
-                      fontSize: 12,
-                    ),
+                    style: AppTypography.caption(
+                      context,
+                    ).copyWith(color: textSecondaryColor, fontSize: 12),
                     maxLines: 1,
                     overflow: TextOverflow.clip,
                   ),
