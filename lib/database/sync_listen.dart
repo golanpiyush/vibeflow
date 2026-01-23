@@ -20,38 +20,146 @@ class SyncListeningService {
   // ========== SESSION MANAGEMENT ==========
 
   /// Create a new listening session
+  // Replace the createSession method in sync_listening_service.dart
+
+  /// Create a new listening session
   Future<String> createSession({String? sessionName}) async {
     print('📻 [SYNC] Creating new session: $sessionName');
 
     final user = _supabase.auth.currentUser;
-    if (user == null) throw Exception('Not authenticated');
+    if (user == null) {
+      print('❌ [SYNC] Not authenticated');
+      throw Exception('Not authenticated');
+    }
+
+    print('🔐 [SYNC] Authenticated as user: ${user.id}');
 
     try {
-      // Create session
+      // First, verify user has jammer enabled
+      print('🔍 [SYNC] Checking user profile...');
+      final profileCheck = await _supabase
+          .from('profiles')
+          .select('is_jammer_on, userid')
+          .eq('id', user.id)
+          .single();
+
+      print('👤 [SYNC] User: ${profileCheck['userid']}');
+      print('🎵 [SYNC] Jammer: ${profileCheck['is_jammer_on']}');
+
+      if (profileCheck['is_jammer_on'] != true) {
+        throw Exception(
+          'Jammer mode is not enabled. Please enable it in settings.',
+        );
+      }
+
+      // Create session - using maybeSingle to avoid errors
+      print('📝 [SYNC] Inserting session (user: ${user.id})...');
+
+      final insertData = {
+        'host_user_id': user.id,
+        'session_name': sessionName,
+        'status': 'active',
+      };
+
+      print('📦 [SYNC] Insert data: $insertData');
+
       final response = await _supabase
           .from('listening_sessions')
-          .insert({
-            'host_user_id': user.id,
-            'session_name': sessionName,
-            'status': 'active',
-          })
+          .insert(insertData)
           .select('id')
           .single();
 
       final sessionId = response['id'] as String;
+      print('✅ [SYNC] Session created with ID: $sessionId');
 
       // Add host as participant
+      print('👥 [SYNC] Adding host as participant...');
       await _supabase.from('session_participants').insert({
         'session_id': sessionId,
         'user_id': user.id,
         'role': 'host',
       });
 
-      print('✅ [SYNC] Session created: $sessionId');
+      print('✅ [SYNC] Host added successfully');
+      print('🎉 [SYNC] Session fully created: $sessionId');
+
       return sessionId;
-    } catch (e) {
+    } catch (e, stackTrace) {
       print('❌ [SYNC] Error creating session: $e');
+      print('❌ [SYNC] Error type: ${e.runtimeType}');
+      print('📋 [SYNC] Stack trace:');
+      print(stackTrace.toString().split('\n').take(5).join('\n'));
       rethrow;
+    }
+  }
+
+  /// Subscribe to invitation changes using real-time callbacks
+  void subscribeToInvitationChanges({required Function() onInvitationChange}) {
+    final userId = _supabase.auth.currentUser?.id;
+    if (userId == null) {
+      print('❌ [REALTIME] Cannot subscribe: User not authenticated');
+      return;
+    }
+
+    print('👂 [REALTIME] Subscribing to invitation changes for user: $userId');
+
+    final channel = _supabase.channel('invitations_$userId');
+
+    channel
+        .onPostgresChanges(
+          event: PostgresChangeEvent.insert,
+          schema: 'public',
+          table: 'session_invitations',
+          filter: PostgresChangeFilter(
+            type: PostgresChangeFilterType.eq,
+            column: 'invited_user_id',
+            value: userId,
+          ),
+          callback: (payload) {
+            print('🔔 [REALTIME] New invitation created!');
+            print('   Data: ${payload.newRecord}');
+            onInvitationChange();
+          },
+        )
+        .onPostgresChanges(
+          event: PostgresChangeEvent.update,
+          schema: 'public',
+          table: 'session_invitations',
+          filter: PostgresChangeFilter(
+            type: PostgresChangeFilterType.eq,
+            column: 'invited_user_id',
+            value: userId,
+          ),
+          callback: (payload) {
+            print('🔔 [REALTIME] Invitation updated!');
+            onInvitationChange();
+          },
+        )
+        .onPostgresChanges(
+          event: PostgresChangeEvent.delete,
+          schema: 'public',
+          table: 'session_invitations',
+          filter: PostgresChangeFilter(
+            type: PostgresChangeFilterType.eq,
+            column: 'invited_user_id',
+            value: userId,
+          ),
+          callback: (payload) {
+            print('🔔 [REALTIME] Invitation deleted!');
+            onInvitationChange();
+          },
+        )
+        .subscribe();
+
+    print('✅ [REALTIME] Subscribed to invitation changes');
+  }
+
+  /// Unsubscribe from invitation changes
+  void unsubscribeFromInvitationChanges() {
+    final userId = _supabase.auth.currentUser?.id;
+    if (userId != null) {
+      _supabase.removeChannel(_supabase.channel('invitations_$userId'));
+      print('🔌 [REALTIME] Unsubscribed from invitation changes');
     }
   }
 

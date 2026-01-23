@@ -108,19 +108,21 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
 
   Future<void> _playInitialSong() async {
     try {
-      print('🎵 [PlayerScreen] Playing song: ${widget.song.title}');
+      print('🎵 [PlayerScreen] Checking if song needs to be played');
 
-      // Just call playSong - it handles audio URL fetching internally
-      await _audioService.playSong(widget.song);
+      final currentMedia = await _audioService.mediaItemStream.first;
 
-      print('✅ [PlayerScreen] Song started successfully');
+      // Only play if it's a different song
+      if (currentMedia == null || currentMedia.id != widget.song.videoId) {
+        print('🎵 [PlayerScreen] Playing new song: ${widget.song.title}');
+        await _audioService.playSong(widget.song);
+      } else {
+        print('✅ [PlayerScreen] Song already playing: ${widget.song.title}');
+      }
     } catch (e, stackTrace) {
       print('❌ [PlayerScreen] Playback error: $e');
-
-      // 📳 VIBRATE: Triple pattern for critical error
       await HapticFeedbackService().vibrateCriticalError();
 
-      // Show error overlay
       setState(() {
         _hasAudioError = true;
         _errorMessage = 'Playback Error';
@@ -135,8 +137,6 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
       _errorOverlayController.forward();
     }
   }
-
-  // Replace the _playInitialSong method in PlayerScreen
 
   // Future<void> _playInitialSong() async {
   //   try {
@@ -757,11 +757,9 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
 
   @override
   Widget build(BuildContext context) {
-    // Get theme-aware background color
     final backgroundColor = ref.watch(themeBackgroundColorProvider);
     final iconActiveColor = ref.watch(themeIconActiveColorProvider);
     final iconInactiveColor = ref.watch(themeTextSecondaryColorProvider);
-    final cardBackgroundColor = ref.watch(themeCardBackgroundColorProvider);
 
     return Scaffold(
       backgroundColor: backgroundColor,
@@ -788,58 +786,35 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
 
                 return LayoutBuilder(
                   builder: (context, constraints) {
-                    final screenHeight = constraints.maxHeight;
                     final screenWidth = constraints.maxWidth;
-
-                    final topBarHeight = 56.0;
-                    final bottomControlsHeight = 80.0;
-                    final songInfoHeight = 100.0;
-                    final progressBarHeight = 70.0; // Reduced from 80
-                    final playerControlsHeight = 90.0; // Reduced from 100
-
-                    // Calculate available space for album art
-                    final totalFixedHeight =
-                        topBarHeight +
-                        songInfoHeight +
-                        progressBarHeight +
-                        playerControlsHeight +
-                        bottomControlsHeight;
-                    final availableSpace = screenHeight - totalFixedHeight;
-                    final albumArtSize = (availableSpace * 0.8).clamp(
-                      280.0,
-                      340.0,
-                    );
-                    final albumArtPadding = (screenWidth - albumArtSize) / 2;
 
                     return Column(
                       children: [
-                        // Minimalist Top Bar
+                        // ───────────────── TOP BAR ─────────────────
                         SizedBox(
-                          height: topBarHeight,
+                          height: 56,
                           child: Padding(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 8.0,
-                            ),
+                            padding: const EdgeInsets.symmetric(horizontal: 8),
                             child: Row(
                               mainAxisAlignment: MainAxisAlignment.spaceBetween,
                               children: [
                                 IconButton(
                                   icon: Icon(
                                     Icons.keyboard_arrow_down_rounded,
+                                    size: 32,
                                     color: ref.watch(
                                       themeTextPrimaryColorProvider,
                                     ),
-                                    size: 32,
                                   ),
                                   onPressed: () => Navigator.pop(context),
                                 ),
                                 IconButton(
                                   icon: Icon(
                                     Icons.more_horiz_rounded,
+                                    size: 28,
                                     color: ref.watch(
                                       themeTextPrimaryColorProvider,
                                     ),
-                                    size: 28,
                                   ),
                                   onPressed: () {
                                     Navigator.push(
@@ -855,379 +830,237 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
                           ),
                         ),
 
-                        // Flexible spacer instead of fixed
-                        Flexible(
-                          flex: 1,
-                          child: SizedBox(height: availableSpace * 0.1),
+                        const Spacer(),
+
+                        // ─────────────── ALBUM ART ───────────────
+                        _buildAlbumArtWithBlur(
+                          300,
+                          (screenWidth - 230) / 2,
+                          currentMedia,
+                          isPlaying,
                         ),
 
-                        // Album Art - wrapped in Flexible
-                        Flexible(
-                          flex: 5,
-                          child: _buildAlbumArtWithBlur(
-                            albumArtSize,
-                            (screenWidth - albumArtSize) / 2,
-                            currentMedia,
-                            isPlaying,
-                          ),
-                        ),
+                        const Spacer(),
 
-                        // Flexible spacer
-                        Flexible(
-                          flex: 1,
-                          child: SizedBox(height: availableSpace * 0.1),
-                        ),
-                        // Song Info
-                        Container(
-                          height: songInfoHeight,
-                          padding: const EdgeInsets.symmetric(horizontal: 24.0),
+                        // ───────────── SONG INFO ─────────────
+                        Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 24),
                           child: Column(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            mainAxisSize: MainAxisSize.min,
                             children: [
-                              Flexible(
-                                flex: 3,
-                                child: AutoSizeText(
-                                  currentMedia?.title ?? widget.song.title,
-                                  style: GoogleFonts.cabin(
-                                    color: ref.watch(
-                                      themeTextPrimaryColorProvider,
-                                    ),
-                                    fontSize: (screenWidth * 0.055).clamp(
-                                      20.0,
-                                      26.0,
-                                    ),
-                                    fontWeight: FontWeight.w400,
-                                    letterSpacing: 0.6,
+                              AutoSizeText(
+                                currentMedia?.title ?? widget.song.title,
+                                maxLines: 2,
+                                textAlign: TextAlign.center,
+                                style: GoogleFonts.cabin(
+                                  fontSize: 24,
+                                  fontWeight: FontWeight.w400,
+                                  letterSpacing: 0.6,
+                                  color: ref.watch(
+                                    themeTextPrimaryColorProvider,
                                   ),
-                                  textAlign: TextAlign.center,
-                                  maxLines: 2,
-                                  minFontSize: 16,
-                                  maxFontSize: 26,
-                                  overflow: TextOverflow.ellipsis,
                                 ),
                               ),
                               const SizedBox(height: 6),
-                              Flexible(
-                                flex: 1,
-                                child: AutoSizeText(
-                                  currentMedia?.artist ?? widget.song.artists,
-                                  style: GoogleFonts.dancingScript(
-                                    color: ref.watch(
-                                      themeTextSecondaryColorProvider,
-                                    ),
-                                    fontSize: (screenWidth * 0.04).clamp(
-                                      14.0,
-                                      18.0,
-                                    ),
-                                    fontWeight: FontWeight.w800,
-                                    letterSpacing: 0.7,
+                              AutoSizeText(
+                                currentMedia?.artist ?? widget.song.artists,
+                                maxLines: 1,
+                                textAlign: TextAlign.center,
+                                style: GoogleFonts.dancingScript(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.w800,
+                                  letterSpacing: 0.7,
+                                  color: ref.watch(
+                                    themeTextSecondaryColorProvider,
                                   ),
-                                  textAlign: TextAlign.center,
-                                  maxLines: 1,
-                                  minFontSize: 12,
-                                  maxFontSize: 18,
-                                  overflow: TextOverflow.ellipsis,
                                 ),
                               ),
                             ],
                           ),
                         ),
-                        // Progress Bar
+
+                        const SizedBox(height: 16),
+
+                        // ───────────── PROGRESS BAR ─────────────
                         StreamBuilder<Duration>(
                           stream: _audioService.positionStream,
-                          builder: (context, positionSnapshot) {
+                          builder: (context, posSnap) {
                             return StreamBuilder<Duration?>(
                               stream: _audioService.durationStream,
-                              builder: (context, durationSnapshot) {
-                                final position =
-                                    positionSnapshot.data ?? Duration.zero;
-                                final duration =
-                                    durationSnapshot.data ?? Duration.zero;
+                              builder: (context, durSnap) {
+                                final position = posSnap.data ?? Duration.zero;
+                                final duration = durSnap.data ?? Duration.zero;
 
                                 final progress = duration.inMilliseconds > 0
                                     ? position.inMilliseconds /
                                           duration.inMilliseconds
                                     : 0.0;
 
-                                return SizedBox(
-                                  height:
-                                      progressBarHeight + 10, // slightly taller
-                                  child: Column(
-                                    mainAxisAlignment: MainAxisAlignment.center,
-                                    children: [
-                                      Padding(
-                                        padding: const EdgeInsets.symmetric(
-                                          horizontal: 16.0, // 🔥 wider bar
-                                        ),
-                                        child: SliderTheme(
-                                          data: SliderThemeData(
-                                            trackHeight: 4, // 🔥 thicker track
-                                            thumbShape:
-                                                const RoundSliderThumbShape(
-                                                  enabledThumbRadius:
-                                                      7, // 🔥 bigger thumb
-                                                ),
-                                            overlayShape:
-                                                const RoundSliderOverlayShape(
-                                                  overlayRadius: 16,
-                                                ),
-                                            activeTrackColor: ref.watch(
-                                              themeIconActiveColorProvider,
-                                            ),
-                                            inactiveTrackColor: ref
-                                                .watch(
-                                                  themeTextSecondaryColorProvider,
-                                                )
-                                                .withOpacity(0.25),
-                                            thumbColor: ref.watch(
-                                              themeIconActiveColorProvider,
-                                            ),
-                                            overlayColor: ref
-                                                .watch(
-                                                  themeIconActiveColorProvider,
-                                                )
-                                                .withOpacity(0.25),
-                                          ),
-                                          child: Slider(
-                                            value: progress.clamp(0.0, 1.0),
-                                            onChanged: (value) {
-                                              final newPosition = Duration(
-                                                milliseconds:
-                                                    (duration.inMilliseconds *
-                                                            value)
-                                                        .round(),
-                                              );
-                                              _audioService.seek(newPosition);
-                                            },
-                                          ),
-                                        ),
+                                return Column(
+                                  children: [
+                                    SliderTheme(
+                                      data: SliderThemeData(
+                                        trackHeight: 4,
+                                        activeTrackColor: iconActiveColor,
+                                        inactiveTrackColor: iconInactiveColor
+                                            .withOpacity(0.25),
+                                        thumbColor: iconActiveColor,
                                       ),
-                                      const SizedBox(height: 6),
-                                      Padding(
-                                        padding: const EdgeInsets.symmetric(
-                                          horizontal:
-                                              20.0, // match slider width
-                                        ),
-                                        child: Row(
-                                          mainAxisAlignment:
-                                              MainAxisAlignment.spaceBetween,
-                                          children: [
-                                            Text(
-                                              _formatDuration(position),
-                                              style: GoogleFonts.pacifico(
-                                                color: ref.watch(
-                                                  themeTextSecondaryColorProvider,
-                                                ),
-                                                fontSize: 14,
-                                                fontWeight: FontWeight
-                                                    .w400, // Pacifico looks best lighter
-                                                letterSpacing: 0.6,
-                                              ),
+                                      child: Slider(
+                                        value: progress.clamp(0.0, 1.0),
+                                        onChanged: (value) {
+                                          _audioService.seek(
+                                            Duration(
+                                              milliseconds:
+                                                  (duration.inMilliseconds *
+                                                          value)
+                                                      .round(),
                                             ),
-
-                                            Text(
-                                              _formatDuration(duration),
-                                              style: GoogleFonts.pacifico(
-                                                color: ref.watch(
-                                                  themeTextSecondaryColorProvider,
-                                                ),
-                                                fontSize: 14,
-                                                fontWeight: FontWeight
-                                                    .w400, // Pacifico looks best lighter
-                                                letterSpacing: 0.6,
-                                              ),
-                                            ),
-                                          ],
-                                        ),
+                                          );
+                                        },
                                       ),
-                                    ],
-                                  ),
+                                    ),
+                                    Padding(
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 20,
+                                      ),
+                                      child: Row(
+                                        mainAxisAlignment:
+                                            MainAxisAlignment.spaceBetween,
+                                        children: [
+                                          Text(
+                                            _formatDuration(position),
+                                            style: GoogleFonts.pacifico(
+                                              fontSize: 14,
+                                              color: iconInactiveColor,
+                                            ),
+                                          ),
+                                          Text(
+                                            _formatDuration(duration),
+                                            style: GoogleFonts.pacifico(
+                                              fontSize: 14,
+                                              color: iconInactiveColor,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  ],
                                 );
                               },
                             );
                           },
                         ),
 
-                        // Premium Player Controls
-                        SizedBox(
-                          height: playerControlsHeight,
-                          child: Padding(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 16.0,
+                        const SizedBox(height: 20),
+
+                        // ─────────── UPPER CONTROLS (PREV / PLAY / NEXT) ───────────
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            IconButton(
+                              icon: const Icon(
+                                Icons.skip_previous_rounded,
+                                size: 38,
+                              ),
+                              onPressed: _audioService.skipToPrevious,
                             ),
-                            child: Row(
-                              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                              children: [
-                                // Heart Icon
-                                IconButton(
+                            const SizedBox(width: 20),
+                            Container(
+                              width: 72,
+                              height: 72,
+                              decoration: BoxDecoration(
+                                shape: BoxShape.circle,
+                                color: iconActiveColor,
+                                boxShadow: [
+                                  BoxShadow(
+                                    blurRadius: 20,
+                                    color: iconActiveColor.withOpacity(0.3),
+                                  ),
+                                ],
+                              ),
+                              child: IconButton(
+                                icon: Icon(
+                                  isPlaying
+                                      ? Icons.pause_rounded
+                                      : Icons.play_arrow_rounded,
+                                  size: 40,
+                                  color: backgroundColor,
+                                ),
+                                onPressed: _audioService.playPause,
+                              ),
+                            ),
+                            const SizedBox(width: 20),
+                            IconButton(
+                              icon: const Icon(
+                                Icons.skip_next_rounded,
+                                size: 38,
+                              ),
+                              onPressed: _audioService.skipToNext,
+                            ),
+                          ],
+                        ),
+
+                        const SizedBox(height: 20),
+
+                        // ─────────── LOWER CONTROLS (LOOP · HEART · RADIO) ───────────
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                          children: [
+                            // LOOP
+                            StreamBuilder<LoopMode>(
+                              stream: _audioService.loopModeStream,
+                              builder: (context, snap) {
+                                final mode = snap.data ?? LoopMode.off;
+                                return IconButton(
                                   icon: Icon(
-                                    widget.song.isFavorite
-                                        ? Icons.favorite_rounded
-                                        : Icons.favorite_border_rounded,
-                                    color: widget.song.isFavorite
-                                        ? Colors.red
-                                        : ref.watch(
-                                            themeTextSecondaryColorProvider,
-                                          ),
-                                    size: 26,
+                                    mode == LoopMode.one
+                                        ? Icons.repeat_one_rounded
+                                        : Icons.repeat_rounded,
+                                    color: mode == LoopMode.off
+                                        ? iconInactiveColor
+                                        : iconActiveColor,
                                   ),
                                   onPressed: () {
-                                    setState(() {
-                                      widget.song.isFavorite =
-                                          !widget.song.isFavorite;
-                                    });
-                                    _handleSaveToggle();
-                                  },
-                                ),
-
-                                // Previous
-                                IconButton(
-                                  icon: Icon(
-                                    Icons.skip_previous_rounded,
-                                    color: ref.watch(
-                                      themeTextPrimaryColorProvider,
-                                    ),
-                                    size: 36,
-                                  ),
-                                  onPressed: () {
-                                    _audioService.skipToPrevious();
-                                  },
-                                ),
-
-                                // Play/Pause
-                                Container(
-                                  width: 68,
-                                  height: 68,
-                                  decoration: BoxDecoration(
-                                    color: ref.watch(
-                                      themeIconActiveColorProvider,
-                                    ),
-                                    shape: BoxShape.circle,
-                                    boxShadow: [
-                                      BoxShadow(
-                                        color: ref
-                                            .watch(themeIconActiveColorProvider)
-                                            .withOpacity(0.3),
-                                        blurRadius: 20,
-                                        spreadRadius: 2,
-                                      ),
-                                    ],
-                                  ),
-                                  child: IconButton(
-                                    icon: Icon(
-                                      playbackSnapshot.data?.processingState ==
-                                              AudioProcessingState.loading
-                                          ? Icons.hourglass_empty_rounded
-                                          : isPlaying
-                                          ? Icons.pause_rounded
-                                          : Icons.play_arrow_rounded,
-                                      color: backgroundColor,
-                                      size: 36,
-                                    ),
-                                    onPressed: () {
-                                      _audioService.playPause();
-                                    },
-                                  ),
-                                ),
-
-                                // Next
-                                IconButton(
-                                  icon: Icon(
-                                    Icons.skip_next_rounded,
-                                    color: ref.watch(
-                                      themeTextPrimaryColorProvider,
-                                    ),
-                                    size: 36,
-                                  ),
-                                  onPressed: () {
-                                    _audioService.skipToNext();
-                                  },
-                                ),
-
-                                // Loop/Repeat Button
-                                StreamBuilder<LoopMode>(
-                                  stream: _audioService.loopModeStream,
-                                  builder: (context, snapshot) {
-                                    final loopMode =
-                                        snapshot.data ?? LoopMode.off;
-                                    Color loopColor;
-                                    IconData loopIcon;
-                                    String? loopTooltip;
-
-                                    switch (loopMode) {
-                                      case LoopMode.one:
-                                        loopColor = Colors
-                                            .orange; // Active color for single loop
-                                        loopIcon = Icons.repeat_one_rounded;
-                                        loopTooltip = 'Looping current song';
-                                        break;
-                                      case LoopMode.all:
-                                        loopColor = ref.watch(
-                                          themeIconActiveColorProvider,
-                                        ); // Active color for playlist loop
-                                        loopIcon = Icons.repeat_rounded;
-                                        loopTooltip = 'Looping playlist';
-                                        break;
-                                      case LoopMode.off:
-                                      default:
-                                        loopColor = ref.watch(
-                                          themeTextSecondaryColorProvider,
-                                        ); // Inactive color
-                                        loopIcon = Icons.repeat_rounded;
-                                        loopTooltip = 'No loop';
-                                        break;
-                                    }
-
-                                    return IconButton(
-                                      icon: Icon(
-                                        loopIcon,
-                                        color: loopColor,
-                                        size: 26,
-                                      ),
-                                      onPressed: () {
-                                        // Cycle through loop modes: off → all → one → off
-                                        switch (loopMode) {
-                                          case LoopMode.off:
-                                            _audioService.setLoopMode(
-                                              LoopMode.all,
-                                            );
-                                            break;
-                                          case LoopMode.all:
-                                            _audioService.setLoopMode(
-                                              LoopMode.one,
-                                            );
-                                            break;
-                                          case LoopMode.one:
-                                            _audioService.setLoopMode(
-                                              LoopMode.off,
-                                            );
-                                            break;
-                                        }
-
-                                        // Optional: Show a quick toast or tooltip
-                                        ScaffoldMessenger.of(
-                                          context,
-                                        ).showSnackBar(
-                                          SnackBar(
-                                            content: Text(loopTooltip!),
-                                            duration: const Duration(
-                                              seconds: 1,
-                                            ),
-                                            backgroundColor: ref.watch(
-                                              themeCardBackgroundColorProvider,
-                                            ),
-                                          ),
-                                        );
-                                      },
-                                      tooltip: loopTooltip,
+                                    _audioService.setLoopMode(
+                                      mode == LoopMode.off
+                                          ? LoopMode.all
+                                          : mode == LoopMode.all
+                                          ? LoopMode.one
+                                          : LoopMode.off,
                                     );
                                   },
-                                ),
-                              ],
+                                );
+                              },
                             ),
-                          ),
+
+                            // HEART
+                            IconButton(
+                              icon: Icon(
+                                widget.song.isFavorite
+                                    ? Icons.favorite_rounded
+                                    : Icons.favorite_border_rounded,
+                                color: widget.song.isFavorite
+                                    ? Colors.red
+                                    : iconInactiveColor,
+                              ),
+                              onPressed: () {
+                                setState(() {
+                                  widget.song.isFavorite =
+                                      !widget.song.isFavorite;
+                                });
+                                _handleSaveToggle();
+                              },
+                            ),
+
+                            // RADIO
+                            IconButton(
+                              icon: const Icon(Icons.radio_rounded),
+                              onPressed: _showRadioBottomSheet,
+                            ),
+                          ],
                         ),
+
+                        const SizedBox(height: 24),
                       ],
                     );
                   },

@@ -5,6 +5,7 @@ import 'package:vibeflow/api_base/yt_radio.dart';
 import 'package:vibeflow/constants/app_colors.dart';
 import 'package:vibeflow/models/quick_picks_model.dart';
 import 'package:vibeflow/services/audio_service.dart';
+import 'package:vibeflow/services/bg_audio_handler.dart';
 
 class EnhancedRadioSheet extends StatefulWidget {
   final String currentVideoId;
@@ -155,7 +156,8 @@ class _EnhancedRadioSheetState extends State<EnhancedRadioSheet>
 
   Future<void> _playNow(QuickPick song) async {
     try {
-      await widget.audioService.playSong(song);
+      // Use playSongFromRadio to maintain radio queue
+      await widget.audioService.playSongFromRadio(song);
       if (mounted) Navigator.pop(context);
     } catch (e) {
       print('Error playing song: $e');
@@ -355,133 +357,173 @@ class _EnhancedRadioSheetState extends State<EnhancedRadioSheet>
   }
 
   Widget _buildRadioTab() {
-    if (isLoading) {
-      return const Center(
-        child: CircularProgressIndicator(color: AppColors.iconActive),
-      );
-    }
+    final handler = getAudioHandler();
 
-    if (errorMessage != null) {
-      return Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            const Icon(Icons.error_outline, color: Colors.white54, size: 48),
-            const SizedBox(height: 16),
-            Text(
-              errorMessage!,
-              style: const TextStyle(color: Colors.white54, fontSize: 16),
-            ),
-            const SizedBox(height: 16),
-            ElevatedButton(
-              onPressed: _loadRadio,
-              style: ElevatedButton.styleFrom(
-                backgroundColor: AppColors.iconActive,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
-              ),
-              child: const Text('Retry'),
-            ),
-          ],
-        ),
-      );
-    }
-
-    if (radioSongs.isEmpty) {
+    if (handler == null) {
       return const Center(
         child: Text(
-          'No similar songs found',
+          'Audio handler not available',
           style: TextStyle(color: Colors.white54, fontSize: 16),
         ),
       );
     }
 
-    return Column(
-      children: [
-        // Stats bar
-        Container(
-          margin: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
-          padding: const EdgeInsets.all(16),
-          decoration: BoxDecoration(
-            color: Colors.white.withOpacity(0.05),
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: AppColors.iconActive.withOpacity(0.2)),
-          ),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Row(
-                children: [
-                  Icon(Icons.music_note, color: AppColors.iconActive, size: 20),
-                  const SizedBox(width: 8),
-                  Text(
-                    '${radioSongs.length} songs',
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 14,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ],
-              ),
-              Row(
-                children: [
-                  Icon(
-                    Icons.access_time,
+    return StreamBuilder<Map<String, dynamic>>(
+      stream: handler.customState.stream.cast<Map<String, dynamic>>(),
+      builder: (context, snapshot) {
+        final customState = snapshot.data ?? {};
+        final radioQueueData =
+            customState['radio_queue'] as List<dynamic>? ?? [];
+
+        if (radioQueueData.isEmpty) {
+          return Center(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(
+                  Icons.radio,
+                  size: 64,
+                  color: Colors.white.withOpacity(0.3),
+                ),
+                const SizedBox(height: 16),
+                Text(
+                  'Radio queue is loading...',
+                  style: TextStyle(
                     color: Colors.white.withOpacity(0.6),
-                    size: 18,
+                    fontSize: 18,
+                    fontWeight: FontWeight.w600,
                   ),
-                  const SizedBox(width: 6),
-                  Text(
-                    _calculateTotalDuration(radioSongs),
-                    style: TextStyle(
-                      color: Colors.white.withOpacity(0.6),
-                      fontSize: 14,
-                    ),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  'Similar songs will appear here',
+                  style: TextStyle(
+                    color: Colors.white.withOpacity(0.4),
+                    fontSize: 14,
+                  ),
+                ),
+              ],
+            ),
+          );
+        }
+
+        // Convert radio queue data to QuickPick objects
+        final songs = radioQueueData.map((songData) {
+          final data = songData as Map<String, dynamic>;
+          final durationMs = data['duration'] as int?;
+
+          return QuickPick(
+            videoId: data['id'] as String,
+            title: data['title'] as String,
+            artists: data['artist'] as String? ?? 'Unknown Artist',
+            thumbnail: data['artUri'] as String? ?? '',
+            duration: durationMs != null
+                ? _formatDuration(Duration(milliseconds: durationMs))
+                : null,
+          );
+        }).toList();
+
+        return Column(
+          children: [
+            // Stats bar
+            Container(
+              margin: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: Colors.white.withOpacity(0.05),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(
+                  color: AppColors.iconActive.withOpacity(0.2),
+                ),
+              ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Row(
+                    children: [
+                      Icon(
+                        Icons.music_note,
+                        color: AppColors.iconActive,
+                        size: 20,
+                      ),
+                      const SizedBox(width: 8),
+                      Text(
+                        '${songs.length} songs',
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 14,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
+                  ),
+                  Row(
+                    children: [
+                      Icon(
+                        Icons.access_time,
+                        color: Colors.white.withOpacity(0.6),
+                        size: 18,
+                      ),
+                      const SizedBox(width: 6),
+                      Text(
+                        _calculateTotalDuration(songs),
+                        style: TextStyle(
+                          color: Colors.white.withOpacity(0.6),
+                          fontSize: 14,
+                        ),
+                      ),
+                    ],
                   ),
                 ],
               ),
-            ],
-          ),
-        ),
+            ),
 
-        // Song list
-        Expanded(
-          child: StreamBuilder<MediaItem?>(
-            stream: widget.audioService.mediaItemStream,
-            builder: (context, mediaSnapshot) {
-              final currentMedia = mediaSnapshot.data;
+            // Song list
+            Expanded(
+              child: StreamBuilder<MediaItem?>(
+                stream: widget.audioService.mediaItemStream,
+                builder: (context, mediaSnapshot) {
+                  final currentMedia = mediaSnapshot.data;
 
-              return StreamBuilder<PlaybackState>(
-                stream: widget.audioService.playbackStateStream,
-                builder: (context, playbackSnapshot) {
-                  final playbackState = playbackSnapshot.data;
-                  final isPlaying = playbackState?.playing ?? false;
+                  return StreamBuilder<PlaybackState>(
+                    stream: widget.audioService.playbackStateStream,
+                    builder: (context, playbackSnapshot) {
+                      final playbackState = playbackSnapshot.data;
+                      final isPlaying = playbackState?.playing ?? false;
 
-                  return ListView.builder(
-                    itemCount: radioSongs.length,
-                    padding: const EdgeInsets.only(bottom: 20),
-                    itemBuilder: (context, index) {
-                      final song = radioSongs[index];
-                      final isCurrentSong = currentMedia?.id == song.videoId;
+                      return ListView.builder(
+                        itemCount: songs.length,
+                        padding: const EdgeInsets.only(bottom: 20),
+                        itemBuilder: (context, index) {
+                          final song = songs[index];
+                          final isCurrentSong =
+                              currentMedia?.id == song.videoId;
 
-                      return _buildSongItem(
-                        song: song,
-                        isCurrentSong: isCurrentSong,
-                        isPlaying: isPlaying,
-                        index: index + 1,
-                        showDragHandle: false,
+                          return _buildSongItem(
+                            song: song,
+                            isCurrentSong: isCurrentSong,
+                            isPlaying: isPlaying,
+                            index: index + 1,
+                            showDragHandle: false,
+                          );
+                        },
                       );
                     },
                   );
                 },
-              );
-            },
-          ),
-        ),
-      ],
+              ),
+            ),
+          ],
+        );
+      },
     );
+  }
+
+  // Add helper method for duration formatting
+  String _formatDuration(Duration duration) {
+    final minutes = duration.inMinutes;
+    final seconds = duration.inSeconds % 60;
+    return '$minutes:${seconds.toString().padLeft(2, '0')}';
   }
 
   Widget _buildQueueTab() {

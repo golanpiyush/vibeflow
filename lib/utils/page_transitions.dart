@@ -200,6 +200,38 @@ class PageTransitions {
     );
   }
 
+  /// Optimized scale transition specifically for player pages
+  static PageRouteBuilder playerScale({
+    required Widget page,
+    Duration duration = const Duration(milliseconds: 400),
+    Curve curve = Curves.easeOutCubic,
+    double beginScale = 0.92,
+  }) {
+    return PageRouteBuilder(
+      pageBuilder: (context, animation, secondaryAnimation) => page,
+      transitionsBuilder: (context, animation, secondaryAnimation, child) {
+        final scaleAnimation = Tween<double>(
+          begin: beginScale,
+          end: 1.0,
+        ).animate(CurvedAnimation(parent: animation, curve: curve));
+
+        final fadeAnimation = Tween<double>(begin: 0.0, end: 1.0).animate(
+          CurvedAnimation(
+            parent: animation,
+            curve: const Interval(0.0, 0.6, curve: Curves.easeIn),
+          ),
+        );
+
+        return FadeTransition(
+          opacity: fadeAnimation,
+          child: ScaleTransition(scale: scaleAnimation, child: child),
+        );
+      },
+      transitionDuration: duration,
+      reverseTransitionDuration: const Duration(milliseconds: 350),
+    );
+  }
+
   /// Directional slide based on index comparison
   /// Automatically determines direction (up/down) based on indices
   ///

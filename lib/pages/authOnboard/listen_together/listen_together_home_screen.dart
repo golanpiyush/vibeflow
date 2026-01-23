@@ -989,22 +989,55 @@ class _ListenTogetherHomeScreenState
     }
   }
 
+  // Replace the _startScanning method in ListenTogetherHomeScreen
+
   Future<void> _startScanning() async {
+    if (_isScanning) return;
+
+    print('🔍 [SCAN] Starting scan for nearby sessions...');
     setState(() => _isScanning = true);
 
-    // Simulate scanning for 3 seconds
-    await Future.delayed(const Duration(seconds: 3));
-
-    if (mounted) {
-      setState(() => _isScanning = false);
-
-      // Refresh invitations
+    try {
+      // Force immediate refresh of invitations
       await ref.read(invitationControllerProvider.notifier).refresh();
 
+      // Wait a moment for UI feedback
+      await Future.delayed(const Duration(milliseconds: 1500));
+
+      // Check if we have invitations now
       final invitations = ref.read(invitationControllerProvider);
-      if (invitations.isEmpty) {
+
+      if (mounted) {
+        setState(() => _isScanning = false);
+
+        if (invitations.isEmpty) {
+          print('📭 [SCAN] No pending invitations found');
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('No nearby sessions found'),
+              duration: Duration(seconds: 2),
+            ),
+          );
+        } else {
+          print('📬 [SCAN] Found ${invitations.length} invitation(s)!');
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Found ${invitations.length} session(s)!'),
+              backgroundColor: Colors.green,
+              duration: Duration(seconds: 2),
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      print('❌ [SCAN] Error during scan: $e');
+      if (mounted) {
+        setState(() => _isScanning = false);
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('No nearby sessions found')),
+          SnackBar(
+            content: Text('Error scanning: $e'),
+            backgroundColor: Colors.red,
+          ),
         );
       }
     }

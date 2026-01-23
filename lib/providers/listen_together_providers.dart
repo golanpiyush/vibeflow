@@ -2,6 +2,7 @@
 import 'dart:async';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_riverpod/legacy.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:vibeflow/api_base/db_actions.dart';
 import 'package:vibeflow/database/sync_listen.dart';
 import 'package:vibeflow/models/listening_together.dart';
@@ -283,36 +284,79 @@ final sessionControllerProvider =
 // ============================================================================
 // INVITATION CONTROLLER
 // ============================================================================
+/// Invitation controller - manages invitations with real-time updates
+// Replace the entire InvitationController class in listen_together_providers.dart
 
-/// Invitation controller - manages invitations
+/// Invitation controller - manages invitations with real-time updates
 class InvitationController extends StateNotifier<List<SessionInvitation>> {
   final SyncListeningService _service;
   Timer? _refreshTimer;
+  bool _isSubscribed = false;
 
   InvitationController(this._service) : super([]) {
     _loadInvitations();
+    _startRealtimeListener();
     _startAutoRefresh();
   }
 
   Future<void> _loadInvitations() async {
     try {
       final invitations = await _service.getPendingInvitations();
+      print('📨 [INVITATION] Loaded ${invitations.length} invitations');
+
+      // Update state
       state = invitations;
+
+      // Log invitation details
+      if (invitations.isNotEmpty) {
+        print(
+          '🎵 [INVITATION] You have ${invitations.length} pending invitation(s):',
+        );
+        for (var inv in invitations) {
+          print('   - From: ${inv.hostUsername}, Session: ${inv.sessionId}');
+        }
+      }
     } catch (e) {
       print('❌ [INVITATION] Error loading invitations: $e');
     }
   }
 
+  void _startRealtimeListener() {
+    if (_isSubscribed) return;
+
+    print('👂 [INVITATION] Starting real-time listener for invitations');
+
+    try {
+      // Subscribe to real-time changes using callback
+      _service.subscribeToInvitationChanges(
+        onInvitationChange: () {
+          print('🔔 [INVITATION] Real-time change detected, refreshing...');
+          _loadInvitations();
+        },
+      );
+      _isSubscribed = true;
+      print('✅ [INVITATION] Real-time subscription active');
+    } catch (e) {
+      print('❌ [INVITATION] Failed to start real-time listener: $e');
+    }
+  }
+
   void _startAutoRefresh() {
+    // Backup polling every 10 seconds
     _refreshTimer = Timer.periodic(const Duration(seconds: 10), (_) {
+      print('🔄 [INVITATION] Auto-refresh (backup polling)');
       _loadInvitations();
     });
   }
 
-  Future<void> refresh() => _loadInvitations();
+  Future<void> refresh() async {
+    print('🔄 [INVITATION] Manual refresh requested');
+    await _loadInvitations();
+  }
 
   Future<bool> acceptInvitation(String invitationId, String sessionId) async {
     try {
+      print('✅ [INVITATION] Accepting invitation: $invitationId');
       await _service.acceptInvitation(invitationId, sessionId);
       await _loadInvitations();
       return true;
@@ -324,6 +368,7 @@ class InvitationController extends StateNotifier<List<SessionInvitation>> {
 
   Future<bool> declineInvitation(String invitationId) async {
     try {
+      print('❌ [INVITATION] Declining invitation: $invitationId');
       await _service.declineInvitation(invitationId);
       await _loadInvitations();
       return true;
@@ -335,7 +380,12 @@ class InvitationController extends StateNotifier<List<SessionInvitation>> {
 
   @override
   void dispose() {
+    print('🗑️ [INVITATION] Disposing invitation controller');
     _refreshTimer?.cancel();
+    if (_isSubscribed) {
+      _service.unsubscribeFromInvitationChanges();
+      _isSubscribed = false;
+    }
     super.dispose();
   }
 }

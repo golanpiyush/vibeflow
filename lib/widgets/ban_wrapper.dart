@@ -2,6 +2,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:vibeflow/services/bg_audio_handler.dart'; // Import your audio handler
 
 // ==================== BANNED SCREEN ====================
 class BannedScreen extends StatelessWidget {
@@ -53,7 +54,7 @@ class BannedScreen extends StatelessWidget {
 
                     // Title
                     Text(
-                      'Account Suspended',
+                      'You Seem to be Banned',
                       style: TextStyle(
                         fontSize: 32,
                         fontWeight: FontWeight.bold,
@@ -97,7 +98,7 @@ class BannedScreen extends StatelessWidget {
                           ),
                           const SizedBox(height: 12),
                           Text(
-                            'If you believe this is a mistake, please contact our support team.',
+                            'If you believe this is a mistake, please contact our support team at support@vibeflow.com',
                             style: TextStyle(
                               fontSize: 14,
                               color: Colors.white.withOpacity(0.6),
@@ -111,24 +112,63 @@ class BannedScreen extends StatelessWidget {
 
                     const SizedBox(height: 40),
 
-                    // Logout Button
-                    ElevatedButton.icon(
+                    // Disabled message
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 14,
+                      ),
+                      decoration: BoxDecoration(
+                        color: Colors.orange.withOpacity(0.1),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(
+                          color: Colors.orange.withOpacity(0.3),
+                          width: 1,
+                        ),
+                      ),
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Icon(
+                            Icons.warning_amber_rounded,
+                            color: Colors.orange.shade400,
+                            size: 20,
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Text(
+                              'Access to login and registration is currently disabled for your account.',
+                              style: TextStyle(
+                                fontSize: 13,
+                                color: Colors.white.withOpacity(0.7),
+                                height: 1.4,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+
+                    const SizedBox(height: 24),
+
+                    // Sign Out Button
+                    OutlinedButton.icon(
                       onPressed: () async {
                         await Supabase.instance.client.auth.signOut();
-                        if (context.mounted) {
-                          Navigator.of(
-                            context,
-                          ).pushNamedAndRemoveUntil('/login', (route) => false);
-                        }
                       },
-                      icon: const Icon(Icons.logout),
-                      label: const Text('Sign Out'),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.red.shade700,
-                        foregroundColor: Colors.white,
+                      icon: const Icon(Icons.logout, color: Colors.red),
+                      label: Text(
+                        'Sign Out',
+                        style: TextStyle(color: Colors.red.shade400),
+                      ),
+                      style: OutlinedButton.styleFrom(
                         padding: const EdgeInsets.symmetric(
                           horizontal: 32,
                           vertical: 16,
+                        ),
+                        side: BorderSide(
+                          color: Colors.red.shade400,
+                          width: 1.5,
                         ),
                         shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(12),
@@ -162,28 +202,77 @@ final banStatusProvider = StreamProvider.autoDispose<bool>((ref) {
       .eq('id', userId)
       .map((data) {
         if (data.isEmpty) return false;
-        return data.first['is_banned'] == true;
+        final isBanned = data.first['is_banned'] == true;
+
+        // CRITICAL: If banned status detected, immediately stop audio
+        if (isBanned) {
+          _stopAudioImmediately();
+        }
+
+        return isBanned;
       });
 
   return stream;
 });
 
+// ==================== IMMEDIATE AUDIO STOP FUNCTION ====================
+// ==================== IMMEDIATE AUDIO STOP FUNCTION ====================
+void _stopAudioImmediately() {
+  try {
+    final audioHandler = getAudioHandler();
+    if (audioHandler != null) {
+      print('🚨 [BAN DETECTED] Stopping audio immediately...');
+
+      // Use the public method
+      audioHandler.stopImmediately();
+
+      print('✅ [BAN DETECTED] Audio stopped and trackers suspended');
+    } else {
+      print('⚠️ [BAN DETECTED] Audio handler not initialized');
+    }
+  } catch (e) {
+    print('❌ [BAN DETECTED] Error stopping audio: $e');
+  }
+}
+
 // ==================== BAN WRAPPER WIDGET ====================
-class BanWrapper extends ConsumerWidget {
+class BanWrapper extends ConsumerStatefulWidget {
   final Widget child;
 
   const BanWrapper({Key? key, required this.child}) : super(key: key);
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<BanWrapper> createState() => _BanWrapperState();
+}
+
+class _BanWrapperState extends ConsumerState<BanWrapper> {
+  bool _wasPlayingBeforeBan = false;
+
+  @override
+  Widget build(BuildContext context) {
     final banStatusAsync = ref.watch(banStatusProvider);
 
     return banStatusAsync.when(
       data: (isBanned) {
         if (isBanned) {
+          // Track if audio was playing when ban occurred
+          if (!_wasPlayingBeforeBan) {
+            final audioHandler = getAudioHandler();
+            _wasPlayingBeforeBan = audioHandler?.isPlaying ?? false;
+
+            if (_wasPlayingBeforeBan) {
+              print('🎵 [BAN WRAPPER] Audio was playing, stopping now...');
+              _stopAudioImmediately();
+            }
+          }
+
+          // Always show BannedScreen when banned
           return const BannedScreen();
         }
-        return child;
+
+        // Reset flag when unbanned
+        _wasPlayingBeforeBan = false;
+        return widget.child;
       },
       loading: () => const Scaffold(
         backgroundColor: Colors.black,
@@ -192,7 +281,7 @@ class BanWrapper extends ConsumerWidget {
       error: (error, stack) {
         // On error, show the child (fail open for better UX)
         print('❌ Error checking ban status: $error');
-        return child;
+        return widget.child;
       },
     );
   }

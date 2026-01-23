@@ -1,11 +1,16 @@
+import 'dart:io';
 import 'dart:math';
 import 'dart:ui';
+import 'package:device_info_plus/device_info_plus.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:audio_service/audio_service.dart';
 import 'package:just_audio/just_audio.dart';
+import 'package:permission_handler/permission_handler.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:vibeflow/api_base/vibeflowcore.dart';
+import 'package:vibeflow/managers/download_manager.dart';
 import 'package:vibeflow/models/quick_picks_model.dart';
 import 'package:vibeflow/pages/thoughtsScreen.dart';
 import 'package:vibeflow/services/audio_service.dart';
@@ -13,6 +18,13 @@ import 'package:vibeflow/services/bg_audio_handler.dart';
 import 'package:vibeflow/utils/album_color_generator.dart';
 import 'package:vibeflow/pages/player_page.dart';
 import 'package:vibeflow/utils/material_transitions.dart';
+import 'package:vibeflow/utils/page_transitions.dart';
+import 'package:vibeflow/widgets/lyrics_widget.dart';
+import 'package:vibeflow/widgets/radio_sheet.dart';
+
+enum ViewMode { album, lyrics }
+
+ViewMode _viewMode = ViewMode.album;
 
 class NewPlayerPage extends ConsumerStatefulWidget {
   final QuickPick song;
@@ -50,28 +62,13 @@ class NewPlayerPage extends ConsumerStatefulWidget {
     }
 
     if (context.mounted) {
-      Navigator.push(
+      // Use PageTransitions.instant for zero-lag navigation
+      await Navigator.push(
         context,
-        PageRouteBuilder(
-          pageBuilder: (context, animation, secondaryAnimation) => useBetaPlayer
+        PageTransitions.playerScale(
+          page: useBetaPlayer
               ? NewPlayerPage(song: song, heroTag: heroTag)
               : PlayerScreen(song: song, heroTag: heroTag),
-          transitionDuration: const Duration(milliseconds: 400),
-          reverseTransitionDuration: const Duration(milliseconds: 400),
-          transitionsBuilder: (context, animation, secondaryAnimation, child) {
-            final slideAnimation =
-                Tween<Offset>(
-                  begin: const Offset(0.0, 1.0),
-                  end: Offset.zero,
-                ).animate(
-                  CurvedAnimation(
-                    parent: animation,
-                    curve: Curves.easeOutCubic,
-                  ),
-                );
-
-            return SlideTransition(position: slideAnimation, child: child);
-          },
         ),
       );
     }
@@ -85,45 +82,318 @@ class _NewPlayerPageState extends ConsumerState<NewPlayerPage>
   late AnimationController _rotationController;
   AlbumPalette? _albumPalette;
   String? _lastArtworkUrl;
-
   bool _isLiked = false;
+  bool _isCheckingLiked = true;
+  bool _isSavingLike = false;
+  bool _isRefetchingUrl = false;
+  double _lastRotationValue = 0.0;
+  bool _isReturningToNormal = false;
 
   @override
   void initState() {
     super.initState();
 
     _scaleController = AnimationController(
-      duration: const Duration(milliseconds: 800),
+      duration: const Duration(milliseconds: 600),
       vsync: this,
     );
 
     _rotationController = AnimationController(
       duration: const Duration(seconds: 20),
       vsync: this,
-    )..repeat();
+    );
 
-    // ✅ Load palette using initial song artwork
-    _loadAlbumPalette(widget.song.thumbnail);
+    // ✅ UPDATED: Listen to rotation controller to track position
+    _rotationController.addListener(() {
+      if (!_isReturningToNormal) {
+        _lastRotationValue = _rotationController.value;
+      }
+    });
+
+    // ✅ OPTIMIZED: Defer heavy operations until after first frame
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        _scaleController.forward();
+        _loadAlbumPalette(widget.song.thumbnail);
+        _preloadArtwork();
+      }
+    });
 
     _playInitialSong();
+    _checkIfLiked();
+    _listenForPlaybackErrors();
 
-    // ✅ Listen to playback state changes for rotation control
+    // ✅ UPDATED: Listen for playback state changes
     _audioService.playbackStateStream.listen((state) {
       if (mounted) {
         _updateRotation(state.playing);
       }
     });
+  }
 
-    Future.delayed(const Duration(milliseconds: 200), () {
+  Future<void> _checkIfLiked() async {
+    try {
+      final downloadService = DownloadService.instance;
+      final savedSongs = await downloadService.getDownloadedSongs();
+
+      final isLiked = savedSongs.any(
+        (song) => song.videoId == widget.song.videoId,
+      );
+
       if (mounted) {
-        _scaleController.forward();
+        setState(() {
+          _isLiked = isLiked;
+          _isCheckingLiked = false;
+        });
+      }
+    } catch (e) {
+      print('Error checking if song is liked: $e');
+      if (mounted) {
+        setState(() => _isCheckingLiked = false);
+      }
+    }
+  }
+
+  Future<bool> _ensureStoragePermission() async {
+    Permission permission;
+
+    if (Platform.isAndroid) {
+      final androidInfo = await DeviceInfoPlugin().androidInfo;
+
+      if (androidInfo.version.sdkInt >= 33) {
+        // Android 13+
+        permission = Permission.audio; // READ_MEDIA_AUDIO
+      } else {
+        // Android 12 and below
+        permission = Permission.storage;
+      }
+    } else {
+      return true; // iOS / others
+    }
+
+    if (await permission.isGranted) return true;
+
+    // Explain first
+    final shouldRequest = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color(0xFF0A0A0A),
+        title: const Text(
+          'Storage permission required',
+          style: TextStyle(color: Colors.white),
+        ),
+        content: const Text(
+          'VibeFlow needs access to save songs '
+          'so you can listen offline anytime.',
+          style: TextStyle(color: Colors.white70),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text(
+              'Not now',
+              style: TextStyle(color: Colors.white70),
+            ),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.white,
+              foregroundColor: Colors.black,
+            ),
+            child: const Text('Allow'),
+          ),
+        ],
+      ),
+    );
+
+    if (shouldRequest != true) return false;
+
+    final result = await permission.request();
+    return result.isGranted;
+  }
+
+  void _listenForPlaybackErrors() {
+    final handler = getAudioHandler();
+    if (handler == null) return;
+
+    handler.customState.listen((customState) {
+      if (!mounted) return;
+
+      final hasError = customState['playback_error'] as bool? ?? false;
+      final errorMessage = customState['error_message'] as String?;
+      final isSourceError = customState['is_source_error'] as bool? ?? false;
+
+      if (hasError && errorMessage != null) {
+        print('🔴 [NewPlayerPage] Playback error detected: $errorMessage');
+
+        if (isSourceError) {
+          _showErrorSnackbarWithRetry(errorMessage);
+        } else {
+          _showErrorSnackbar(errorMessage);
+        }
+
+        // Clear error state after showing
+        handler.clearPlaybackError();
       }
     });
   }
 
+  void _showErrorSnackbar(String message) {
+    if (!mounted) return;
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Row(
+          children: [
+            const Icon(Icons.error_outline, color: Colors.white),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(message, style: const TextStyle(color: Colors.white)),
+            ),
+          ],
+        ),
+        backgroundColor: Colors.red.shade700,
+        duration: const Duration(seconds: 4),
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
+  }
+
+  void _showErrorSnackbarWithRetry(String message) {
+    if (!mounted) return;
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Row(
+          children: [
+            const Icon(Icons.error_outline, color: Colors.white),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'Playback Error',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  Text(
+                    message,
+                    style: const TextStyle(color: Colors.white70, fontSize: 12),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+        backgroundColor: Colors.red.shade700,
+        duration: const Duration(seconds: 6),
+        behavior: SnackBarBehavior.floating,
+        action: SnackBarAction(
+          label: 'RETRY',
+          textColor: Colors.white,
+          onPressed: _hardRefetchAndRetry,
+        ),
+      ),
+    );
+  }
+
+  Future<void> _hardRefetchAndRetry() async {
+    if (_isRefetchingUrl) {
+      print('⏳ Already refetching URL, please wait...');
+      return;
+    }
+
+    setState(() => _isRefetchingUrl = true);
+
+    try {
+      print('🔄 [Hard Refetch] Starting manual URL refresh...');
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Row(
+            children: [
+              const SizedBox(
+                width: 20,
+                height: 20,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                ),
+              ),
+              const SizedBox(width: 12),
+              const Text('Refreshing audio source...'),
+            ],
+          ),
+          backgroundColor: Colors.blue.shade700,
+          duration: const Duration(seconds: 30),
+        ),
+      );
+
+      final handler = getAudioHandler();
+      if (handler == null) throw Exception('Audio handler not available');
+
+      final currentMedia = handler.mediaItem.value;
+      if (currentMedia == null) throw Exception('No song currently playing');
+
+      // Hard refetch the URL
+      final success = await handler.hardRefetchCurrentUrl();
+
+      if (success) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Row(
+              children: [
+                const Icon(Icons.check_circle, color: Colors.white),
+                const SizedBox(width: 12),
+                const Text('Playback resumed successfully'),
+              ],
+            ),
+            backgroundColor: Colors.green.shade700,
+            duration: const Duration(seconds: 2),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      } else {
+        throw Exception('Failed to refresh URL');
+      }
+    } catch (e) {
+      print('❌ [Hard Refetch] Failed: $e');
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to recover: $e'),
+            backgroundColor: Colors.red.shade700,
+            duration: const Duration(seconds: 3),
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isRefetchingUrl = false);
+      }
+    }
+  }
+
   Future<void> _playInitialSong() async {
     try {
-      await _audioService.playSong(widget.song);
+      print('🎵 [NewPlayerPage] Checking if song needs to be played');
+
+      final currentMedia = await _audioService.mediaItemStream.first;
+
+      // Only play if it's a different song
+      if (currentMedia == null || currentMedia.id != widget.song.videoId) {
+        print('🎵 [NewPlayerPage] Playing new song: ${widget.song.title}');
+        await _audioService.playSong(widget.song);
+      } else {
+        print('✅ [NewPlayerPage] Song already playing: ${widget.song.title}');
+      }
     } catch (e) {
       print('❌ [NewPlayerPage] Playback error: $e');
     }
@@ -134,37 +404,38 @@ class _NewPlayerPageState extends ConsumerState<NewPlayerPage>
 
     _lastArtworkUrl = artworkUrl;
 
+    // ✅ CRITICAL: Load asynchronously without blocking UI
     try {
-      final palette = await AlbumColorGenerator.fromAnySource(artworkUrl);
-      if (mounted) {
-        setState(() => _albumPalette = palette);
-      }
-    } catch (_) {
-      // fail silently – UI should never break
+      AlbumColorGenerator.fromAnySource(artworkUrl)
+          .then((palette) {
+            if (mounted) {
+              setState(() => _albumPalette = palette);
+            }
+          })
+          .catchError((e) {
+            // Silent fail - don't block UI for colors
+            print('⚠️ Palette extraction failed: $e');
+          });
+    } catch (e) {
+      // Silent fail
+      print('⚠️ Palette load error: $e');
     }
-  } // Add this method to handle play/pause state changes
+  }
 
   void _updateRotation(bool isPlaying) {
     if (isPlaying) {
-      // Start continuous rotation
-      _rotationController.repeat();
+      // Resume rotation from where we left off
+      if (_isReturningToNormal) {
+        // If we were returning to normal, continue from current position
+        _isReturningToNormal = false;
+        _rotationController.forward(from: _rotationController.value);
+      } else if (!_rotationController.isAnimating) {
+        // Start fresh rotation
+        _rotationController.repeat();
+      }
     } else {
-      // Smoothly return to 0 position
-      final currentValue = _rotationController.value;
-      _rotationController.stop();
-
-      // Animate to nearest 0 position (complete the current rotation)
-      _rotationController
-          .animateTo(
-            1.0,
-            duration: Duration(
-              milliseconds: (800 * (1.0 - currentValue)).round(),
-            ),
-            curve: Curves.easeOut,
-          )
-          .then((_) {
-            _rotationController.value = 0.0; // Reset to start
-          });
+      // Paused - rotate back to normal (0° or 360°)
+      _rotateToNearestNormal();
     }
   }
 
@@ -197,64 +468,42 @@ class _NewPlayerPageState extends ConsumerState<NewPlayerPage>
                 stream: _audioService.playbackStateStream,
                 builder: (context, playbackSnapshot) {
                   final isPlaying = playbackSnapshot.data?.playing ?? false;
+                  final playbackState = playbackSnapshot.data;
 
+                  // OPTIMIZED: Single position/duration listener
                   return StreamBuilder<Duration>(
                     stream: _audioService.positionStream,
                     builder: (context, positionSnapshot) {
-                      return StreamBuilder<Duration?>(
-                        stream: _audioService.durationStream,
-                        builder: (context, durationSnapshot) {
-                          final position =
-                              positionSnapshot.data ?? Duration.zero;
-                          final duration =
-                              durationSnapshot.data ?? Duration.zero;
+                      final position = positionSnapshot.data ?? Duration.zero;
 
-                          return Padding(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 20.0,
-                              vertical: 16.0,
-                            ),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                // Top Bar
-                                _buildTopBar(),
-
-                                const SizedBox(height: 24),
-
-                                // Song Title
-                                _buildSongTitle(currentMedia),
-
-                                const SizedBox(height: 32),
-
-                                // Circular Album Art
-                                Expanded(
-                                  child: Center(
-                                    child: _buildCircularAlbumArt(
-                                      currentMedia,
-                                      isPlaying,
-                                      position,
-                                    ),
-                                  ),
-                                ),
-
-                                const SizedBox(height: 32),
-
-                                // Playback Controls
-                                _buildPlaybackControls(
+                      return Padding(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 20.0,
+                          vertical: 16.0,
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            _buildTopBar(),
+                            const SizedBox(height: 24),
+                            _buildSongTitle(currentMedia),
+                            const SizedBox(height: 32),
+                            Expanded(
+                              child: Center(
+                                child: _buildCircularAlbumArt(
+                                  currentMedia,
                                   isPlaying,
-                                  playbackSnapshot,
+                                  position,
                                 ),
-
-                                const SizedBox(height: 30),
-
-                                // // Next Songs Section
-                                _buildNextSongsSection(),
-                                const SizedBox(height: 20),
-                              ],
+                              ),
                             ),
-                          );
-                        },
+                            const SizedBox(height: 32),
+                            _buildPlaybackControls(isPlaying, playbackState),
+                            const SizedBox(height: 30),
+                            _buildRadioLyricsToggle(),
+                            const SizedBox(height: 20),
+                          ],
+                        ),
                       );
                     },
                   );
@@ -307,7 +556,7 @@ class _NewPlayerPageState extends ConsumerState<NewPlayerPage>
                 currentMedia?.title ?? widget.song.title,
                 style: GoogleFonts.inter(
                   fontSize: 38,
-                  fontWeight: FontWeight.w300, // Very thin, like in image
+                  fontWeight: FontWeight.w300,
                   color: Colors.white,
                   letterSpacing: -0.5,
                   height: 1.1,
@@ -320,7 +569,7 @@ class _NewPlayerPageState extends ConsumerState<NewPlayerPage>
                 currentMedia?.artist ?? widget.song.artists,
                 style: GoogleFonts.inter(
                   fontSize: 15,
-                  fontWeight: FontWeight.w500, // Light weight
+                  fontWeight: FontWeight.w500,
                   color: Colors.white.withOpacity(0.7),
                   letterSpacing: 0.2,
                 ),
@@ -331,19 +580,42 @@ class _NewPlayerPageState extends ConsumerState<NewPlayerPage>
           ),
         ),
         const SizedBox(width: 12),
-        IconButton(
-          icon: Icon(
-            _isLiked ? Icons.favorite : Icons.favorite_border,
-            color: _isLiked ? Colors.red : Colors.white,
-            size: 26,
-          ),
-          onPressed: () {
-            setState(() {
-              _isLiked = !_isLiked;
-            });
-          },
-          padding: EdgeInsets.zero,
-        ),
+        // Updated like button with loading state
+        _isCheckingLiked
+            ? const SizedBox(
+                width: 48,
+                height: 48,
+                child: Center(
+                  child: SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                    ),
+                  ),
+                ),
+              )
+            : IconButton(
+                icon: _isSavingLike
+                    ? const SizedBox(
+                        width: 26,
+                        height: 26,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          valueColor: AlwaysStoppedAnimation<Color>(
+                            Colors.white,
+                          ),
+                        ),
+                      )
+                    : Icon(
+                        _isLiked ? Icons.favorite : Icons.favorite_border,
+                        color: _isLiked ? Colors.red : Colors.white,
+                        size: 26,
+                      ),
+                onPressed: _isSavingLike ? null : _toggleLike,
+                padding: EdgeInsets.zero,
+              ),
       ],
     );
   }
@@ -355,13 +627,13 @@ class _NewPlayerPageState extends ConsumerState<NewPlayerPage>
   ) {
     final artworkUrl =
         currentMedia?.artUri?.toString() ?? widget.song.thumbnail;
-
     final palette = _albumPalette;
 
     return AnimatedBuilder(
-      animation: Listenable.merge([_scaleController, _rotationController]),
+      animation: _scaleController,
       builder: (context, child) {
-        final scaleValue = Tween<double>(begin: 0.8, end: 1.0)
+        // ✅ OPTIMIZED: Smoother curve
+        final scaleValue = Tween<double>(begin: 0.88, end: 1.0)
             .animate(
               CurvedAnimation(
                 parent: _scaleController,
@@ -370,165 +642,167 @@ class _NewPlayerPageState extends ConsumerState<NewPlayerPage>
             )
             .value;
 
-        final rotationValue = _rotationController.value;
+        return Transform.scale(scale: scaleValue, child: child);
+      },
+      child: _viewMode == ViewMode.lyrics
+          ? _buildLyricsView(currentMedia)
+          : _buildAlbumView(artworkUrl, palette, isPlaying, position),
+    );
+  }
 
-        return Transform.scale(
-          scale: scaleValue,
-          child: GestureDetector(
-            onTap: () {
-              if (isPlaying) {
-                _audioService.pause();
-              } else {
-                _audioService.play();
-              }
-            },
-            child: Stack(
-              alignment: Alignment.center,
-              clipBehavior: Clip.none,
-              children: [
-                // 🌈 PALETTE GLOW (PERFECT CIRCLE)
-                if (palette != null)
-                  Transform.rotate(
-                    angle: rotationValue * 2 * pi,
-                    child: Container(
-                      width: 420,
-                      height: 420,
-                      decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        boxShadow: [
-                          BoxShadow(
-                            color: palette.vibrant.withOpacity(0.55),
-                            blurRadius: 50,
-                            spreadRadius: 12,
-                          ),
-                          BoxShadow(
-                            color: palette.dominant.withOpacity(0.35),
-                            blurRadius: 23,
-                            spreadRadius: 8,
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-
-                // 🖤 FALLBACK DARK RING (while palette loads)
-                if (palette == null)
-                  Transform.rotate(
-                    angle: rotationValue * 2 * pi,
-                    child: Container(
-                      width: 390,
-                      height: 390,
-                      decoration: const BoxDecoration(
-                        shape: BoxShape.circle,
-                        gradient: LinearGradient(
-                          begin: Alignment.topLeft,
-                          end: Alignment.bottomRight,
-                          colors: [Color(0xFF2F2F2F), Color(0xFF1A1A1A)],
-                        ),
-                      ),
-                    ),
-                  ),
-
-                // 💿 ALBUM FRAME (with rotation when playing)
-                Transform.rotate(
-                  angle: rotationValue * 2 * pi,
+  Widget _buildAlbumView(
+    String artworkUrl,
+    AlbumPalette? palette,
+    bool isPlaying,
+    Duration position,
+  ) {
+    return GestureDetector(
+      onTap: () {
+        if (isPlaying) {
+          _audioService.pause();
+        } else {
+          _audioService.play();
+        }
+      },
+      child: Stack(
+        alignment: Alignment.center,
+        clipBehavior: Clip.none,
+        children: [
+          // ✅ UPDATED: Glow rotates with album art
+          if (palette != null)
+            AnimatedBuilder(
+              animation: _rotationController,
+              builder: (context, child) {
+                return Transform.rotate(
+                  angle: _rotationController.value * 2 * pi,
                   child: Container(
-                    width: 350,
-                    height: 350,
-                    padding: const EdgeInsets.all(14),
+                    width: 380,
+                    height: 380,
                     decoration: BoxDecoration(
                       shape: BoxShape.circle,
-                      gradient: const LinearGradient(
-                        begin: Alignment.topLeft,
-                        end: Alignment.bottomRight,
-                        colors: [Color(0xFF3D3D3D), Color(0xFF1F1F1F)],
-                      ),
                       boxShadow: [
                         BoxShadow(
-                          color: Colors.black.withOpacity(0.75),
-                          blurRadius: 30,
-                          offset: const Offset(0, 12),
+                          color: palette.vibrant.withOpacity(
+                            isPlaying ? 0.4 : 0.25,
+                          ),
+                          blurRadius: isPlaying ? 40 : 30,
+                          spreadRadius: isPlaying ? 8 : 5,
                         ),
                       ],
                     ),
-                    child: ClipOval(
-                      child: Stack(
-                        fit: StackFit.expand,
-                        children: [
-                          if (artworkUrl.isNotEmpty)
-                            buildAlbumArtImage(
-                              artworkUrl: artworkUrl,
-                              fit: BoxFit.cover,
-                              errorBuilder: (_, __, ___) => _buildPlaceholder(),
-                            )
-                          else
-                            _buildPlaceholder(),
-
-                          // 🎚 Subtle vignette
-                          Container(
-                            decoration: BoxDecoration(
-                              gradient: LinearGradient(
-                                begin: Alignment.topCenter,
-                                end: Alignment.bottomCenter,
-                                colors: [
-                                  Colors.transparent,
-                                  Colors.black.withOpacity(0.25),
-                                ],
-                              ),
-                            ),
-                          ),
-
-                          // 🔘 PAUSE OVERLAY (60% dim when paused)
-                          AnimatedOpacity(
-                            opacity: isPlaying ? 0.0 : 0.6,
-                            duration: const Duration(milliseconds: 300),
-                            curve: Curves.easeInOut,
-                            child: Container(color: Colors.black),
-                          ),
-                        ],
-                      ),
-                    ),
                   ),
-                ),
+                );
+              },
+            ),
 
-                // ⏱ TIME BADGE
-                Positioned(
-                  bottom: -12,
-                  child: ClipRRect(
-                    borderRadius: BorderRadius.circular(16),
-                    child: BackdropFilter(
-                      filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 12,
-                          vertical: 6,
-                        ),
-                        decoration: BoxDecoration(
-                          color: Colors.black.withOpacity(0.6),
-                          borderRadius: BorderRadius.circular(16),
-                          border: Border.all(
-                            color: Colors.white.withOpacity(0.15),
-                            width: 0.5,
-                          ),
-                        ),
-                        child: Text(
-                          _formatDuration(position),
-                          style: GoogleFonts.inter(
-                            color: Colors.white.withOpacity(0.9),
-                            fontSize: 12,
-                            fontWeight: FontWeight.w400,
-                            letterSpacing: 0.3,
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
+          // ✅ UPDATED: Album frame always synced with rotation controller
+          AnimatedBuilder(
+            animation: _rotationController,
+            builder: (context, child) {
+              return Transform.rotate(
+                angle: _rotationController.value * 2 * pi,
+                child: child,
+              );
+            },
+            child: _buildAlbumFrame(artworkUrl, isPlaying),
+          ),
+
+          // TIME BADGE
+          Positioned(
+            bottom: -12,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+              decoration: BoxDecoration(
+                color: Colors.black.withOpacity(0.8),
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(
+                  color: Colors.white.withOpacity(0.2),
+                  width: 1,
                 ),
-              ],
+              ),
+              child: Text(
+                _formatDuration(position),
+                style: GoogleFonts.inter(
+                  color: Colors.white.withOpacity(0.9),
+                  fontSize: 12,
+                  fontWeight: FontWeight.w400,
+                  letterSpacing: 0.3,
+                ),
+              ),
             ),
           ),
-        );
-      },
+        ],
+      ),
+    );
+  }
+
+  Widget _buildAlbumFrame(String artworkUrl, bool isPlaying) {
+    return Container(
+      width: 350,
+      height: 350,
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        gradient: const LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [Color(0xFF3D3D3D), Color(0xFF1F1F1F)],
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.6),
+            blurRadius: 20,
+            offset: const Offset(0, 8),
+          ),
+        ],
+      ),
+      child: ClipOval(
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            if (artworkUrl.isNotEmpty)
+              // ✅ OPTIMIZED: Conditionally use Hero
+              widget.heroTag != null
+                  ? Hero(
+                      tag: widget.heroTag!,
+                      child: Image.network(
+                        artworkUrl,
+                        fit: BoxFit.cover,
+                        cacheWidth: 350,
+                        cacheHeight: 350,
+                        errorBuilder: (_, __, ___) => _buildPlaceholder(),
+                      ),
+                    )
+                  : Image.network(
+                      artworkUrl,
+                      fit: BoxFit.cover,
+                      cacheWidth: 350,
+                      cacheHeight: 350,
+                      errorBuilder: (_, __, ___) => _buildPlaceholder(),
+                    )
+            else
+              _buildPlaceholder(),
+
+            // Subtle overlay
+            Container(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: [Colors.transparent, Colors.black.withOpacity(0.15)],
+                ),
+              ),
+            ),
+
+            // Pause overlay
+            AnimatedOpacity(
+              opacity: isPlaying ? 0.0 : 0.5,
+              duration: const Duration(milliseconds: 200),
+              child: Container(color: Colors.black),
+            ),
+          ],
+        ),
+      ),
     );
   }
 
@@ -553,17 +827,12 @@ class _NewPlayerPageState extends ConsumerState<NewPlayerPage>
     );
   }
 
-  Widget _buildPlaybackControls(
-    bool isPlaying,
-    AsyncSnapshot<PlaybackState> playbackSnapshot,
-  ) {
+  Widget _buildPlaybackControls(bool isPlaying, PlaybackState? playbackState) {
     return Column(
       children: [
-        // Main playback controls
         Row(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            // Previous
             Container(
               width: 44,
               height: 44,
@@ -581,10 +850,7 @@ class _NewPlayerPageState extends ConsumerState<NewPlayerPage>
                 padding: EdgeInsets.zero,
               ),
             ),
-
             const SizedBox(width: 24),
-
-            // Play/Pause
             GestureDetector(
               onTap: () => _audioService.playPause(),
               child: Container(
@@ -595,15 +861,14 @@ class _NewPlayerPageState extends ConsumerState<NewPlayerPage>
                   shape: BoxShape.circle,
                   boxShadow: [
                     BoxShadow(
-                      color: Colors.white.withOpacity(0.2),
-                      blurRadius: 20,
-                      spreadRadius: 2,
+                      color: Colors.white.withOpacity(0.15),
+                      blurRadius: 15,
+                      spreadRadius: 1,
                     ),
                   ],
                 ),
                 child: Icon(
-                  playbackSnapshot.data?.processingState ==
-                          AudioProcessingState.loading
+                  playbackState?.processingState == AudioProcessingState.loading
                       ? Icons.hourglass_empty_rounded
                       : isPlaying
                       ? Icons.pause_rounded
@@ -613,10 +878,7 @@ class _NewPlayerPageState extends ConsumerState<NewPlayerPage>
                 ),
               ),
             ),
-
             const SizedBox(width: 24),
-
-            // Next
             Container(
               width: 44,
               height: 44,
@@ -636,16 +898,12 @@ class _NewPlayerPageState extends ConsumerState<NewPlayerPage>
             ),
           ],
         ),
-
         const SizedBox(height: 24),
 
-        // Shuffle and Repeat controls
+        // Shuffle and Repeat
         Row(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            // Shuffle button
-
-            // Shuffle button
             StreamBuilder<PlaybackState>(
               stream: _audioService.playbackStateStream,
               builder: (context, snapshot) {
@@ -661,17 +919,14 @@ class _NewPlayerPageState extends ConsumerState<NewPlayerPage>
                   onPressed: () async {
                     if (handler != null) {
                       await handler.toggleShuffleMode();
-                      setState(() {}); // Force rebuild to show updated state
+                      setState(() {});
                     }
                   },
                   padding: EdgeInsets.zero,
                 );
               },
             ),
-
             const SizedBox(width: 60),
-
-            // Repeat/Loop button
             StreamBuilder<LoopMode>(
               stream: _audioService.loopModeStream,
               builder: (context, snapshot) {
@@ -705,158 +960,88 @@ class _NewPlayerPageState extends ConsumerState<NewPlayerPage>
             ),
           ],
         ),
+        const SizedBox(height: 28),
+
+        // OPTIMIZED: Progress slider with single stream
+        _buildOptimizedSlider(),
       ],
     );
   }
 
-  Widget _buildNextSongsSection() {
-    final handler = getAudioHandler();
+  Widget _buildOptimizedSlider() {
+    return StreamBuilder<Duration>(
+      stream: _audioService.positionStream,
+      builder: (context, positionSnapshot) {
+        return StreamBuilder<Duration?>(
+          stream: _audioService.durationStream,
+          builder: (context, durationSnapshot) {
+            final position = positionSnapshot.data ?? Duration.zero;
+            final duration = durationSnapshot.data ?? Duration.zero;
+            final validDuration = duration.inMilliseconds > 0
+                ? duration
+                : Duration.zero;
 
-    if (handler == null) {
-      return const SizedBox.shrink();
-    }
-
-    return StreamBuilder<List<MediaItem>>(
-      stream: handler.queue,
-      builder: (context, queueSnapshot) {
-        final queue = queueSnapshot.data ?? [];
-
-        return StreamBuilder<MediaItem?>(
-          stream: handler.mediaItem,
-          builder: (context, mediaSnapshot) {
-            final currentMedia = mediaSnapshot.data;
-
-            // Filter to get only upcoming songs
-            final upcomingSongs = queue.where((item) {
-              if (currentMedia == null) return true;
-              final currentIndex = queue.indexOf(currentMedia);
-              final itemIndex = queue.indexOf(item);
-              return itemIndex > currentIndex;
-            }).toList();
-
-            // If no upcoming songs, show placeholder
-            if (upcomingSongs.isEmpty) {
-              return Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+            return Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 1),
+              child: Column(
                 children: [
-                  Container(height: 1, color: Colors.white.withOpacity(0.1)),
-                  const SizedBox(height: 18),
-                  Text(
-                    'Next Songs',
-                    style: GoogleFonts.inter(
-                      color: Colors.white.withOpacity(0.65),
-                      fontSize: 13,
-                      fontWeight: FontWeight.w500,
-                      letterSpacing: 0.3,
-                    ),
-                  ),
-                  const SizedBox(height: 14),
-                  Container(
-                    padding: const EdgeInsets.all(16),
-                    decoration: BoxDecoration(
-                      color: Colors.white.withOpacity(0.04),
-                      borderRadius: BorderRadius.circular(12),
-                    ),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 12),
                     child: Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
-                        Icon(
-                          Icons.music_note_rounded,
-                          color: Colors.white.withOpacity(0.4),
-                          size: 20,
-                        ),
-                        const SizedBox(width: 12),
                         Text(
-                          'Auto-playing similar songs',
+                          _formatDuration(position),
                           style: GoogleFonts.inter(
-                            color: Colors.white.withOpacity(0.55),
-                            fontSize: 13,
+                            color: Colors.white.withOpacity(0.6),
+                            fontSize: 11,
+                            fontWeight: FontWeight.w400,
+                          ),
+                        ),
+                        Text(
+                          _formatDuration(validDuration),
+                          style: GoogleFonts.inter(
+                            color: Colors.white.withOpacity(0.6),
+                            fontSize: 11,
+                            fontWeight: FontWeight.w400,
                           ),
                         ),
                       ],
                     ),
                   ),
+                  const SizedBox(height: 8),
+                  SliderTheme(
+                    data: SliderThemeData(
+                      trackHeight: 2.5,
+                      thumbShape: const RoundSliderThumbShape(
+                        enabledThumbRadius: 6,
+                      ),
+                      overlayShape: const RoundSliderOverlayShape(
+                        overlayRadius: 14,
+                      ),
+                      activeTrackColor: Colors.white,
+                      inactiveTrackColor: Colors.white.withOpacity(0.2),
+                      thumbColor: Colors.white,
+                      overlayColor: Colors.white.withOpacity(0.2),
+                    ),
+                    child: Slider(
+                      value: validDuration.inMilliseconds > 0
+                          ? position.inMilliseconds.toDouble().clamp(
+                              0.0,
+                              validDuration.inMilliseconds.toDouble(),
+                            )
+                          : 0.0,
+                      min: 0.0,
+                      max: validDuration.inMilliseconds.toDouble(),
+                      onChanged: (value) {
+                        _audioService.seek(
+                          Duration(milliseconds: value.toInt()),
+                        );
+                      },
+                    ),
+                  ),
                 ],
-              );
-            }
-
-            // Show first upcoming song
-            final nextSong = upcomingSongs.first;
-
-            return Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Container(height: 1, color: Colors.white.withOpacity(0.1)),
-                const SizedBox(height: 18),
-                Text(
-                  'Next Songs',
-                  style: GoogleFonts.inter(
-                    color: Colors.white.withOpacity(0.65),
-                    fontSize: 13,
-                    fontWeight: FontWeight.w500,
-                    letterSpacing: 0.3,
-                  ),
-                ),
-                const SizedBox(height: 14),
-                Container(
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: Colors.white.withOpacity(0.04),
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: Row(
-                    children: [
-                      ClipRRect(
-                        borderRadius: BorderRadius.circular(8),
-                        child: nextSong.artUri != null
-                            ? Image.network(
-                                nextSong.artUri.toString(),
-                                width: 48,
-                                height: 48,
-                                fit: BoxFit.cover,
-                                errorBuilder: (_, __, ___) =>
-                                    _buildNextSongPlaceholder(),
-                              )
-                            : _buildNextSongPlaceholder(),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              nextSong.title,
-                              style: GoogleFonts.inter(
-                                color: Colors.white,
-                                fontSize: 14,
-                                fontWeight: FontWeight.w500,
-                              ),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                            const SizedBox(height: 2),
-                            Text(
-                              'Auto-playing next',
-                              style: GoogleFonts.inter(
-                                color: Colors.white.withOpacity(0.55),
-                                fontSize: 12,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                      if (nextSong.duration != null)
-                        Text(
-                          _formatDuration(nextSong.duration),
-                          style: GoogleFonts.inter(
-                            color: Colors.white.withOpacity(0.5),
-                            fontSize: 12,
-                            fontWeight: FontWeight.w400,
-                          ),
-                        ),
-                    ],
-                  ),
-                ),
-              ],
+              ),
             );
           },
         );
@@ -864,21 +1049,293 @@ class _NewPlayerPageState extends ConsumerState<NewPlayerPage>
     );
   }
 
-  // ==================== HELPER METHOD FOR NEXT SONG PLACEHOLDER ====================
-  Widget _buildNextSongPlaceholder() {
+  Widget _buildToggleButton({
+    required IconData icon,
+    required String label,
+    required bool isSelected,
+    required VoidCallback onTap,
+  }) {
+    return GestureDetector(
+      onTap: onTap,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 300),
+        curve: Curves.easeInOut,
+        padding: const EdgeInsets.symmetric(vertical: 12),
+        decoration: BoxDecoration(
+          color: isSelected
+              ? Colors.white.withOpacity(0.15)
+              : Colors.white.withOpacity(0.04),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+            color: isSelected
+                ? Colors.white.withOpacity(0.3)
+                : Colors.white.withOpacity(0.08),
+            width: 1,
+          ),
+        ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              icon,
+              color: isSelected ? Colors.white : Colors.white.withOpacity(0.5),
+              size: 20,
+            ),
+            const SizedBox(width: 8),
+            Text(
+              label,
+              style: GoogleFonts.inter(
+                color: isSelected
+                    ? Colors.white
+                    : Colors.white.withOpacity(0.5),
+                fontSize: 14,
+                fontWeight: isSelected ? FontWeight.w600 : FontWeight.w400,
+                letterSpacing: 0.3,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+  // UPDATED PARTS ONLY
+
+  // 1. Update the _buildRadioLyricsToggle method:
+  Widget _buildRadioLyricsToggle() {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(height: 1, color: Colors.white.withOpacity(0.1)),
+        const SizedBox(height: 18),
+        Row(
+          children: [
+            Expanded(
+              child: _buildToggleButton(
+                icon: Icons.radio_rounded,
+                label: 'Radio',
+                isSelected: _viewMode == ViewMode.album,
+                onTap: () {
+                  // Always switch to album view first
+                  setState(() => _viewMode = ViewMode.album);
+
+                  // Show the enhanced radio sheet
+                  showModalBottomSheet(
+                    context: context,
+                    backgroundColor: Colors.transparent,
+                    isScrollControlled: true,
+                    builder: (context) => EnhancedRadioSheet(
+                      currentVideoId: widget.song.videoId,
+                      currentTitle: widget.song.title,
+                      currentArtist: widget.song.artists,
+                      audioService: _audioService,
+                    ),
+                  );
+                },
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: _buildToggleButton(
+                icon: Icons.lyrics_rounded,
+                label: 'Lyrics',
+                isSelected: _viewMode == ViewMode.lyrics,
+                onTap: () {
+                  setState(() {
+                    if (_viewMode == ViewMode.lyrics) {
+                      _viewMode = ViewMode.album;
+                    } else {
+                      _viewMode = ViewMode.lyrics;
+                    }
+                  });
+                },
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Future<void> _toggleLike() async {
+    if (_isSavingLike) return;
+
+    setState(() => _isSavingLike = true);
+
+    try {
+      final downloadService = DownloadService.instance;
+
+      if (_isLiked) {
+        final success = await downloadService.deleteDownload(
+          widget.song.videoId,
+        );
+
+        if (success && mounted) {
+          setState(() => _isLiked = false);
+
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Removed from saved songs'),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+      } else {
+        // ✅ CHECK STORAGE PERMISSION FIRST
+        final hasPermission = await _ensureStoragePermission();
+        if (!hasPermission) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Storage permission denied')),
+          );
+          return;
+        }
+
+        // Continue download
+        final core = VibeFlowCore();
+        final audioUrl = await core.getAudioUrl(
+          widget.song.videoId,
+          song: widget.song,
+        );
+
+        if (audioUrl == null || audioUrl.isEmpty) {
+          throw Exception('Failed to get audio URL');
+        }
+
+        final result = await downloadService.downloadSong(
+          videoId: widget.song.videoId,
+          audioUrl: audioUrl,
+          title: widget.song.title,
+          artist: widget.song.artists,
+          thumbnailUrl: widget.song.thumbnail,
+        );
+
+        if (result.success && mounted) {
+          setState(() => _isLiked = true);
+
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Added to saved songs'),
+              backgroundColor: Colors.green,
+            ),
+          );
+        } else {
+          throw Exception(result.message);
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed: $e'), backgroundColor: Colors.red),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isSavingLike = false);
+    }
+  }
+
+  // 5. UPDATE _buildLyricsView to have transparent background
+  Widget _buildLyricsView(MediaItem? currentMedia) {
     return Container(
-      width: 48,
-      height: 48,
+      width: 420,
+      height: 420,
+      decoration: BoxDecoration(
+        // Transparent background - only glow from lyrics
+        color: Colors.transparent,
+      ),
+      child: CenteredLyricsWidget(
+        title: currentMedia?.title ?? widget.song.title,
+        artist: currentMedia?.artist ?? widget.song.artists,
+        videoId: widget.song.videoId,
+        duration: int.tryParse(widget.song.duration ?? '') ?? 0,
+        accentColor: _albumPalette?.vibrant ?? Colors.white,
+      ),
+    );
+  }
+
+  // ==================== HELPER METHOD FOR NEXT SONG PLACEHOLDER ====================
+  Widget _buildQueueItemPlaceholder() {
+    return Container(
+      width: 44,
+      height: 44,
       decoration: BoxDecoration(
         color: const Color(0xFF2A2A2A),
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(6),
       ),
       child: const Icon(
         Icons.music_note_rounded,
-        color: Colors.white70,
-        size: 24,
+        color: Colors.white38,
+        size: 20,
       ),
     );
+  }
+
+  void _preloadArtwork() {
+    if (widget.song.thumbnail.isEmpty || !mounted) return;
+
+    precacheImage(
+      NetworkImage(widget.song.thumbnail),
+      context,
+      onError: (exception, stackTrace) {
+        // Silent fail - don't show errors for preloading
+        print('⚠️ Artwork preload failed: $exception');
+      },
+    );
+  }
+
+  /// Rotates the album art back to normal position (0° or 360°)
+  /// choosing the shortest path
+  void _rotateToNearestNormal() {
+    if (_isReturningToNormal) return;
+
+    _isReturningToNormal = true;
+
+    // Stop the repeating animation
+    _rotationController.stop();
+
+    // Get current rotation value (0.0 to 1.0 where 1.0 = 360°)
+    final currentValue = _rotationController.value;
+
+    // Determine shortest path to normal (0.0 or 1.0)
+    // If current value is less than 0.5, rotate backwards to 0.0
+    // If current value is more than 0.5, rotate forwards to 1.0
+    final targetValue = currentValue < 0.5 ? 0.0 : 1.0;
+    final distance = (targetValue - currentValue).abs();
+
+    // Calculate duration based on distance (slower for longer distances)
+    final duration = Duration(
+      milliseconds: (distance * 800).clamp(200, 800).toInt(),
+    );
+
+    // Create a new animation controller for the return animation
+    final returnController = AnimationController(
+      duration: duration,
+      vsync: this,
+    );
+
+    // Animate from current position to target
+    final animation = Tween<double>(begin: currentValue, end: targetValue)
+        .animate(
+          CurvedAnimation(parent: returnController, curve: Curves.easeOutCubic),
+        );
+
+    animation.addListener(() {
+      if (mounted) {
+        _rotationController.value = animation.value;
+      }
+    });
+
+    animation.addStatusListener((status) {
+      if (status == AnimationStatus.completed) {
+        // Reset to 0.0 if we went to 1.0
+        if (targetValue == 1.0) {
+          _rotationController.value = 0.0;
+        }
+        _lastRotationValue = 0.0;
+        _isReturningToNormal = false;
+        returnController.dispose();
+      }
+    });
+
+    returnController.forward();
   }
 
   @override

@@ -56,6 +56,13 @@ class AudioServices {
   }
 
   // ==================== PLAYBACK CONTROLS ====================
+  Future<void> playSongFromRadio(QuickPick song) async {
+    final handler = getAudioHandler();
+    if (handler == null) return;
+
+    // Mark this as playing from existing radio (don't reload)
+    await handler.playSongFromRadio(song);
+  }
 
   /// Play a single song
   Future<void> playSong(QuickPick song) async {
@@ -116,24 +123,40 @@ class AudioServices {
     await handler.rewind();
   }
 
-  // Add these to your AudioServices class:
-
-  Stream<LoopMode> get loopModeStream => AudioServices.handler.customState.map(
-    (customState) => _getLoopModeFromState(customState),
-  );
-
   Future<void> setLoopMode(LoopMode loopMode) async {
     await AudioServices.handler.customAction('set_loop_mode', {
       'loop_mode': loopMode.index,
     });
   }
 
+  Stream<LoopMode> get loopModeStream => handler.customState
+      .map<LoopMode>(
+        (state) => _getLoopModeFromState(state as Map<String, dynamic>?),
+      )
+      .distinct();
+
   LoopMode _getLoopModeFromState(Map<String, dynamic>? customState) {
-    if (customState == null || !customState.containsKey('loop_mode')) {
+    if (customState == null) {
+      print('⚠️ [LoopMode] customState is null → LoopMode.off');
       return LoopMode.off;
     }
+
+    if (!customState.containsKey('loop_mode')) {
+      print('⚠️ [LoopMode] loop_mode key missing → LoopMode.off');
+      return LoopMode.off;
+    }
+
     final index = customState['loop_mode'] as int;
-    return LoopMode.values[index];
+
+    // Safety check
+    if (index < 0 || index >= LoopMode.values.length) {
+      print('❌ [LoopMode] invalid index: $index → LoopMode.off');
+      return LoopMode.off;
+    }
+
+    final mode = LoopMode.values[index];
+    print('✅ [LoopMode] index=$index → $mode');
+    return mode;
   }
 
   /// Add a song to the queue

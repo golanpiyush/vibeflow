@@ -21,6 +21,21 @@ class _AccessCodeWrapperState extends ConsumerState<AccessCodeWrapper> {
   bool _realtimeInitialized = false;
   bool _hasInitialized = false;
 
+  // Add a mounted check variable
+  bool _isMounted = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _isMounted = true;
+  }
+
+  @override
+  void dispose() {
+    _isMounted = false;
+    super.dispose();
+  }
+
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
@@ -41,7 +56,8 @@ class _AccessCodeWrapperState extends ConsumerState<AccessCodeWrapper> {
       if (_isAuthenticated) {
         // User is logged in, skip access code check and go to HomePage
         debugPrint('✅ User authenticated, going to HomePage');
-        setState(() {
+        // Use safe setState
+        _safeSetState(() {
           _hasAccessCode = true;
           _isChecking = false;
         });
@@ -61,7 +77,7 @@ class _AccessCodeWrapperState extends ConsumerState<AccessCodeWrapper> {
         if (validatedAt != null &&
             DateTime.now().difference(validatedAt).inDays < 30) {
           debugPrint('✅ Valid access code found');
-          setState(() {
+          _safeSetState(() {
             _hasAccessCode = true;
             _isChecking = false;
           });
@@ -70,7 +86,7 @@ class _AccessCodeWrapperState extends ConsumerState<AccessCodeWrapper> {
       } else if (status == 'skipped') {
         // User previously skipped - let them through
         debugPrint('✅ User previously skipped access code');
-        setState(() {
+        _safeSetState(() {
           _hasAccessCode = true; // Allow access
           _isChecking = false;
         });
@@ -81,14 +97,23 @@ class _AccessCodeWrapperState extends ConsumerState<AccessCodeWrapper> {
     }
 
     // No valid code and no skip - show access code screen
-    setState(() {
+    _safeSetState(() {
       _hasAccessCode = false;
       _isChecking = false;
     });
   }
 
+  // Helper method to safely call setState
+  void _safeSetState(VoidCallback callback) {
+    if (_isMounted) {
+      setState(callback);
+    } else {
+      debugPrint('⚠️ setState() called after dispose - ignoring');
+    }
+  }
+
   void _onAccessCodeSuccess() {
-    setState(() {
+    _safeSetState(() {
       _hasAccessCode = true;
     });
     _initRealtimeIfNeeded();
@@ -114,7 +139,7 @@ class _AccessCodeWrapperState extends ConsumerState<AccessCodeWrapper> {
     if (_realtimeInitialized) return;
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
+      if (!_isMounted) return;
 
       final currentUser = ref.read(currentUserProvider);
       if (currentUser == null) return;

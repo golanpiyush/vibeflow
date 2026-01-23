@@ -654,7 +654,7 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
                         Expanded(
                           child: Text(
                             'Jammer Mode',
-                            style: AppTypography.songTitle.copyWith(
+                            style: AppTypography.songTitle(context).copyWith(
                               color: textPrimaryColor,
                               fontWeight: FontWeight.bold,
                             ),
@@ -679,7 +679,7 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
                           ),
                           child: Text(
                             _isJammerOn ? 'ON' : 'OFF',
-                            style: AppTypography.captionSmall.copyWith(
+                            style: AppTypography.captionSmall(context).copyWith(
                               color: _isJammerOn
                                   ? (isDark
                                         ? Colors.green[400]
@@ -700,22 +700,23 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
                             children: [
                               Text(
                                 'Real-time Activity Sync',
-                                style: AppTypography.songTitle.copyWith(
-                                  color: textPrimaryColor,
-                                ),
+                                style: AppTypography.songTitle(
+                                  context,
+                                ).copyWith(color: textPrimaryColor),
                               ),
                               SizedBox(height: AppSpacing.xs),
                               Text(
                                 _isJammerOn
                                     ? '🎵 Now they can'
                                     : '🔇 Your Friends cannot invite you to join a jammer session.',
-                                style: AppTypography.captionSmall.copyWith(
-                                  color: _isJammerOn
-                                      ? (isDark
-                                            ? Colors.green[400]
-                                            : Colors.green[700])
-                                      : textMutedColor,
-                                ),
+                                style: AppTypography.captionSmall(context)
+                                    .copyWith(
+                                      color: _isJammerOn
+                                          ? (isDark
+                                                ? Colors.green[400]
+                                                : Colors.green[700])
+                                          : textMutedColor,
+                                    ),
                               ),
                             ],
                           ),
@@ -758,11 +759,12 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
                             Expanded(
                               child: Text(
                                 'You can also invite your friends into a jammer session.',
-                                style: AppTypography.captionSmall.copyWith(
-                                  color: isDark
-                                      ? Colors.green[400]
-                                      : Colors.green[700],
-                                ),
+                                style: AppTypography.captionSmall(context)
+                                    .copyWith(
+                                      color: isDark
+                                          ? Colors.green[400]
+                                          : Colors.green[700],
+                                    ),
                               ),
                             ),
                           ],
@@ -799,7 +801,7 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
                         )
                       : Text(
                           'Save Changes',
-                          style: AppTypography.songTitle.copyWith(
+                          style: AppTypography.songTitle(context).copyWith(
                             color: Colors.white,
                             fontWeight: FontWeight.bold,
                           ),

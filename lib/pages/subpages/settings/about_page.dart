@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:vibeflow/constants/app_colors.dart';
 import 'package:vibeflow/constants/app_spacing.dart';
@@ -37,13 +38,24 @@ class AboutPage extends ConsumerWidget {
                         children: [
                           const SizedBox(height: AppSpacing.lg),
                           // Version subtitle
-                          Text(
-                            'v1.0.0 by golanpiyush',
-                            style: AppTypography.subtitle(context).copyWith(
-                              color: ref.watch(themeTextSecondaryColorProvider),
-                              fontSize: 16,
-                            ),
+                          FutureBuilder<String>(
+                            future: _getAppVersion(),
+                            builder: (context, snapshot) {
+                              final text =
+                                  snapshot.data ?? 'v-- by golanpiyush';
+
+                              return Text(
+                                text,
+                                style: AppTypography.subtitle(context).copyWith(
+                                  color: ref.watch(
+                                    themeTextSecondaryColorProvider,
+                                  ),
+                                  fontSize: 16,
+                                ),
+                              );
+                            },
                           ),
+
                           const SizedBox(height: AppSpacing.xxxl),
 
                           // SOCIAL Section
@@ -164,6 +176,11 @@ class AboutPage extends ConsumerWidget {
         ],
       ),
     );
+  }
+
+  Future<String> _getAppVersion() async {
+    final info = await PackageInfo.fromPlatform();
+    return 'v${info.version} Build:(${info.buildNumber}) by golanpiyush';
   }
 
   Widget _buildSidebar(BuildContext context, WidgetRef ref) {

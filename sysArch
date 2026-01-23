@@ -1,0 +1,19 @@
+┌─────────────────────────────────────────────────────────────┐
+│                    ORCHESTRATOR (Claude)                     │
+│  - Enforces gating rules                                     │
+│  - Dispatches to worker AIs                                  │
+│  - Validates responses                                       │
+│  - Handles failures deterministically                        │
+└──────────────────┬──────────────────────────────────────────┘
+                   │
+        ┌──────────┴──────────┐
+        │                     │
+        ▼                     ▼
+┌───────────────┐     ┌──────────────────┐
+│ WORKER AI     │     │ INSPECTOR AI     │
+│ (GLM-4.5 Air) │────▶│ (Gemma 3n 4B)    │
+│               │     │                  │
+│ - Infer taste │     │ - Validate       │
+│ - Generate    │     │ - Veto power     │
+│   playlist    │     │ - APPROVE/REJECT │
+└───────────────┘     └──────────────────┘

@@ -194,9 +194,9 @@ class _SettingsPageTemplate extends ConsumerWidget {
               alignment: Alignment.centerRight,
               child: Text(
                 title,
-                style: AppTypography.pageTitle.copyWith(
-                  color: textPrimaryColor,
-                ),
+                style: AppTypography.pageTitle(
+                  context,
+                ).copyWith(color: textPrimaryColor),
               ),
             ),
           ),
@@ -212,12 +212,12 @@ class _SettingsPageTemplate extends ConsumerWidget {
     final sidebarLabelColor = ref.watch(themeTextPrimaryColorProvider);
     final sidebarLabelActiveColor = ref.watch(themeIconActiveColorProvider);
 
-    final sidebarLabelStyle = AppTypography.sidebarLabel.copyWith(
-      color: sidebarLabelColor,
-    );
-    final sidebarLabelActiveStyle = AppTypography.sidebarLabelActive.copyWith(
-      color: sidebarLabelActiveColor,
-    );
+    final sidebarLabelStyle = AppTypography.sidebarLabel(
+      context,
+    ).copyWith(color: sidebarLabelColor);
+    final sidebarLabelActiveStyle = AppTypography.sidebarLabelActive(
+      context,
+    ).copyWith(color: sidebarLabelActiveColor);
 
     return SizedBox(
       width: 65,

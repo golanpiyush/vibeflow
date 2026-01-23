@@ -34,6 +34,7 @@ class _CenteredLyricsWidgetState extends ConsumerState<CenteredLyricsWidget>
   String? _error;
   int _currentLineIndex = -1;
   int _currentWordIndex = -1;
+  String _lastVideoId = '';
 
   // Stream subscription
   StreamSubscription<Duration>? _positionSubscription;
@@ -46,8 +47,24 @@ class _CenteredLyricsWidgetState extends ConsumerState<CenteredLyricsWidget>
   @override
   void initState() {
     super.initState();
+    _lastVideoId = widget.videoId;
     _loadLyrics();
     _listenToPosition();
+  }
+
+  @override
+  void didUpdateWidget(CenteredLyricsWidget oldWidget) {
+    super.didUpdateWidget(oldWidget);
+
+    // Reload lyrics when song changes
+    if (oldWidget.videoId != widget.videoId) {
+      print('🔄 [Lyrics] Song changed, reloading lyrics...');
+      _lastVideoId = widget.videoId;
+      _currentLineIndex = -1;
+      _currentWordIndex = -1;
+      _resetWordAnimations();
+      _loadLyrics();
+    }
   }
 
   Future<void> _loadLyrics() async {
@@ -71,9 +88,11 @@ class _CenteredLyricsWidgetState extends ConsumerState<CenteredLyricsWidget>
           if (result['success'] == true) {
             _lyricsData = result;
             _isLoading = false;
+            print('✅ [Lyrics] Loaded successfully for ${widget.title}');
           } else {
             _error = result['error'] ?? 'Failed to load lyrics';
             _isLoading = false;
+            print('❌ [Lyrics] Failed: $_error');
           }
         });
       }
@@ -210,188 +229,155 @@ class _CenteredLyricsWidgetState extends ConsumerState<CenteredLyricsWidget>
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topCenter,
-          end: Alignment.bottomCenter,
-          colors: [
-            Colors.black.withOpacity(0.75),
-            Colors.black.withOpacity(0.85),
-            Colors.black.withOpacity(0.75),
-          ],
-        ),
-      ),
-      child: _buildContent(),
-    );
+    // COMPLETELY TRANSPARENT BACKGROUND
+    return Container(color: Colors.transparent, child: _buildContent());
   }
 
   Widget _buildContent() {
+    final accentColor = widget.accentColor ?? AppColors.iconActive;
+
     if (_isLoading) {
-      return Center(
-        child: CircularProgressIndicator(
-          color: widget.accentColor ?? AppColors.iconActive,
-          strokeWidth: 2,
-        ),
-      );
+      return const Center(child: CircularProgressIndicator(strokeWidth: 2));
     }
 
     if (_error != null) {
-      return Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(
-              Icons.lyrics_outlined,
-              color: Colors.white.withOpacity(0.3),
-              size: 40,
-            ),
-            const SizedBox(height: 12),
-            Text(
-              'No lyrics available',
-              style: TextStyle(
-                color: Colors.white.withOpacity(0.5),
-                fontSize: 14,
-              ),
-              textAlign: TextAlign.center,
-            ),
-          ],
-        ),
-      );
+      return const Center(child: Text('No lyrics available'));
     }
 
-    final isWordByWord = _lyricsData!['type'] == 'word_by_word';
     final lines = _lyricsData!['lines'] as List;
+    final isWordByWord = _lyricsData!['type'] == 'word_by_word';
 
-    if (_currentLineIndex == -1 || _currentLineIndex >= lines.length) {
-      return Center(
-        child: Text(
-          'Waiting for lyrics...',
-          style: TextStyle(color: Colors.white.withOpacity(0.5), fontSize: 16),
-        ),
-      );
+    if (_currentLineIndex < 0 || _currentLineIndex >= lines.length) {
+      return const SizedBox.shrink();
     }
 
-    final currentLine = lines[_currentLineIndex];
-    final currentText = currentLine['text'] as String;
-
-    final previousLine = _currentLineIndex > 0
+    final current = lines[_currentLineIndex]['text'] as String;
+    final prev = _currentLineIndex > 0
         ? lines[_currentLineIndex - 1]['text'] as String
         : null;
-    final nextLine = _currentLineIndex < lines.length - 1
+    final next = _currentLineIndex < lines.length - 1
         ? lines[_currentLineIndex + 1]['text'] as String
         : null;
 
     return Center(
       child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
+        mainAxisSize: MainAxisSize.min,
         children: [
-          if (previousLine != null)
-            AnimatedOpacity(
-              duration: const Duration(milliseconds: 400),
-              opacity: 1.0,
-              child: Padding(
-                padding: const EdgeInsets.only(bottom: 16),
-                child: Text(
-                  previousLine,
-                  style: TextStyle(
-                    color: Colors.white.withOpacity(0.3),
-                    fontSize: 14,
-                    fontWeight: FontWeight.w300,
-                    height: 1.5,
+          /// ───────── PREVIOUS (STATIC, NO ANIMATION) ─────────
+          SizedBox(
+            height: 36,
+            child: prev == null
+                ? const SizedBox.shrink()
+                : Text(
+                    prev,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      fontSize: 13,
+                      height: 1.4,
+                      color: Colors.white.withOpacity(0.35),
+                    ),
                   ),
-                  textAlign: TextAlign.center,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
+          ),
+
+          const SizedBox(height: 12),
+
+          /// ───────── CURRENT (ONLY THIS SCROLLS) ─────────
+          SizedBox(
+            height: 72,
+            child: ClipRect(
+              child: AnimatedSwitcher(
+                duration: const Duration(milliseconds: 520),
+                switchInCurve: Curves.easeOutCubic,
+                switchOutCurve: Curves.easeInCubic,
+                transitionBuilder: (child, animation) {
+                  final slide = Tween<Offset>(
+                    begin: const Offset(0, 0.35), // looks like scroll
+                    end: Offset.zero,
+                  ).animate(animation);
+
+                  return SlideTransition(
+                    position: slide,
+                    child: FadeTransition(opacity: animation, child: child),
+                  );
+                },
+                child: Container(
+                  key: ValueKey(_currentLineIndex),
+                  alignment: Alignment.center,
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  child: isWordByWord
+                      ? _buildWordByWordLine(current, accentColor)
+                      : _buildSimpleLine(current, accentColor),
                 ),
               ),
-            ),
-
-          AnimatedSwitcher(
-            duration: const Duration(milliseconds: 500),
-            switchInCurve: Curves.easeOutCubic,
-            switchOutCurve: Curves.easeInCubic,
-            transitionBuilder: (child, animation) {
-              return FadeTransition(
-                opacity: animation,
-                child: SlideTransition(
-                  position: Tween<Offset>(
-                    begin: const Offset(0, 0.3),
-                    end: Offset.zero,
-                  ).animate(animation),
-                  child: child,
-                ),
-              );
-            },
-            child: Container(
-              key: ValueKey(_currentLineIndex),
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 20),
-              child: isWordByWord
-                  ? _buildWordByWordLine(
-                      currentText,
-                      widget.accentColor ?? AppColors.iconActive,
-                    )
-                  : _buildSimpleLine(currentText, true),
             ),
           ),
 
-          if (nextLine != null)
-            AnimatedOpacity(
-              duration: const Duration(milliseconds: 400),
-              opacity: 1.0,
-              child: Padding(
-                padding: const EdgeInsets.only(top: 16),
-                child: Text(
-                  nextLine,
-                  style: TextStyle(
-                    color: Colors.white.withOpacity(0.3),
-                    fontSize: 14,
-                    fontWeight: FontWeight.w300,
-                    height: 1.5,
+          const SizedBox(height: 12),
+
+          /// ───────── NEXT (STATIC, INSTANT CHANGE) ─────────
+          SizedBox(
+            height: 36,
+            child: next == null
+                ? const SizedBox.shrink()
+                : Text(
+                    next,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      fontSize: 13,
+                      height: 1.4,
+                      color: Colors.white.withOpacity(0.35),
+                    ),
                   ),
-                  textAlign: TextAlign.center,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ),
-            ),
+          ),
         ],
       ),
     );
   }
 
-  Widget _buildSimpleLine(String text, bool isActive) {
+  Widget _buildSimpleLine(String text, Color accentColor) {
     return TweenAnimationBuilder<double>(
       tween: Tween(begin: 0.0, end: 1.0),
-      duration: const Duration(milliseconds: 500),
+      duration: const Duration(milliseconds: 700),
       curve: Curves.easeOutCubic,
       builder: (context, value, child) {
         return Transform.scale(
-          scale: 0.9 + (0.1 * value),
+          scale: 0.92 + (0.08 * value),
           child: Opacity(
             opacity: value,
             child: Text(
               text,
               textAlign: TextAlign.center,
-              maxLines: 3,
+              maxLines: 2,
               overflow: TextOverflow.ellipsis,
               style: TextStyle(
                 color: Colors.white,
-                fontSize: 22,
-                fontWeight: FontWeight.w600,
-                height: 1.6,
+                fontSize: 20,
+                fontWeight: FontWeight.w700,
+                height: 1.4,
+                letterSpacing: 0.5,
                 shadows: [
                   Shadow(
-                    color: (widget.accentColor ?? Colors.white).withOpacity(
-                      0.4 * value,
-                    ),
-                    blurRadius: 16,
+                    color: accentColor.withOpacity(0.9 * value),
+                    blurRadius: 30,
+                    offset: const Offset(0, 0),
                   ),
                   Shadow(
-                    color: (widget.accentColor ?? Colors.white).withOpacity(
-                      0.2 * value,
-                    ),
-                    blurRadius: 24,
+                    color: accentColor.withOpacity(0.6 * value),
+                    blurRadius: 50,
+                    offset: const Offset(0, 0),
+                  ),
+                  Shadow(
+                    color: accentColor.withOpacity(0.4 * value),
+                    blurRadius: 70,
+                    offset: const Offset(0, 2),
+                  ),
+                  Shadow(
+                    color: Colors.white.withOpacity(0.3 * value),
+                    blurRadius: 15,
                   ),
                 ],
               ),
@@ -405,75 +391,47 @@ class _CenteredLyricsWidgetState extends ConsumerState<CenteredLyricsWidget>
   Widget _buildWordByWordLine(String text, Color accentColor) {
     final words = text.split(' ');
 
-    return Wrap(
-      alignment: WrapAlignment.center,
-      spacing: 10,
-      runSpacing: 8,
-      children: List.generate(words.length, (wordIndex) {
-        final word = words[wordIndex];
-        final isHighlighted = wordIndex <= _currentWordIndex;
-        final isPast = wordIndex < _currentWordIndex;
+    return RichText(
+      textAlign: TextAlign.center,
+      text: TextSpan(
+        children: List.generate(words.length, (i) {
+          final isPast = i < _currentWordIndex;
+          final isCurrent = i == _currentWordIndex;
 
-        return AnimatedBuilder(
-          animation:
-              _wordControllers[wordIndex] ?? const AlwaysStoppedAnimation(0),
-          builder: (context, child) {
-            final scaleValue = _scaleAnimations[wordIndex]?.value ?? 1.0;
-            final fadeValue = _fadeAnimations[wordIndex]?.value ?? 0.0;
+          final opacity = isPast
+              ? 0.6
+              : isCurrent
+              ? 1.0
+              : 0.35;
 
-            final baseOpacity = isPast ? 0.6 : (isHighlighted ? 1.0 : 0.35);
-            final finalOpacity = isHighlighted ? baseOpacity : baseOpacity;
-
-            return Transform.scale(
-              scale: isHighlighted && wordIndex == _currentWordIndex
-                  ? scaleValue
-                  : (isPast ? 1.0 : 0.95),
-              child: AnimatedContainer(
-                duration: const Duration(milliseconds: 300),
-                curve: Curves.easeOutCubic,
-                child: Text(
-                  word,
-                  style: TextStyle(
-                    color: Colors.white.withOpacity(finalOpacity),
-                    fontSize: 22,
-                    fontWeight: isHighlighted
-                        ? FontWeight.w700
-                        : FontWeight.w400,
-                    height: 1.6,
-                    letterSpacing: isHighlighted ? 0.5 : 0,
-                    shadows: isHighlighted && wordIndex == _currentWordIndex
-                        ? [
-                            Shadow(
-                              color: accentColor.withOpacity(0.8 * fadeValue),
-                              blurRadius: 20,
-                              offset: const Offset(0, 0),
-                            ),
-                            Shadow(
-                              color: accentColor.withOpacity(0.5 * fadeValue),
-                              blurRadius: 30,
-                              offset: const Offset(0, 0),
-                            ),
-                            Shadow(
-                              color: accentColor.withOpacity(0.3 * fadeValue),
-                              blurRadius: 40,
-                              offset: const Offset(0, 2),
-                            ),
-                          ]
-                        : isPast
-                        ? [
-                            Shadow(
-                              color: accentColor.withOpacity(0.2),
-                              blurRadius: 8,
-                            ),
-                          ]
-                        : null,
-                  ),
-                ),
-              ),
-            );
-          },
-        );
-      }),
+          return TextSpan(
+            text: '${words[i]} ',
+            style: TextStyle(
+              fontSize: 20,
+              fontWeight: isCurrent ? FontWeight.w800 : FontWeight.w500,
+              color: Colors.white.withOpacity(opacity),
+              height: 1.4,
+              shadows: isCurrent
+                  ? [
+                      Shadow(
+                        color: accentColor.withOpacity(0.9),
+                        blurRadius: 28,
+                      ),
+                      Shadow(
+                        color: accentColor.withOpacity(0.6),
+                        blurRadius: 48,
+                      ),
+                    ]
+                  : [
+                      Shadow(
+                        color: accentColor.withOpacity(0.15),
+                        blurRadius: 8,
+                      ),
+                    ],
+            ),
+          );
+        }),
+      ),
     );
   }
 

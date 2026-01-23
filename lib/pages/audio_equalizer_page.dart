@@ -1,6 +1,7 @@
 // lib/pages/audio_equalizer_page.dart
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:vibeflow/utils/audio_session_bridge.dart';
 
 class AudioEqualizerPage extends StatefulWidget {
   const AudioEqualizerPage({Key? key}) : super(key: key);
@@ -42,34 +43,51 @@ class _AudioEqualizerPageState extends State<AudioEqualizerPage> {
     _initializeAudioEffects();
   }
 
+  // Replace _initializeAudioEffects with this improved version:
   Future<void> _initializeAudioEffects() async {
     try {
-      // Get current audio session ID (from your audio service)
-      final sessionId = await _channel.invokeMethod<int>('getAudioSessionId');
+      print('🎛️ [EQ] Starting initialization...');
 
-      if (sessionId != null) {
-        final initialized = await _channel.invokeMethod<bool>(
-          'initializeEffects',
-          {'sessionId': sessionId},
-        );
+      // Get audio session ID
+      final sessionId = await AudioSessionBridge.getAudioSessionId();
+      print('🎛️ [EQ] Got session ID: $sessionId');
 
-        if (initialized == true) {
-          await _loadCurrentSettings();
+      // Initialize effects
+      final initialized = await _channel.invokeMethod<bool>(
+        'initializeEffects',
+        {'sessionId': sessionId ?? 0},
+      );
+
+      print('🎛️ [EQ] Initialize result: $initialized');
+
+      if (initialized == true) {
+        // Load current settings (which includes saved settings from SharedPreferences)
+        await _loadCurrentSettings();
+
+        if (mounted) {
           setState(() {
             _isInitialized = true;
           });
         }
+        print('✅ [EQ] Audio effects initialized and loaded saved settings');
+      } else {
+        throw Exception('Initialize returned false');
       }
-    } catch (e) {
-      debugPrint('Error initializing audio effects: $e');
-      _showErrorSnackbar('Failed to initialize audio effects');
+    } catch (e, stackTrace) {
+      debugPrint('❌ [EQ] Error initializing audio effects: $e');
+      debugPrint('Stack trace: $stackTrace');
+
+      if (mounted) {
+        _showErrorSnackbar('Failed to initialize: ${e.toString()}');
+      }
     }
   }
 
+  // Update _loadCurrentSettings to handle null values:
   Future<void> _loadCurrentSettings() async {
     try {
       final settings = await _channel.invokeMethod<Map>('getCurrentSettings');
-      if (settings != null) {
+      if (settings != null && mounted) {
         setState(() {
           _bassBoost = (settings['bassBoost'] ?? 0).toDouble();
           _loudnessEnhancer = (settings['loudnessEnhancer'] ?? 0).toDouble();
@@ -77,14 +95,23 @@ class _AudioEqualizerPageState extends State<AudioEqualizerPage> {
           _audioBalance = (settings['audioBalance'] ?? 0.5).toDouble();
           _eqBandCount = settings['equalizerBandCount'] ?? 5;
 
-          // Load EQ bands if available
+          // Load EQ bands
           if (_eqBandCount > 0) {
             _eqBands = List.generate(_eqBandCount, (i) => 0.0);
+            // Try to load individual band values if available
+            for (int i = 0; i < _eqBandCount; i++) {
+              if (settings.containsKey('eq_band_$i')) {
+                _eqBands[i] = (settings['eq_band_$i'] ?? 0).toDouble();
+              }
+            }
           }
         });
+        print(
+          '✅ [EQ] Loaded settings - Bass: $_bassBoost, Loudness: $_loudnessEnhancer',
+        );
       }
     } catch (e) {
-      debugPrint('Error loading settings: $e');
+      debugPrint('❌ [EQ] Error loading settings: $e');
     }
   }
 

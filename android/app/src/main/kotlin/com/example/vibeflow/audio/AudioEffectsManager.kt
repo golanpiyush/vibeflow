@@ -1,9 +1,9 @@
 package com.example.vibeflow.audio
 
+import android.content.Context
 import android.media.AudioManager
 import android.media.audiofx.*
 import android.media.MediaPlayer
-import android.content.Context
 import android.util.Log
 
 class AudioEffectsManager(private val context: Context) {
@@ -81,11 +81,22 @@ class AudioEffectsManager(private val context: Context) {
     
     // Initialize effects
     fun initialize(sessionId: Int, player: MediaPlayer? = null): Boolean {
-        audioSessionId = sessionId
+        audioSessionId = if (sessionId == 0) {
+            // Use default audio session (0 means default output mix)
+            AudioManager.AUDIO_SESSION_ID_GENERATE
+        } else {
+            sessionId
+        }
+        
         mediaPlayer = player
+        
         return try {
             initializeEffects()
-            Log.i(TAG, "Audio effects initialized successfully")
+            
+            // Load saved settings after initialization
+            loadSavedSettings()
+            
+            Log.i(TAG, "Audio effects initialized with session ID: $audioSessionId")
             true
         } catch (e: Exception) {
             Log.e(TAG, "Error initializing effects: ${e.message}")
@@ -135,6 +146,82 @@ class AudioEffectsManager(private val context: Context) {
         }
     }
     
+    // Load saved settings from SharedPreferences
+    private fun loadSavedSettings() {
+        val prefs = context.getSharedPreferences("audio_effects_prefs", Context.MODE_PRIVATE)
+        
+        try {
+            // Load bass boost
+            val savedBassBoost = prefs.getInt("bass_boost", 0).toShort()
+            if (savedBassBoost > 0) {
+                bassBoost?.setStrength(savedBassBoost)
+                bassBoost?.enabled = true
+            }
+            
+            // Load loudness enhancer
+            val savedLoudness = prefs.getInt("loudness_enhancer", 0)
+            if (savedLoudness > 0 && android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.KITKAT) {
+                loudnessEnhancer?.setTargetGain(savedLoudness)
+                loudnessEnhancer?.enabled = true
+            }
+            
+            // Load reverb
+            val savedReverb = prefs.getInt("reverb_level", 0)
+            if (savedReverb > 0) {
+                setEnvironmentalReverbLevelInternal(savedReverb, false) // Don't save again
+            }
+            
+            // Load audio balance
+            val savedBalance = prefs.getFloat("audio_balance", CENTER_BALANCE)
+            audioBalance = savedBalance
+            
+            // Load equalizer bands
+            equalizer?.let { eq ->
+                var hasAnyBand = false
+                for (i in 0 until eq.numberOfBands) {
+                    val savedLevel = prefs.getInt("eq_band_$i", 0).toShort()
+                    if (savedLevel != 0.toShort()) {
+                        eq.setBandLevel(i.toShort(), savedLevel)
+                        hasAnyBand = true
+                    }
+                }
+                if (hasAnyBand) {
+                    eq.enabled = true
+                }
+            }
+            
+            Log.i(TAG, "Loaded saved audio effects settings")
+        } catch (e: Exception) {
+            Log.e(TAG, "Error loading saved settings: ${e.message}")
+        }
+    }
+    
+    // Save settings to SharedPreferences
+    private fun saveSettings() {
+        val prefs = context.getSharedPreferences("audio_effects_prefs", Context.MODE_PRIVATE)
+        val editor = prefs.edit()
+        
+        try {
+            // Save all settings
+            editor.putInt("bass_boost", getBassBoost().toInt())
+            editor.putInt("loudness_enhancer", getLoudnessEnhancer())
+            editor.putInt("reverb_level", getEnvironmentalReverbLevel())
+            editor.putFloat("audio_balance", getAudioBalance())
+            
+            // Save equalizer bands
+            equalizer?.let { eq ->
+                for (i in 0 until eq.numberOfBands) {
+                    editor.putInt("eq_band_$i", eq.getBandLevel(i.toShort()).toInt())
+                }
+            }
+            
+            editor.apply()
+            Log.d(TAG, "Settings saved to SharedPreferences")
+        } catch (e: Exception) {
+            Log.e(TAG, "Error saving settings: ${e.message}")
+        }
+    }
+    
     // Apply preset
     fun applyPreset(presetName: String): Boolean {
         val preset = presets[presetName] ?: return false
@@ -167,6 +254,7 @@ class AudioEffectsManager(private val context: Context) {
                 effect.setStrength(clampedStrength)
                 effect.enabled = clampedStrength > 0
                 Log.d(TAG, "Bass boost set to: $clampedStrength mB")
+                saveSettings()
                 true
             } ?: false
         } catch (e: Exception) {
@@ -210,8 +298,10 @@ class AudioEffectsManager(private val context: Context) {
                 
                 player.setVolume(leftVolume, rightVolume)
                 Log.d(TAG, "Audio balance set to: $clampedBalance")
-                true
-            } ?: true // Store value even if MediaPlayer not available
+            }
+            
+            saveSettings()
+            true
         } catch (e: Exception) {
             Log.e(TAG, "Error setting audio balance: ${e.message}")
             false
@@ -232,6 +322,7 @@ class AudioEffectsManager(private val context: Context) {
                 eq.setBandLevel(band.toShort(), safeLevel)
                 eq.enabled = true
                 Log.d(TAG, "EQ band $band set to: $safeLevel mB")
+                saveSettings()
                 true
             } ?: false
         } catch (e: Exception) {
@@ -265,6 +356,7 @@ class AudioEffectsManager(private val context: Context) {
                     effect.setTargetGain(clampedGain)
                     effect.enabled = clampedGain > 0
                     Log.d(TAG, "Loudness enhancer set to: $clampedGain mB")
+                    saveSettings()
                     true
                 } ?: false
             } else {
@@ -290,12 +382,17 @@ class AudioEffectsManager(private val context: Context) {
     
     // Environmental Reverb controls
     fun setEnvironmentalReverbLevel(levelPercentage: Int): Boolean {
+        return setEnvironmentalReverbLevelInternal(levelPercentage, true)
+    }
+    
+    private fun setEnvironmentalReverbLevelInternal(levelPercentage: Int, shouldSave: Boolean): Boolean {
         return try {
             val clampedLevel = levelPercentage.coerceIn(0, 100)
             
             environmentalReverb?.let { effect ->
                 if (clampedLevel == 0) {
                     effect.enabled = false
+                    if (shouldSave) saveSettings()
                     return true
                 }
                 
@@ -316,6 +413,7 @@ class AudioEffectsManager(private val context: Context) {
                 effect.properties = settings
                 effect.enabled = true
                 Log.d(TAG, "Environmental reverb level set to: $clampedLevel%")
+                if (shouldSave) saveSettings()
                 true
             } ?: false
         } catch (e: Exception) {
@@ -367,6 +465,7 @@ class AudioEffectsManager(private val context: Context) {
             }
             
             disableAllEffects()
+            saveSettings()
             true
         } catch (e: Exception) {
             Log.e(TAG, "Error resetting all effects: ${e.message}")
@@ -387,9 +486,9 @@ class AudioEffectsManager(private val context: Context) {
         }
     }
     
-    // Get current settings
+    // Get current settings (including individual EQ band values)
     fun getCurrentSettings(): Map<String, Any> {
-        return mapOf(
+        val settings = mutableMapOf<String, Any>(
             "bassBoost" to getBassBoost(),
             "loudnessEnhancer" to getLoudnessEnhancer(),
             "environmentalReverbLevel" to getEnvironmentalReverbLevel(),
@@ -397,11 +496,23 @@ class AudioEffectsManager(private val context: Context) {
             "equalizerBandCount" to getEqualizerBandCount(),
             "availablePresets" to getAvailablePresets()
         )
+        
+        // Add individual EQ band values
+        equalizer?.let { eq ->
+            for (i in 0 until eq.numberOfBands) {
+                settings["eq_band_$i"] = eq.getBandLevel(i.toShort()).toInt()
+            }
+        }
+        
+        return settings
     }
     
     // Cleanup resources
     fun release() {
         try {
+            // Save settings before releasing
+            saveSettings()
+            
             bassBoost?.let {
                 it.enabled = false
                 it.release()
@@ -425,7 +536,7 @@ class AudioEffectsManager(private val context: Context) {
             loudnessEnhancer = null
             mediaPlayer = null
             
-            Log.i(TAG, "Audio effects resources released")
+            Log.i(TAG, "Audio effects resources released and settings saved")
         } catch (e: Exception) {
             Log.e(TAG, "Error releasing effects: ${e.message}")
         }

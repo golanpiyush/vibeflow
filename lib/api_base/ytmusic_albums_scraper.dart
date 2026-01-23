@@ -1,6 +1,7 @@
 // lib/api_base/ytmusic_albums_scraper.dart
 import 'dart:convert';
 import 'package:http/http.dart' as http;
+import 'package:vibeflow/api_base/albumartistqp_cache.dart';
 import 'package:vibeflow/models/album_model.dart';
 import 'package:vibeflow/models/song_model.dart';
 
@@ -468,8 +469,19 @@ class YTMusicAlbumsScraper {
   }
 
   /// Get mixed albums from multiple random artists
-  Future<List<Album>> getMixedRandomAlbums({int limit = 50}) async {
+  Future<List<Album>> getMixedRandomAlbums({
+    int limit = 50,
+    bool forceRefresh = false,
+  }) async {
     try {
+      // Try loading from cache first (unless force refresh)
+      if (!forceRefresh) {
+        final cachedAlbums = await AlbumArtistQPCache.loadAlbums();
+        if (cachedAlbums != null && cachedAlbums.isNotEmpty) {
+          print('⚡ [YTMusicScraper] Using cached Albums');
+          return cachedAlbums.take(limit).toList();
+        }
+      }
       print('🎭 [YTMusicScraper] Fetching mixed albums from random artists...');
 
       // Diverse array of popular artists from different genres
@@ -616,6 +628,10 @@ class YTMusicAlbumsScraper {
       albumList.shuffle();
 
       final result = albumList.take(limit).toList();
+      // Save to cache
+      if (result.isNotEmpty) {
+        await AlbumArtistQPCache.saveAlbums(result);
+      }
 
       print(
         '✅ [YTMusicScraper] Found ${result.length} mixed albums from ${artistIndex} artists',

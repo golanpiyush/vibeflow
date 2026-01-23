@@ -163,7 +163,7 @@ class _AudioThoughtsScreenState extends State<AudioThoughtsScreen>
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             const Text(
-              'Audio Player Thoughts',
+              'Engine Oberservations',
               style: TextStyle(
                 color: Colors.white,
                 fontSize: 20,

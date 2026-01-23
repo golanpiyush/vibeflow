@@ -94,10 +94,16 @@ class DownloadService {
   }
 
   /// 🔒 UPDATE-PROOF: Get permanent download directory that survives updates
+  /// 🔒 UPDATE-PROOF: Get permanent download directory that survives updates
   Future<Directory> _getDownloadDirectory() async {
     final prefs = await SharedPreferences.getInstance();
     final savedPath = prefs.getString(_downloadDirKey);
 
+    // MIGRATION: Clear old public storage path
+    if (savedPath != null && savedPath.contains('/Music/VibeFlow')) {
+      debugPrint('⚠️ Migrating from old public storage path');
+      await prefs.remove(_downloadDirKey);
+    }
     // Verify saved path still exists and is valid
     if (savedPath != null) {
       final savedDir = Directory(savedPath);
@@ -113,26 +119,25 @@ class DownloadService {
 
     if (Platform.isAndroid) {
       try {
-        // STRATEGY 1: Use public Music/VibeFlow directory (survives updates!)
-        // This is in /storage/emulated/0/Music/VibeFlow
-        final musicDir = Directory('/storage/emulated/0/Music');
+        // USE APP-SPECIFIC EXTERNAL STORAGE (survives updates, no permissions needed)
+        // Path: /storage/emulated/0/Android/data/com.yourapp.package/files/Music/VibeFlow
+        final externalDir = await getExternalStorageDirectory();
 
-        if (await musicDir.exists()) {
-          downloadDir = Directory('${musicDir.path}/VibeFlow');
-          debugPrint('📱 Using public Music directory (update-proof)');
+        if (externalDir != null) {
+          // Create a Music subfolder in app's external storage
+          downloadDir = Directory('${externalDir.path}/Music/VibeFlow');
+          debugPrint(
+            '📱 Using app-specific external storage (update-proof, no permissions)',
+          );
         } else {
-          // STRATEGY 2: Use app's private but persistent external storage
-          // Falls back if Music directory not accessible
-          final externalDir = await getExternalStorageDirectory();
-          downloadDir = externalDir != null
-              ? Directory('${externalDir.path}/VibeFlow/downloads')
-              : Directory(
-                  '${(await getApplicationDocumentsDirectory()).path}/downloads',
-                );
-          debugPrint('⚠️ Using external storage fallback');
+          // Fallback to internal storage
+          downloadDir = Directory(
+            '${(await getApplicationDocumentsDirectory()).path}/VibeFlow/downloads',
+          );
+          debugPrint('⚠️ Using internal storage fallback');
         }
       } catch (e) {
-        // STRATEGY 3: Last resort - app documents (least ideal but works)
+        // Last resort - app documents
         downloadDir = Directory(
           '${(await getApplicationDocumentsDirectory()).path}/downloads',
         );

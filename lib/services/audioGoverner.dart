@@ -1,11 +1,15 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:math';
 import 'package:flutter/foundation.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:audio_service/audio_service.dart' as audio_service;
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:http/http.dart' as http;
+import 'package:flutter_dotenv/flutter_dotenv.dart';
 
 /// The Audio Governor - Your audio player's inner thoughts with 24hr persistence
+/// Now powered by AI for dynamic, varied messages
 class AudioGovernor {
   static AudioGovernor? _instance;
 
@@ -24,15 +28,23 @@ class AudioGovernor {
   bool _isShuffleOn = false;
   ProcessingState _processingState = ProcessingState.idle;
   bool _wasPlaying = false;
+  bool _isInterrupted = false;
 
   // Persistence
   static const String _storageKey = 'audio_governor_thoughts';
   static const String _lastCleanupKey = 'audio_governor_last_cleanup';
   Timer? _cleanupTimer;
 
+  // AI message generation
+  final Random _random = Random();
+  final Map<String, List<String>> _messageCache = {};
+  String? _apiKey;
+  bool _aiEnabled = false;
+
   AudioGovernor._() {
     _loadPersistedThoughts();
     _startCleanupTimer();
+    _initializeAI();
   }
 
   static AudioGovernor get instance {
@@ -53,7 +65,38 @@ class AudioGovernor {
   /// Get thought count
   int get thoughtCount => _thoughtHistory.length;
 
+  // ==================== AI INITIALIZATION ====================
+
+  Future<void> _initializeAI() async {
+    try {
+      await dotenv.load(fileName: ".env");
+      _apiKey = dotenv.env['OPENROUTER_API_KEY'];
+      _aiEnabled = _apiKey != null && _apiKey!.isNotEmpty;
+
+      if (_aiEnabled) {
+        print('✅ [AudioGovernor] AI message generation enabled');
+      } else {
+        print('⚠️ [AudioGovernor] AI disabled - using fallback messages');
+      }
+    } catch (e) {
+      print('⚠️ [AudioGovernor] Could not load AI config: $e');
+      _aiEnabled = false;
+    }
+  }
+
   // ==================== PERSISTENCE ====================
+
+  void onPlaybackError(String error, String songName) {
+    _think('playback_error', {'error': error, 'song': songName});
+  }
+
+  void onUrlRefreshAttempt() {
+    _think('url_refresh_attempt', {});
+  }
+
+  void onUrlRefreshFailed() {
+    _think('url_refresh_failed', {});
+  }
 
   Future<void> _loadPersistedThoughts() async {
     try {
@@ -67,7 +110,6 @@ class AudioGovernor {
           decoded.map((json) => AudioThought.fromJson(json)).toList(),
         );
 
-        // Clean up old thoughts immediately on load
         await _cleanupOldThoughts();
 
         print(
@@ -107,14 +149,12 @@ class AudioGovernor {
       );
       await _saveThoughts();
 
-      // Update last cleanup time
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString(_lastCleanupKey, now.toIso8601String());
     }
   }
 
   void _startCleanupTimer() {
-    // Run cleanup every hour
     _cleanupTimer = Timer.periodic(const Duration(hours: 1), (_) {
       _cleanupOldThoughts();
     });
@@ -123,11 +163,12 @@ class AudioGovernor {
   /// Manually clear all thoughts
   Future<void> clearAllThoughts() async {
     _thoughtHistory.clear();
+    _messageCache.clear();
     await _saveThoughts();
     _thoughtStreamController.add(
       AudioThought(
         type: 'system',
-        message: 'Memory cleared! Starting fresh...',
+        message: 'Memory wiped. Fresh start initiated.',
         timestamp: DateTime.now(),
         context: {},
       ),
@@ -135,179 +176,302 @@ class AudioGovernor {
     print('🧹 [AudioGovernor] All thoughts manually cleared');
   }
 
-  // ==================== THOUGHT GENERATION ====================
+  void _think(String type, Map<String, dynamic> context) async {
+    final message = await _generateMessage(type, context);
 
-  void _think(String type, Map<String, dynamic> context) {
     final thought = AudioThought(
       type: type,
-      message: _generateMessage(type, context),
+      message: message,
       timestamp: DateTime.now(),
       context: context,
     );
 
-    // Add to beginning of history (newest first)
     _thoughtHistory.insert(0, thought);
     _thoughtStreamController.add(thought);
-
-    // Save to persistent storage
     _saveThoughts();
 
-    // Print for debugging
     if (kDebugMode) {
-      print('🧠 [AudioGovernor] ${thought.message}');
+      print('🧠 [AudioGovernor] $message');
     }
   }
 
-  String _generateMessage(String type, Map<String, dynamic> ctx) {
+  // ==================== AI MESSAGE GENERATION ====================
+
+  Future<String> _generateMessage(String type, Map<String, dynamic> ctx) async {
+    // Try AI generation first if enabled
+    if (_aiEnabled && _random.nextDouble() > 0.3) {
+      // 70% chance to use AI
+      final aiMessage = await _generateAIMessage(type, ctx);
+      if (aiMessage != null) {
+        return aiMessage;
+      }
+    }
+
+    // Fallback to static messages
+    return _getFallbackMessage(type, ctx);
+  }
+
+  Future<String?> _generateAIMessage(
+    String type,
+    Map<String, dynamic> ctx,
+  ) async {
+    // Check cache first
+    if (_messageCache.containsKey(type) && _messageCache[type]!.isNotEmpty) {
+      final cached = _messageCache[type]!;
+      return cached[_random.nextInt(cached.length)];
+    }
+
+    try {
+      final prompt = _buildPrompt(type, ctx);
+
+      final response = await http
+          .post(
+            Uri.parse('https://openrouter.ai/api/v1/chat/completions'),
+            headers: {
+              'Authorization': 'Bearer $_apiKey',
+              'Content-Type': 'application/json',
+              'HTTP-Referer': 'com.vibeflow.app',
+            },
+            body: jsonEncode({
+              'model': 'google/gemma-2-9b-it',
+              'messages': [
+                {'role': 'system', 'content': _systemPrompt},
+                {'role': 'user', 'content': prompt},
+              ],
+              'temperature': 0.9,
+              'max_tokens': 80,
+            }),
+          )
+          .timeout(const Duration(seconds: 3));
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        final content = data['choices']?[0]?['message']?['content'] as String?;
+
+        if (content != null && content.trim().isNotEmpty) {
+          // Parse multiple variations (separated by newlines)
+          final variations = content
+              .split('\n')
+              .where((s) => s.trim().isNotEmpty && !s.startsWith('#'))
+              .map((s) => s.trim())
+              .toList();
+
+          if (variations.isNotEmpty) {
+            // Cache up to 5 variations
+            _messageCache[type] = variations.take(5).toList();
+            return variations[_random.nextInt(variations.length)];
+          }
+        }
+      }
+    } catch (e) {
+      // Silently fail and use fallback
+      if (kDebugMode) {
+        print('⚠️ [AudioGovernor] AI generation failed: $e');
+      }
+    }
+
+    return null;
+  }
+
+  String get _systemPrompt =>
+      '''You are the internal thoughts of an audio player. Generate SHORT (max 12 words), techy but casual messages.
+
+Style: Mix technical terms with casual language. Be slightly quirky but informative.
+Tone: Helpful technician who knows what they're doing.
+Format: Return 3-5 variations, one per line. No numbering, no hashtags.
+
+Example good messages:
+"Buffering stream chunks... network latency at 230ms, should stabilize soon"
+"Audio pipeline ready. Let's decode this bad boy"
+"URL cache hit! Skipping the whole handshake dance"
+"Stream expired. Refreshing auth token in background"
+"Processing next track... queue index advancing to position 4"
+
+Keep it:
+- Under 12 words
+- Technically accurate but simple
+- No emojis, no punctuation spam
+- Direct and informative''';
+
+  String _buildPrompt(String type, Map<String, dynamic> ctx) {
     switch (type) {
-      // ==================== PLAYBACK STATES ====================
       case 'starting_fresh':
-        return "Ooh, they want to hear ${ctx['song']}! Let me grab that stream real quick... should be ready in like half a second";
-
-      case 'already_playing':
-        return "Wait... isn't this already playing? I mean, I'm literally streaming it right now. Maybe they just double-tapped?";
-
-      case 'resuming':
-        final timestamp = _formatDuration(ctx['position'] as Duration?);
-        return "Oh hey, we're back! Cool, let me pick up right where we were... ah yes, $timestamp, I remember this part";
-
-      case 'song_completed':
-        return "Aaaaand that's a wrap on ${ctx['song']}! Man, that was good. Alright, what's next on the list?";
+        return 'Event: Loading new song "${ctx['song']}". Generate 3 varied messages about starting audio playback.';
 
       case 'buffering':
-        return "Ugh, gimme a sec... the internet is being super slow right now. Almost there... almost...";
+        return 'Event: Audio buffering/loading. Generate 3 messages about network buffer status.';
 
       case 'loading_url':
-        return "Okay so I need to talk to YouTube's servers to get this song... usually takes about 500ms unless they're being weird today";
-
-      case 'url_expired':
-        return "Oh crap, the link died. No worries though, happens all the time. Let me just grab a fresh one... nobody will even notice";
-
-      case 'auto_playing_next':
-        final mode = ctx['loop_mode'] ?? 'off';
-        final action = mode == 'all'
-            ? 'loop back to the start'
-            : 'play the next track';
-        return "That song just ended and loop mode is $mode, so I guess we're going to $action. Here we go!";
-
-      case 'paused_mid_song':
-        final timestamp = _formatDuration(ctx['position'] as Duration?);
-        return "They hit pause at $timestamp. Guess they need a break? I'll just chill here until they're ready to continue";
-
-      case 'stopped_completely':
-        return "Welp, that's it for today I guess. Cleaning up all my stuff... see ya next time! 👋";
-
-      // ==================== USER ACTIONS ====================
-      case 'skip_forward':
-        return "SKIP! Okay okay, I get it, not feeling this one. Moving to the next track... hope this one's better for ya";
-
-      case 'skip_backward':
-        final position = ctx['position'] as Duration?;
-        if (position != null && position.inSeconds > 3) {
-          return "Going backwards? Alright, lemme check... we're at ${position.inSeconds}s, so I'll just restart this one";
-        }
-        return "Going to the previous track! They really want to hear that one again";
-
-      case 'seek_action':
-        final timestamp = _formatDuration(ctx['position'] as Duration?);
-        return "Whoa, they just jumped to $timestamp! Someone knows exactly where they want to be in this song";
-
-      case 'fast_forward':
-        return "10 seconds forward! Either they're trying to skip an intro or they REALLY want to get to the chorus";
-
-      case 'rewind':
-        return "10 seconds back! Did they miss something? Or maybe that part was just too fire and they gotta hear it again 🔥";
-
-      case 'volume_change':
-        final volume = ctx['volume'] ?? 100;
-        return "Volume's now at $volume%... nice, finding that sweet spot. Not too loud, not too quiet";
-
-      case 'queue_addition':
-        final count = ctx['queue_count'] ?? 0;
-        return "Ooh they're adding ${ctx['song']} to the queue! Nice choice. That makes $count songs total now";
-
-      case 'queue_removal':
-        final count = ctx['queue_count'] ?? 0;
-        return "And ${ctx['song']} is OUT of the queue. Damn, what did that song do to deserve this? Down to $count songs";
-
-      // ==================== MODE CHANGES ====================
-      case 'loop_mode_change':
-        final mode = ctx['loop_mode'];
-        String action;
-        if (mode == 'off')
-          action = "play through once and stop";
-        else if (mode == 'one')
-          action = "repeat the same song forever";
-        else
-          action = "loop the whole queue";
-        return "Loop mode just changed to $mode! So now when songs end, I'll $action. Got it, changing strategy";
-
-      case 'shuffle_enabled':
-        return "SHUFFLE TIME! Okay let me mix this all up... making it random and chaotic, just how they like it";
-
-      case 'shuffle_disabled':
-        return "Back to normal order. No more chaos, we're going sequential again. Honestly kinda relaxing";
-
-      case 'radio_mode_start':
-        return "Radio mode activated! Based on ${ctx['song']}, let me find 25 similar bangers... this is gonna be a vibe";
-
-      case 'radio_queue_empty':
-        return "Uhh... we ran out of radio songs. Should I fetch more? Or just... stop? Someone tell me what to do";
-
-      case 'repeat_one_active':
-        return "Repeat ONE is on, which means I'm gonna play this EXACT song over and over until they stop me. Hope they really like it!";
-
-      // ==================== NETWORK & TECHNICAL ====================
-      case 'connection_lost':
-        return "OH NO the internet just died! I can't stream anything without connection... pausing until we're back online";
-
-      case 'connection_restored':
-        return "Internet's back baby! So uh... were we playing something before? Should I start again?";
-
-      case 'error_403_recovery':
-        return "Bruh, YouTube just blocked my URL (403 error). Typical. Let me quietly grab a new one in the background...";
+        return 'Event: Fetching audio URL from server. Generate 3 messages about URL retrieval.';
 
       case 'cache_hit':
         final age = ctx['cache_age'] ?? 0;
-        return "YOOO this URL is already in my cache from ${age}min ago! No need to ask YouTube. Instant playback, let's GO ⚡";
+        return 'Event: Found cached URL from $age minutes ago. Generate 3 messages about cache hit.';
 
       case 'cache_miss':
-        return "This URL isn't cached... which means I gotta ask YouTube for it. Shouldn't take long though";
+        return 'Event: URL not in cache, must fetch fresh. Generate 3 messages about cache miss.';
 
-      case 'url_refresh_success':
-        return "Got the new URL! Switching to it seamlessly... user won't even know I had to refresh it 😎";
-
-      // ==================== DEVICE EVENTS ====================
-      case 'headphones_unplugged':
-        return "YO HEADPHONES JUST GOT YANKED OUT! Auto-pausing immediately because we do NOT want this blasting on speakers";
-
-      case 'headphones_connected':
-        final willResume = ctx['will_resume'] ?? false;
-        return willResume
-            ? "Headphones just connected! They were listening before, so I'll auto-resume in 500ms"
-            : "Headphones connected! Ready to play when they are";
-
-      case 'bluetooth_connected':
-        return "Bluetooth device connected! Nice. If they were listening before, I can auto-resume now";
-
+      case 'url_expired':
+        return 'Event: Audio URL expired (403 error). Generate 3 messages about refreshing expired URL.';
       case 'audio_interruption':
-        final type = ctx['interruption_type'] ?? 'unknown';
-        return type == 'duck'
-            ? "Something needs my attention... lowering volume to 30% real quick"
-            : "Something interrupted me... probably a call or alarm. Pausing for now";
+        final interruptionType = ctx['interruption_type'] ?? 'unknown';
+        return 'Event: Audio interrupted due to $interruptionType. Generate 3 messages about pausing for interruption.';
 
       case 'interruption_ended':
-        final willResume = ctx['will_resume'] ?? false;
-        return willResume
-            ? "Interruption's over! Auto-resume is ON, so I'll start playing again"
-            : "Interruption's over, but auto-resume is OFF. They'll have to hit play manually";
+        final resume = ctx['will_resume'] ?? false;
+        return 'Event: Audio interruption ended${resume ? ", will resume playback" : ""}. Generate 3 messages.';
 
-      case 'background_mode':
-        return "App just went to the background but I'm still here, still playing, still vibing 🎵 Background mode activated";
+      case 'skip_forward':
+        return 'Event: User skipped to next track. Generate 3 messages about skipping forward.';
+
+      case 'skip_backward':
+        return 'Event: User went back to previous track. Generate 3 messages about skipping backward.';
+
+      case 'paused_mid_song':
+        final pos = _formatDuration(ctx['position'] as Duration?);
+        return 'Event: Playback paused at $pos. Generate 3 messages about pausing.';
+
+      case 'resuming':
+        final pos = _formatDuration(ctx['position'] as Duration?);
+        return 'Event: Resuming playback from $pos. Generate 3 messages about resuming.';
+
+      case 'headphones_unplugged':
+        return 'Event: Headphones disconnected suddenly. Generate 3 messages about auto-pausing.';
+
+      case 'headphones_connected':
+        final resume = ctx['will_resume'] ?? false;
+        return 'Event: Headphones connected${resume ? ", will auto-resume" : ""}. Generate 3 messages.';
+
+      case 'connection_lost':
+        return 'Event: Internet connection lost. Generate 3 messages about network failure.';
+
+      case 'connection_restored':
+        return 'Event: Internet connection restored. Generate 3 messages about network recovery.';
+
+      case 'shuffle_enabled':
+        return 'Event: Shuffle mode enabled. Generate 3 messages about randomizing queue.';
+
+      case 'loop_mode_change':
+        final mode = ctx['loop_mode'];
+        return 'Event: Loop mode changed to $mode. Generate 3 messages about loop mode.';
 
       default:
-        return "Something's happening... not sure what though 🤔";
+        return 'Event: $type happened. Generate 3 short techy messages about this audio event.';
     }
+  }
+
+  String _getFallbackMessage(String type, Map<String, dynamic> ctx) {
+    final fallbacks = <String, List<String>>{
+      'starting_fresh': [
+        'Loading audio stream for ${ctx['song']}... decoding pipeline ready',
+        'Initiating playback. Buffer preloading first 30 seconds',
+        'Stream acquisition started. Handshake with server complete',
+      ],
+      'buffering': [
+        'Network buffer low. Downloading more chunks... 47% complete',
+        'Buffering stream segments. Latency spike detected, compensating',
+        'Prebuffering next 15 seconds. Connection stable at 2.3 Mbps',
+      ],
+      'loading_url': [
+        'Querying media server for stream URL. RTT: ~180ms',
+        'Sending auth token. Awaiting signed URL response',
+        'HTTP request dispatched. Expecting 200 OK in 400-600ms',
+      ],
+      'cache_hit': [
+        'Cache hit! URL still valid. Skipping network round trip',
+        'Found cached stream URL. Age: ${ctx['cache_age']}min. Still fresh',
+        'Local cache match. Zero latency. Instant playback ready',
+      ],
+      'cache_miss': [
+        'Cache miss. Fetching new URL from upstream server',
+        'No cached URL found. Initiating fresh request to API',
+        'Stream URL not cached. Requesting from backend...',
+      ],
+      'url_expired': [
+        'Stream URL expired (403). Refreshing auth credentials silently',
+        'Token invalidated. Rotating to fresh signed URL in background',
+        'URL TTL exceeded. Auto-refreshing without interrupting playback',
+      ],
+      'skip_forward': [
+        'Queue index advancing. Loading next track metadata',
+        'Skipping forward. Preloading upcoming audio buffer',
+        'Next track requested. Shifting playback position in queue',
+      ],
+      'skip_backward': [
+        'Rewinding queue pointer. Loading previous track data',
+        'Back button pressed. Resetting to prior queue position',
+        'Queue index decrementing. Previous track loading',
+      ],
+      'paused_mid_song': [
+        'Playback suspended at ${_formatDuration(ctx['position'] as Duration?)}. Buffer maintained',
+        'Audio pipeline paused. Current position saved to state',
+        'Stream halted at timestamp ${_formatDuration(ctx['position'] as Duration?)}. Ready to resume',
+      ],
+      'resuming': [
+        'Resuming from ${_formatDuration(ctx['position'] as Duration?)}. Buffer still valid',
+        'Playback restarted. Decoder picking up at saved position',
+        'Audio pipeline active again. Continuing from ${_formatDuration(ctx['position'] as Duration?)}',
+      ],
+      'headphones_unplugged': [
+        'Audio device disconnected. Auto-pause triggered immediately',
+        'Headphone jack event detected. Stopping output to prevent leak',
+        'Output device removed. Halting playback as safety measure',
+      ],
+      'headphones_connected': [
+        'Audio output device connected. ${ctx['will_resume'] == true ? 'Auto-resuming in 500ms' : 'Ready when you are'}',
+        'Headphones detected. ${ctx['will_resume'] == true ? 'Restarting playback' : 'Awaiting user input'}',
+        'New audio route established. ${ctx['will_resume'] == true ? 'Continuing where we left off' : 'Standing by'}',
+      ],
+      'audio_interruption': [
+        'Audio focus lost. Pausing playback for higher priority sound',
+        'System interruption detected. Suspending audio pipeline',
+        'Playback paused due to external audio event',
+      ],
+
+      'interruption_ended': [
+        'Interruption ended. Checking whether playback should resume',
+        'Audio focus restored. Ready to continue playback',
+        'System audio released. ${ctx['will_resume'] == true ? 'Resuming playback' : 'Standing by'}',
+      ],
+
+      'connection_lost': [
+        'Network interface down. Pausing until connection restored',
+        'Internet connectivity lost. Buffer exhausted, halting stream',
+        'WiFi/cellular disconnected. Playback impossible without network',
+      ],
+      'connection_restored': [
+        'Network back online. Checking if we should resume playback',
+        'Connection reestablished. Stream ready to continue',
+        'Internet restored. Audio pipeline can restart now',
+      ],
+      'shuffle_enabled': [
+        'Shuffle mode ON. Randomizing queue order using Fisher-Yates',
+        'Random playback activated. Queue indices being scrambled',
+        'Shuffle algorithm engaged. Track order now non-sequential',
+      ],
+      'loop_mode_change': [
+        'Loop mode: ${ctx['loop_mode']}. Playback strategy updated',
+        'Repeat setting changed to ${ctx['loop_mode']}. Adjusting queue behavior',
+        'Loop config: ${ctx['loop_mode']}. End-of-queue behavior modified',
+      ],
+      'song_completed': [
+        'Track finished. Advancing to next in queue',
+        'Playback complete. Triggering next track load sequence',
+        'Song ended. Checking queue for continuation',
+      ],
+      'stopped_completely': [
+        'Full stop requested. Releasing audio resources',
+        'Playback terminated. Cleaning up decoder pipeline',
+        'Audio service stopping. Freeing allocated buffers',
+      ],
+    };
+
+    final options = fallbacks[type];
+    if (options != null && options.isNotEmpty) {
+      return options[_random.nextInt(options.length)];
+    }
+
+    return 'Audio event: $type';
   }
 
   String _formatDuration(Duration? duration) {
@@ -467,10 +631,12 @@ class AudioGovernor {
   }
 
   void onAudioInterruption(String type) {
+    _isInterrupted = true;
     _think('audio_interruption', {'interruption_type': type});
   }
 
   void onInterruptionEnded(bool willResume) {
+    _isInterrupted = false;
     _think('interruption_ended', {'will_resume': willResume});
   }
 
@@ -521,7 +687,6 @@ class AudioThought {
     return '$hour:$minute:$second';
   }
 
-  // JSON serialization
   Map<String, dynamic> toJson() => {
     'type': type,
     'message': message,

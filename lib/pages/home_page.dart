@@ -26,6 +26,7 @@ import 'package:vibeflow/pages/subpages/songs/albums.dart';
 import 'package:vibeflow/pages/subpages/songs/albums_grid_page.dart';
 import 'package:vibeflow/pages/subpages/songs/artists.dart';
 import 'package:vibeflow/pages/subpages/songs/artists_grid_page.dart';
+import 'package:vibeflow/pages/subpages/songs/dailyPLaylist.dart';
 import 'package:vibeflow/pages/subpages/songs/playlists.dart';
 import 'package:vibeflow/pages/subpages/songs/savedSongs.dart';
 import 'package:vibeflow/services/audio_service.dart';
@@ -84,10 +85,11 @@ class _HomePageState extends ConsumerState<HomePage> {
   final _audioService = AudioServices.instance;
   final MiniplayerController _miniplayerController = MiniplayerController();
   QuickPick? _lastPlayedSong;
-
+  EligibilityStatus? _eligibilityStatus;
   static const double _miniplayerMinHeight = 70.0;
-  static const double _miniplayerMaxHeight = 370.0;
-
+  DailyPlaylist? _featuredPlaylist;
+  bool _isLoadingFeaturedPlaylist = false;
+  bool _hasAccessCode = false;
   String _currentQuery = '';
 
   @override
@@ -102,6 +104,7 @@ class _HomePageState extends ConsumerState<HomePage> {
     // 🔄 Check for updates after first frame
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _checkForUpdates();
+      _checkAccessCodeAndLoadPlaylist();
     });
   }
 
@@ -140,6 +143,35 @@ class _HomePageState extends ConsumerState<HomePage> {
       print('Error loading quick picks: $e');
       if (!mounted) return; // ✅ Check before setState in catch
       setState(() => isLoadingQuickPicks = false);
+    }
+  }
+
+  Future<void> _checkAccessCodeAndLoadPlaylist() async {
+    try {
+      // Use the existing hasAccessCodeProvider instead of direct query
+      final hasAccessCodeAsync = ref.read(hasAccessCodeProvider);
+
+      hasAccessCodeAsync.when(
+        data: (hasCode) async {
+          if (!mounted) return;
+
+          setState(() {
+            _hasAccessCode = hasCode;
+          });
+
+          if (hasCode) {
+            await _loadFeaturedPlaylist();
+          }
+        },
+        loading: () {
+          print('⏳ Loading access code status...');
+        },
+        error: (error, stack) {
+          print('❌ Error checking access code: $error');
+        },
+      );
+    } catch (e) {
+      print('❌ Error checking access code: $e');
     }
   }
 
@@ -323,16 +355,58 @@ class _HomePageState extends ConsumerState<HomePage> {
     try {
       final updateResult = await UpdateManagerService.checkForUpdate();
 
-      if (!mounted) return; // ✅ Check after async operation
+      if (!mounted) return;
 
       if (updateResult.status == UpdateStatus.available &&
           updateResult.updateInfo != null) {
-        // Show update dialog
-        UpdateDialog.show(context, updateResult.updateInfo!);
+        final current = updateResult.updateInfo!.currentVersion;
+        final latest = updateResult.updateInfo!.latestVersion;
+
+        // 🔒 Show ONLY if latest > current
+        if (_isVersionLower(current, latest)) {
+          UpdateDialog.show(context, updateResult.updateInfo!);
+        }
       }
     } catch (e) {
       debugPrint('⚠️ Update check failed: $e');
-      // Silently fail - don't show error to user
+      // Silent failure by design
+    }
+  }
+
+  Future<void> _loadFeaturedPlaylist() async {
+    if (!mounted) return;
+
+    setState(() => _isLoadingFeaturedPlaylist = true);
+
+    try {
+      // Check eligibility first
+      final eligibility = await DailyPlaylistService.instance
+          .checkEligibility();
+
+      if (!eligibility.isEligible) {
+        print('📊 Not eligible for AI playlist yet');
+        if (!mounted) return;
+        setState(() => _isLoadingFeaturedPlaylist = false);
+        return;
+      }
+
+      // Generate playlist
+      final playlist = await DailyPlaylistService.instance.generatePlaylist();
+
+      if (!mounted) return;
+
+      setState(() {
+        _featuredPlaylist = playlist;
+        _isLoadingFeaturedPlaylist = false;
+      });
+
+      if (playlist != null) {
+        print('✅ Featured playlist loaded: ${playlist.songs.length} songs');
+      }
+    } catch (e) {
+      print('❌ Error loading featured playlist: $e');
+      if (!mounted) return;
+      setState(() => _isLoadingFeaturedPlaylist = false);
     }
   }
 
@@ -377,6 +451,14 @@ class _HomePageState extends ConsumerState<HomePage> {
                                     _buildAlbums(),
                                     const SizedBox(height: AppSpacing.xxxl),
                                     _buildSimilarArtists(),
+                                    const SizedBox(
+                                      height: 20,
+                                    ), // ADD THIS SECTION HERE ⬇️
+                                    if (_hasAccessCode) ...[
+                                      const SizedBox(height: AppSpacing.xxxl),
+                                      _buildFeaturedPlaylist(),
+                                    ],
+
                                     const SizedBox(
                                       height: 20,
                                     ), // Additional spacing after artists
@@ -678,11 +760,16 @@ class _HomePageState extends ConsumerState<HomePage> {
                                   await LastPlayedService.saveLastPlayed(
                                     quickPick,
                                   );
-                                  setState(() {
-                                    _lastPlayedSong = quickPick;
-                                  });
 
-                                  NewPlayerPage.open(context, quickPick);
+                                  if (mounted) {
+                                    setState(() => _lastPlayedSong = quickPick);
+
+                                    _openPlayer(
+                                      quickPick,
+                                      heroTag:
+                                          'thumbnail-search-${quickPick.videoId}',
+                                    );
+                                  }
                                 },
                                 ref: ref,
                               ),
@@ -995,9 +1082,7 @@ class _HomePageState extends ConsumerState<HomePage> {
     final cardBackgroundColor = ref.watch(themeCardBackgroundColorProvider);
     final textPrimaryColor = ref.watch(themeTextPrimaryColorProvider);
     final textSecondaryColor = ref.watch(themeTextSecondaryColorProvider);
-    final thumbnailRadius = ref.watch(
-      thumbnailRadiusProvider,
-    ); // Get the radius
+    final thumbnailRadius = ref.watch(thumbnailRadiusProvider);
 
     final displayDuration =
         formattedDuration ??
@@ -1612,21 +1697,16 @@ class _HomePageState extends ConsumerState<HomePage> {
     final cardBackgroundColor = ref.watch(themeCardBackgroundColorProvider);
     final iconInactiveColor = ref.watch(themeTextSecondaryColorProvider);
     final iconActiveColor = ref.watch(themeIconActiveColorProvider);
-    final thumbnailRadius = ref.watch(
-      thumbnailRadiusProvider,
-    ); // Get the radius
+    final thumbnailRadius = ref.watch(thumbnailRadiusProvider);
 
     return GestureDetector(
       onTap: () async {
         await LastPlayedService.saveLastPlayed(quickPick);
-        setState(() {
-          _lastPlayedSong = quickPick;
-        });
-        NewPlayerPage.open(
-          context,
-          quickPick,
-          heroTag: 'thumbnail-${quickPick.videoId}',
-        );
+        if (mounted) {
+          setState(() => _lastPlayedSong = quickPick);
+
+          _openPlayer(quickPick, heroTag: 'thumbnail-${quickPick.videoId}');
+        }
       },
       child: Container(
         height: 70,
@@ -1710,8 +1790,6 @@ class _HomePageState extends ConsumerState<HomePage> {
       ),
     );
   }
-
-  // Updated _buildQuickPicks method with skeleton
 
   // Updated _buildAlbums method with skeleton
   Widget _buildAlbums() {
@@ -2036,6 +2114,557 @@ class _HomePageState extends ConsumerState<HomePage> {
     );
   }
 
+  Widget _buildFeaturedPlaylist() {
+    final textPrimaryColor = ref.watch(themeTextPrimaryColorProvider);
+    final textSecondaryColor = ref.watch(themeTextSecondaryColorProvider);
+    final iconActiveColor = ref.watch(themeIconActiveColorProvider);
+    final cardBackgroundColor = ref.watch(themeCardBackgroundColorProvider);
+    final thumbnailRadius = ref.watch(thumbnailRadiusProvider);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.only(left: 16),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Row(
+                children: [
+                  Icon(Icons.auto_awesome, color: iconActiveColor, size: 20),
+                  const SizedBox(width: 8),
+                  Text(
+                    'Featured Playlist',
+                    style: AppTypography.sectionHeader(
+                      context,
+                    ).copyWith(color: textPrimaryColor),
+                  ),
+                ],
+              ),
+              if (_isLoadingFeaturedPlaylist)
+                SizedBox(
+                  width: 16,
+                  height: 16,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: iconActiveColor,
+                  ),
+                )
+              else if (_featuredPlaylist != null)
+                IconButton(
+                  icon: Icon(Icons.refresh, color: iconActiveColor),
+                  onPressed: _loadFeaturedPlaylist,
+                  tooltip: 'Refresh playlist',
+                ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 8),
+
+        // Subtitle with date
+        if (_featuredPlaylist != null)
+          Padding(
+            padding: const EdgeInsets.only(left: 16, bottom: 8),
+            child: Text(
+              _featuredPlaylist!.formattedDate,
+              style: AppTypography.caption(
+                context,
+              ).copyWith(color: textSecondaryColor, fontSize: 12),
+            ),
+          ),
+
+        const SizedBox(height: AppSpacing.md),
+
+        // Loading state
+        if (_isLoadingFeaturedPlaylist)
+          ShimmerLoading(
+            child: SizedBox(
+              height: 320,
+              child: ListView.builder(
+                scrollDirection: Axis.horizontal,
+                padding: const EdgeInsets.only(left: 16),
+                itemCount: 5,
+                itemBuilder: (context, index) {
+                  return Padding(
+                    padding: const EdgeInsets.only(right: 12),
+                    child: SizedBox(
+                      width: 160,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          SkeletonBox(
+                            width: 160,
+                            height: 160,
+                            borderRadius: AppSpacing.radiusMedium,
+                          ),
+                          const SizedBox(height: AppSpacing.sm),
+                          SkeletonBox(width: 160, height: 14, borderRadius: 4),
+                          const SizedBox(height: 6),
+                          SkeletonBox(width: 120, height: 12, borderRadius: 4),
+                        ],
+                      ),
+                    ),
+                  );
+                },
+              ),
+            ),
+          )
+        // Empty state - Not eligible
+        else if (_featuredPlaylist == null && !_isLoadingFeaturedPlaylist)
+          Center(
+            child: Padding(
+              padding: const EdgeInsets.all(32.0),
+              child: Column(
+                children: [
+                  Icon(
+                    _eligibilityStatus != null &&
+                            _eligibilityStatus!.uniqueSongs > 0
+                        ? Icons.hourglass_empty
+                        : Icons.lock_outline,
+                    size: 48,
+                    color: textSecondaryColor.withOpacity(0.5),
+                  ),
+                  const SizedBox(height: 16),
+                  Text(
+                    _eligibilityStatus != null &&
+                            _eligibilityStatus!.uniqueSongs > 0
+                        ? 'Keep listening to unlock!'
+                        : 'Start listening to unlock',
+                    style: AppTypography.subtitle(context).copyWith(
+                      color: textPrimaryColor,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+
+                  // Progress indicators
+                  if (_eligibilityStatus != null) ...[
+                    // Songs progress
+                    Container(
+                      padding: const EdgeInsets.all(16),
+                      decoration: BoxDecoration(
+                        color: cardBackgroundColor,
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Column(
+                        children: [
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              Text(
+                                'Unique Songs',
+                                style: AppTypography.caption(
+                                  context,
+                                ).copyWith(color: textSecondaryColor),
+                              ),
+                              Text(
+                                '${_eligibilityStatus!.uniqueSongs} / 35',
+                                style: AppTypography.caption(context).copyWith(
+                                  color: _eligibilityStatus!.uniqueSongs >= 35
+                                      ? Colors.green
+                                      : textPrimaryColor,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 8),
+                          LinearProgressIndicator(
+                            value: (_eligibilityStatus!.uniqueSongs / 35).clamp(
+                              0.0,
+                              1.0,
+                            ),
+                            backgroundColor: textSecondaryColor.withOpacity(
+                              0.2,
+                            ),
+                            valueColor: AlwaysStoppedAnimation<Color>(
+                              _eligibilityStatus!.uniqueSongs >= 35
+                                  ? Colors.green
+                                  : iconActiveColor,
+                            ),
+                          ),
+                          if (_eligibilityStatus!.songsRemaining > 0)
+                            Padding(
+                              padding: const EdgeInsets.only(top: 4),
+                              child: Text(
+                                '${_eligibilityStatus!.songsRemaining} more songs needed',
+                                style: AppTypography.captionSmall(context)
+                                    .copyWith(
+                                      color: textSecondaryColor.withOpacity(
+                                        0.7,
+                                      ),
+                                    ),
+                              ),
+                            ),
+                        ],
+                      ),
+                    ),
+
+                    const SizedBox(height: 12),
+
+                    // Days progress
+                    Container(
+                      padding: const EdgeInsets.all(16),
+                      decoration: BoxDecoration(
+                        color: cardBackgroundColor,
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Column(
+                        children: [
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              Text(
+                                'Listening Days',
+                                style: AppTypography.caption(
+                                  context,
+                                ).copyWith(color: textSecondaryColor),
+                              ),
+                              Text(
+                                '${_eligibilityStatus!.listeningDays} / 7',
+                                style: AppTypography.caption(context).copyWith(
+                                  color: _eligibilityStatus!.listeningDays >= 7
+                                      ? Colors.green
+                                      : textPrimaryColor,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 8),
+                          LinearProgressIndicator(
+                            value: (_eligibilityStatus!.listeningDays / 7)
+                                .clamp(0.0, 1.0),
+                            backgroundColor: textSecondaryColor.withOpacity(
+                              0.2,
+                            ),
+                            valueColor: AlwaysStoppedAnimation<Color>(
+                              _eligibilityStatus!.listeningDays >= 7
+                                  ? Colors.green
+                                  : iconActiveColor,
+                            ),
+                          ),
+                          if (_eligibilityStatus!.daysRemaining > 0)
+                            Padding(
+                              padding: const EdgeInsets.only(top: 4),
+                              child: Text(
+                                '${_eligibilityStatus!.daysRemaining} more days needed',
+                                style: AppTypography.captionSmall(context)
+                                    .copyWith(
+                                      color: textSecondaryColor.withOpacity(
+                                        0.7,
+                                      ),
+                                    ),
+                              ),
+                            ),
+                        ],
+                      ),
+                    ),
+                  ] else
+                    Text(
+                      'Listen to 35+ unique songs over 7 days',
+                      style: AppTypography.caption(
+                        context,
+                      ).copyWith(color: textSecondaryColor),
+                      textAlign: TextAlign.center,
+                    ),
+
+                  const SizedBox(height: 16),
+                  ElevatedButton.icon(
+                    onPressed: _loadFeaturedPlaylist,
+                    icon: const Icon(Icons.refresh, size: 18),
+                    label: const Text('Check Progress'),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: iconActiveColor,
+                      foregroundColor: Colors.white,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          )
+        // Playlist loaded
+        else if (_featuredPlaylist != null)
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // Horizontal scrolling song cards
+              SizedBox(
+                height: 220,
+                child: ListView.builder(
+                  scrollDirection: Axis.horizontal,
+                  padding: const EdgeInsets.only(left: 16),
+                  itemCount: _featuredPlaylist!.songs.take(10).length,
+                  itemBuilder: (context, index) {
+                    final song = _featuredPlaylist!.songs[index];
+                    return Padding(
+                      padding: const EdgeInsets.only(right: 12),
+                      child: _buildFeaturedSongCard(song),
+                    );
+                  },
+                ),
+              ),
+
+              // View all button
+              Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 12,
+                ),
+                child: TextButton.icon(
+                  onPressed: () {
+                    _showFullPlaylist();
+                  },
+                  icon: Icon(Icons.playlist_play, color: iconActiveColor),
+                  label: Text(
+                    'View All ${_featuredPlaylist!.songs.length} Songs',
+                    style: TextStyle(color: iconActiveColor),
+                  ),
+                ),
+              ),
+            ],
+          ),
+      ],
+    );
+  }
+
+  // 6. ADD FEATURED SONG CARD WIDGET
+  Widget _buildFeaturedSongCard(PlaylistSong song) {
+    const double size = 140;
+    final cardBackgroundColor = ref.watch(themeCardBackgroundColorProvider);
+    final textPrimaryColor = ref.watch(themeTextPrimaryColorProvider);
+    final textSecondaryColor = ref.watch(themeTextSecondaryColorProvider);
+    final thumbnailRadius = ref.watch(thumbnailRadiusProvider);
+
+    return GestureDetector(
+      onTap: () async {
+        // Search for the song and play it
+        await _searchAndPlayFeaturedSong(song);
+      },
+      child: Container(
+        width: size,
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: cardBackgroundColor,
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Placeholder album art (since we don't have it from AI)
+            ClipRRect(
+              borderRadius: BorderRadius.circular(size * thumbnailRadius),
+              child: Container(
+                width: size - 24,
+                height: size - 24,
+                color: Colors.grey[800],
+                child: const Center(
+                  child: Icon(Icons.music_note, color: Colors.grey, size: 40),
+                ),
+              ),
+            ),
+            const SizedBox(height: AppSpacing.sm),
+            Text(
+              song.title,
+              style: AppTypography.subtitle(context).copyWith(
+                fontWeight: FontWeight.w600,
+                color: textPrimaryColor,
+                fontSize: 13,
+              ),
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+            ),
+            const SizedBox(height: 4),
+            Text(
+              song.artist,
+              style: AppTypography.caption(
+                context,
+              ).copyWith(color: textSecondaryColor, fontSize: 11),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // 7. ADD METHOD TO SEARCH AND PLAY FEATURED SONG
+  Future<void> _searchAndPlayFeaturedSong(PlaylistSong song) async {
+    try {
+      // Show loading indicator
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Searching for ${song.title}...'),
+          duration: const Duration(seconds: 2),
+        ),
+      );
+
+      // Search for the song
+      final searchQuery = '${song.title} ${song.artist}';
+      final results = await _searchHelper.searchSongs(searchQuery, limit: 1);
+
+      if (results.isEmpty) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Song not found'),
+            backgroundColor: Colors.red,
+          ),
+        );
+        return;
+      }
+
+      // Play the first result
+      final foundSong = results.first;
+      final quickPick = QuickPick(
+        videoId: foundSong.videoId,
+        title: foundSong.title,
+        artists: foundSong.artists.join(', '),
+        thumbnail: foundSong.thumbnail,
+        duration: foundSong.duration,
+      );
+
+      await LastPlayedService.saveLastPlayed(quickPick);
+
+      if (!mounted) return;
+
+      setState(() {
+        _lastPlayedSong = quickPick;
+      });
+
+      _openPlayer(
+        quickPick,
+        heroTag: 'featured-thumbnail-${quickPick.videoId}',
+      );
+    } catch (e) {
+      print('❌ Error playing featured song: $e');
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Failed to play song'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
+  }
+
+  // 8. ADD METHOD TO SHOW FULL PLAYLIST
+  void _showFullPlaylist() {
+    if (_featuredPlaylist == null) return;
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) {
+        final backgroundColor = ref.read(themeBackgroundColorProvider);
+        final textPrimaryColor = ref.read(themeTextPrimaryColorProvider);
+        final textSecondaryColor = ref.read(themeTextSecondaryColorProvider);
+        final cardBackgroundColor = ref.read(themeCardBackgroundColorProvider);
+
+        return Container(
+          height: MediaQuery.of(context).size.height * 0.85,
+          decoration: BoxDecoration(
+            color: backgroundColor,
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+          ),
+          child: Column(
+            children: [
+              // Header
+              Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: cardBackgroundColor,
+                  borderRadius: const BorderRadius.vertical(
+                    top: Radius.circular(20),
+                  ),
+                ),
+                child: Column(
+                  children: [
+                    Container(
+                      width: 40,
+                      height: 4,
+                      decoration: BoxDecoration(
+                        color: textSecondaryColor.withOpacity(0.3),
+                        borderRadius: BorderRadius.circular(2),
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    Row(
+                      children: [
+                        Icon(Icons.auto_awesome, color: textPrimaryColor),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                'Featured Playlist',
+                                style: AppTypography.pageTitle(
+                                  context,
+                                ).copyWith(color: textPrimaryColor),
+                              ),
+                              Text(
+                                _featuredPlaylist!.formattedDate,
+                                style: AppTypography.caption(
+                                  context,
+                                ).copyWith(color: textSecondaryColor),
+                              ),
+                            ],
+                          ),
+                        ),
+                        IconButton(
+                          icon: Icon(Icons.close, color: textPrimaryColor),
+                          onPressed: () => Navigator.pop(context),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+
+              // Song list
+              Expanded(
+                child: ListView.builder(
+                  padding: const EdgeInsets.all(16),
+                  itemCount: _featuredPlaylist!.songs.length,
+                  itemBuilder: (context, index) {
+                    final song = _featuredPlaylist!.songs[index];
+                    return ListTile(
+                      leading: CircleAvatar(
+                        backgroundColor: cardBackgroundColor,
+                        child: Text(
+                          '${index + 1}',
+                          style: TextStyle(color: textPrimaryColor),
+                        ),
+                      ),
+                      title: Text(
+                        song.title,
+                        style: TextStyle(color: textPrimaryColor),
+                      ),
+                      subtitle: Text(
+                        song.artist,
+                        style: TextStyle(color: textSecondaryColor),
+                      ),
+                      onTap: () {
+                        Navigator.pop(context);
+                        _searchAndPlayFeaturedSong(song);
+                      },
+                    );
+                  },
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
   Widget _buildArtistCard(Artist artist) {
     final cardBackgroundColor = ref.watch(themeCardBackgroundColorProvider);
     final iconInactiveColor = ref.watch(themeTextSecondaryColorProvider);
@@ -2134,12 +2763,14 @@ class _HomePageState extends ConsumerState<HomePage> {
 
     return GestureDetector(
       onTap: () {
+        // OPTIMIZED: Direct navigation
         NewPlayerPage.open(
           context,
           song,
           heroTag: 'miniplayer-thumbnail-${song.videoId}',
         );
       },
+
       child: Container(
         decoration: BoxDecoration(
           color: cardBackgroundColor,
@@ -2331,30 +2962,165 @@ class _HomePageState extends ConsumerState<HomePage> {
     final userId = supabase.auth.currentUser?.id;
 
     if (userId != null) {
-      final profile = await supabase
-          .from('profiles')
-          .select('is_beta_tester, access_codes')
-          .eq('id', userId)
-          .single();
+      try {
+        final profile = await supabase
+            .from('profiles')
+            .select('is_beta_tester, access_codes')
+            .eq('id', userId)
+            .single();
 
-      final isBetaEnabled = profile?['is_beta_tester'] ?? false;
-      final hasAccessCode =
-          (profile?['access_codes'] as List?)?.isNotEmpty ?? false;
+        final isBetaEnabled = profile?['is_beta_tester'] ?? false;
+        final hasAccessCode =
+            (profile?['access_codes'] as List?)?.isNotEmpty ?? false;
 
-      if (mounted) {
+        if (!mounted) return;
+
         if (isBetaEnabled && hasAccessCode) {
-          // Show new beta player
+          // Show new beta player with custom transition
           Navigator.push(
             context,
-            MaterialPageRoute(
-              builder: (context) => NewPlayerPage(song: song, heroTag: heroTag),
+            PageRouteBuilder(
+              pageBuilder: (context, animation, secondaryAnimation) {
+                return NewPlayerPage(song: song, heroTag: heroTag);
+              },
+              transitionsBuilder:
+                  (context, animation, secondaryAnimation, child) {
+                    const begin = 0.92;
+                    const end = 1.0;
+                    const curve = Curves.easeOutCubic;
+
+                    var scaleTween = Tween(
+                      begin: begin,
+                      end: end,
+                    ).chain(CurveTween(curve: curve));
+                    var fadeTween = Tween(
+                      begin: 0.0,
+                      end: 1.0,
+                    ).chain(CurveTween(curve: curve));
+
+                    return FadeTransition(
+                      opacity: animation.drive(fadeTween),
+                      child: ScaleTransition(
+                        scale: animation.drive(scaleTween),
+                        child: child,
+                      ),
+                    );
+                  },
+              transitionDuration: const Duration(milliseconds: 400),
+              reverseTransitionDuration: const Duration(milliseconds: 350),
             ),
           );
         } else {
-          // Show regular player
-          NewPlayerPage.open(context, song, heroTag: heroTag);
+          // Show OLD regular player (PlayerPage, not NewPlayerPage)
+          Navigator.push(
+            context,
+            PageRouteBuilder(
+              pageBuilder: (context, animation, secondaryAnimation) {
+                return PlayerScreen(song: song); // OLD PLAYER
+              },
+              transitionsBuilder:
+                  (context, animation, secondaryAnimation, child) {
+                    const begin = 0.92;
+                    const end = 1.0;
+                    const curve = Curves.easeOutCubic;
+
+                    var scaleTween = Tween(
+                      begin: begin,
+                      end: end,
+                    ).chain(CurveTween(curve: curve));
+                    var fadeTween = Tween(
+                      begin: 0.0,
+                      end: 1.0,
+                    ).chain(CurveTween(curve: curve));
+
+                    return FadeTransition(
+                      opacity: animation.drive(fadeTween),
+                      child: ScaleTransition(
+                        scale: animation.drive(scaleTween),
+                        child: child,
+                      ),
+                    );
+                  },
+              transitionDuration: const Duration(milliseconds: 400),
+              reverseTransitionDuration: const Duration(milliseconds: 350),
+            ),
+          );
         }
+      } catch (e) {
+        print('❌ Error checking beta status: $e');
+        if (!mounted) return;
+
+        // Fallback to old player on error
+        Navigator.push(
+          context,
+          PageRouteBuilder(
+            pageBuilder: (context, animation, secondaryAnimation) {
+              return PlayerScreen(song: song);
+            },
+            transitionsBuilder:
+                (context, animation, secondaryAnimation, child) {
+                  const begin = 0.92;
+                  const end = 1.0;
+                  const curve = Curves.easeOutCubic;
+
+                  var scaleTween = Tween(
+                    begin: begin,
+                    end: end,
+                  ).chain(CurveTween(curve: curve));
+                  var fadeTween = Tween(
+                    begin: 0.0,
+                    end: 1.0,
+                  ).chain(CurveTween(curve: curve));
+
+                  return FadeTransition(
+                    opacity: animation.drive(fadeTween),
+                    child: ScaleTransition(
+                      scale: animation.drive(scaleTween),
+                      child: child,
+                    ),
+                  );
+                },
+            transitionDuration: const Duration(milliseconds: 400),
+            reverseTransitionDuration: const Duration(milliseconds: 350),
+          ),
+        );
       }
+    } else {
+      // No user ID - show old player
+      if (!mounted) return;
+
+      Navigator.push(
+        context,
+        PageRouteBuilder(
+          pageBuilder: (context, animation, secondaryAnimation) {
+            return PlayerScreen(song: song);
+          },
+          transitionsBuilder: (context, animation, secondaryAnimation, child) {
+            const begin = 0.92;
+            const end = 1.0;
+            const curve = Curves.easeOutCubic;
+
+            var scaleTween = Tween(
+              begin: begin,
+              end: end,
+            ).chain(CurveTween(curve: curve));
+            var fadeTween = Tween(
+              begin: 0.0,
+              end: 1.0,
+            ).chain(CurveTween(curve: curve));
+
+            return FadeTransition(
+              opacity: animation.drive(fadeTween),
+              child: ScaleTransition(
+                scale: animation.drive(scaleTween),
+                child: child,
+              ),
+            );
+          },
+          transitionDuration: const Duration(milliseconds: 400),
+          reverseTransitionDuration: const Duration(milliseconds: 350),
+        ),
+      );
     }
   }
 
@@ -2366,6 +3132,26 @@ class _HomePageState extends ConsumerState<HomePage> {
     _searchHelper.dispose();
     super.dispose();
   }
+}
+
+bool _isVersionLower(String current, String latest) {
+  List<int> parse(String v) =>
+      v.split('.').map((e) => int.tryParse(e) ?? 0).toList();
+
+  final c = parse(current);
+  final l = parse(latest);
+
+  final maxLen = c.length > l.length ? c.length : l.length;
+
+  for (int i = 0; i < maxLen; i++) {
+    final cv = i < c.length ? c[i] : 0;
+    final lv = i < l.length ? l[i] : 0;
+
+    if (cv < lv) return true;
+    if (cv > lv) return false;
+  }
+
+  return false; // equal versions
 }
 
 /// Extension to safely parse duration strings

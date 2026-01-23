@@ -4,7 +4,6 @@ class QuickPick {
   final String videoId;
   final String title;
   final String artists;
-  // final String? audioUrl;
   final String thumbnail;
   final String? duration;
   bool isFavorite;
@@ -13,31 +12,54 @@ class QuickPick {
     required this.videoId,
     required this.title,
     required this.artists,
-    // this.audioUrl,
     required this.thumbnail,
     this.duration,
     this.isFavorite = false,
   });
 
-  // Convert from Song model
+  // ==================== SONG CONVERSIONS ====================
+
   factory QuickPick.fromSong(Song song) {
     return QuickPick(
       videoId: song.videoId,
       title: song.title,
       artists: song.artistsString,
       thumbnail: song.thumbnail,
-      duration: song.duration, // ✅ pass-through
+      duration: song.duration,
     );
   }
 
-  // Convert to Song model
   Song toSong() {
     return Song(
       videoId: videoId,
       title: title,
       artists: artists.split(', '),
       thumbnail: thumbnail,
-      duration: duration?.toString(), // Pass directly if types match
+      duration: duration,
     );
+  }
+
+  // ==================== JSON SERIALIZATION ====================
+
+  factory QuickPick.fromJson(Map<String, dynamic> json) {
+    return QuickPick(
+      videoId: json['videoId'] as String,
+      title: json['title'] as String,
+      artists: json['artists'] as String,
+      thumbnail: json['thumbnail'] as String,
+      duration: json['duration'] as String?,
+      isFavorite: json['isFavorite'] as bool? ?? false,
+    );
+  }
+
+  Map<String, dynamic> toJson() {
+    return {
+      'videoId': videoId,
+      'title': title,
+      'artists': artists,
+      'thumbnail': thumbnail,
+      'duration': duration,
+      'isFavorite': isFavorite,
+    };
   }
 }

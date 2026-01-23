@@ -13,6 +13,7 @@ import 'package:vibeflow/pages/home_page.dart';
 import 'package:vibeflow/services/access_code_wrapper.dart';
 import 'package:vibeflow/services/audio_service.dart';
 import 'package:vibeflow/services/haptic_feedback_service.dart';
+import 'package:vibeflow/services/sync_services/musicIntelligence.dart';
 import 'package:vibeflow/utils/secure_storage.dart';
 import 'package:vibeflow/utils/theme_provider.dart';
 import 'package:vibeflow/services/supabase_initializer.dart';
@@ -33,6 +34,10 @@ Future<void> main() async {
   // 🎵 Initialize Audio Service
   await AudioServices.init();
   print('✅ Audio service initialized');
+
+  // 🤖 Initialize AI Playlist System (if access code exists)
+  await _initializeAiSystem();
+  print('✅ AI system check complete');
 
   // 📥 Check downloads after app update (INTEGRATED)
   final updateReport = await DownloadService.checkAfterUpdate();
@@ -91,6 +96,23 @@ Future<void> main() async {
   );
 
   runApp(const ProviderScope(child: VibeFlowApp()));
+}
+
+Future<void> _initializeAiSystem() async {
+  try {
+    final secureStorage = SecureStorageService();
+    final accessCode = await secureStorage.getAccessCode();
+
+    if (accessCode != null && accessCode.isNotEmpty) {
+      await MusicIntelligenceOrchestrator.init();
+      print('✅ AI Playlist System initialized');
+    } else {
+      print('ℹ️ AI system skipped - no access code');
+    }
+  } catch (e) {
+    print('❌ Failed to initialize AI Playlist System: $e');
+    // App can still work without AI features
+  }
 }
 
 /// 🔔 Awesome Notifications setup
@@ -152,46 +174,6 @@ Future<Widget> _determineInitialRoute() async {
 
   // Default route - AccessCodeWrapper will handle the rest
   return const AccessCodeWrapper();
-}
-
-class VibeFlowApp extends ConsumerWidget {
-  const VibeFlowApp({Key? key}) : super(key: key);
-
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final themeState = ref.watch(themeProvider);
-    final lightTheme = ref.watch(lightThemeProvider);
-    final darkTheme = ref.watch(darkThemeProvider);
-    final themeNotifier = ref.read(themeProvider.notifier);
-
-    return MaterialApp(
-      title: 'VibeFlow',
-      debugShowCheckedModeBanner: false,
-      theme: lightTheme,
-      darkTheme: darkTheme,
-      themeMode: themeNotifier.themeMode,
-      home: FutureBuilder<Widget>(
-        future: _determineInitialRoute(),
-        builder: (context, snapshot) {
-          if (snapshot.connectionState == ConnectionState.waiting) {
-            return const Scaffold(
-              body: Center(child: CircularProgressIndicator()),
-            );
-          }
-          return snapshot.data ?? const AccessCodeWrapper();
-        },
-      ),
-      routes: {
-        '/home': (context) => BanWrapper(child: const HomePage()),
-        '/access-code': (context) =>
-            const AccessCodeScreen(showSkipButton: true),
-        '/profile-setup': (context) => ProfileSetupScreen(accessCode: ''),
-        '/access-code-management': (context) =>
-            const AccessCodeManagementScreen(),
-      },
-      scaffoldMessengerKey: AudioErrorHandler.scaffoldMessengerKey,
-    );
-  }
 }
 
 class AudioErrorHandler {
@@ -366,5 +348,79 @@ class AudioErrorHandler {
         color: const Color(0xFFFF4458),
       ),
     );
+  }
+}
+
+class VibeFlowApp extends ConsumerWidget {
+  const VibeFlowApp({Key? key}) : super(key: key);
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final themeState = ref.watch(themeProvider);
+    final lightTheme = ref.watch(lightThemeProvider);
+    final darkTheme = ref.watch(darkThemeProvider);
+    final themeNotifier = ref.read(themeProvider.notifier);
+
+    return MaterialApp(
+      // ❌ DON'T wrap MaterialApp with BanWrapper
+      title: 'VibeFlow',
+      debugShowCheckedModeBanner: false,
+      theme: lightTheme,
+      darkTheme: darkTheme,
+      themeMode: themeNotifier.themeMode,
+
+      // ✅ Wrap the home widget instead
+      home: BanWrapper(
+        child: FutureBuilder<Widget>(
+          future: _determineInitialRoute(),
+          builder: (context, snapshot) {
+            if (snapshot.connectionState == ConnectionState.waiting) {
+              return const Scaffold(
+                body: Center(child: CircularProgressIndicator()),
+              );
+            }
+
+            final initialScreen = snapshot.data ?? const AccessCodeWrapper();
+
+            // 🔐 Gate AI initialization behind access code
+            _hasValidAccessCode().then((hasAccess) {
+              if (hasAccess) {
+                initializeAiPlaylistSystem();
+              }
+            });
+
+            return initialScreen;
+          },
+        ),
+      ),
+
+      routes: {
+        '/home': (context) => const BanWrapper(child: HomePage()),
+        '/access-code': (context) =>
+            const BanWrapper(child: AccessCodeScreen(showSkipButton: true)),
+        '/profile-setup': (context) =>
+            BanWrapper(child: ProfileSetupScreen(accessCode: '')),
+        '/access-code-management': (context) =>
+            const BanWrapper(child: AccessCodeManagementScreen()),
+      },
+      scaffoldMessengerKey: AudioErrorHandler.scaffoldMessengerKey,
+    );
+  }
+
+  Future<void> initializeAiPlaylistSystem() async {
+    try {
+      // Initialize the orchestrator (loads .env, validates API key)
+      await MusicIntelligenceOrchestrator.init();
+      print('✅ AI Playlist System initialized');
+    } catch (e) {
+      print('❌ Failed to initialize AI Playlist System: $e');
+      // App can still work without AI features
+    }
+  }
+
+  Future<bool> _hasValidAccessCode() async {
+    final secureStorage = SecureStorageService();
+    final accessCode = await secureStorage.getAccessCode();
+    return accessCode != null && accessCode.isNotEmpty;
   }
 }

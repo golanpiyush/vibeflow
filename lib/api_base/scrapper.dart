@@ -1,9 +1,11 @@
 import 'dart:convert';
 import 'dart:math';
 import 'package:http/http.dart' as http;
+import 'package:vibeflow/api_base/albumartistqp_cache.dart';
 import 'package:vibeflow/models/album_model.dart';
 import 'package:vibeflow/models/artist_model.dart';
 import 'package:vibeflow/models/audio_model.dart';
+import 'package:vibeflow/models/quick_picks_model.dart';
 import 'package:vibeflow/models/song_model.dart';
 
 /// FIXED: Multi-client scraper matching Outertune/InnerTune architecture
@@ -222,9 +224,34 @@ class YouTubeMusicScraper {
   }
 
   /// Get Quick Picks from home feed
-  Future<List<Song>> getQuickPicks({int limit = 20}) async {
+  /// Get Quick Picks from home feed with 24-hour cache
+  Future<List<Song>> getQuickPicks({
+    int limit = 20,
+    bool forceRefresh = false,
+  }) async {
     try {
-      print('🎯 [YTScraper] Fetching Quick Picks...');
+      // Try loading from cache first (unless force refresh)
+      if (!forceRefresh) {
+        final cachedQuickPicks = await AlbumArtistQPCache.loadQuickPicks();
+        if (cachedQuickPicks != null && cachedQuickPicks.isNotEmpty) {
+          print('⚡ [YTScraper] Using cached Quick Picks');
+          // Convert QuickPick to Song
+          return cachedQuickPicks
+              .map(
+                (qp) => Song(
+                  videoId: qp.videoId,
+                  title: qp.title,
+                  artists: [qp.artists],
+                  thumbnail: qp.thumbnail,
+                  duration: qp.duration,
+                  audioUrl: null,
+                ),
+              )
+              .toList();
+        }
+      }
+
+      print('🎯 [YTScraper] Fetching Quick Picks from API...');
 
       final uri = Uri.parse('$_baseUrl/browse?key=$_musicApiKey');
 
@@ -243,6 +270,25 @@ class YouTubeMusicScraper {
 
       final json = jsonDecode(response.body);
       final songs = _parseQuickPicks(json, limit);
+
+      // Save to cache
+      if (songs.isNotEmpty) {
+        final quickPicks = songs
+            .map(
+              (song) => QuickPick(
+                videoId: song.videoId,
+                title: song.title,
+                artists: song.artists.isNotEmpty
+                    ? song.artists.first
+                    : 'Unknown',
+                thumbnail: song.thumbnail,
+                duration: song.duration,
+              ),
+            )
+            .toList();
+
+        await AlbumArtistQPCache.saveQuickPicks(quickPicks);
+      }
 
       print('✅ [YTScraper] Found ${songs.length} Quick Picks');
       return songs;

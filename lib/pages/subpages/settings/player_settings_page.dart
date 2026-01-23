@@ -12,12 +12,14 @@ import 'package:vibeflow/constants/app_typography.dart';
 import 'package:vibeflow/database/listening_activity_service.dart';
 import 'package:vibeflow/database/profile_service.dart';
 import 'package:vibeflow/models/listening_activity_modelandProvider.dart';
+import 'package:vibeflow/pages/audio_equalizer_page.dart';
 import 'package:vibeflow/pages/subpages/settings/about_page.dart';
 import 'package:vibeflow/pages/subpages/settings/cache_page.dart';
 import 'package:vibeflow/pages/subpages/settings/database_page.dart';
 import 'package:vibeflow/pages/subpages/settings/other_page.dart';
 import 'package:vibeflow/services/bg_audio_handler.dart';
 import 'package:vibeflow/services/haptic_feedback_service.dart';
+import 'package:vibeflow/utils/material_transitions.dart';
 import 'package:vibeflow/utils/page_transitions.dart';
 import 'package:vibeflow/widgets/coming_soon_item.dart';
 
@@ -46,23 +48,24 @@ class _PlayerSettingsPageState extends ConsumerState<PlayerSettingsPage> {
     });
   }
 
+  // In player_settings_page.dart, update _loadSettings:
   Future<void> _loadSettings() async {
     try {
       final handler = getAudioHandler();
       if (handler != null) {
-        // Load current settings from the handler
         ref.read(resumePlaybackEnabledProvider.notifier).state =
             handler.resumePlaybackEnabled;
         ref.read(persistentQueueEnabledProvider.notifier).state =
             handler.persistentQueueEnabled;
+        ref.read(loudnessNormalizationEnabledProvider.notifier).state =
+            handler.loudnessNormalizationEnabled;
 
         print(
-          '✅ [UI] Settings loaded - Resume: ${handler.resumePlaybackEnabled}',
+          '✅ [UI] Settings loaded - Resume: ${handler.resumePlaybackEnabled}, Normalization: ${handler.loudnessNormalizationEnabled}',
         );
       } else {
         print('⚠️ [UI] Audio handler not available yet');
 
-        // Retry after a delay if handler not ready
         await Future.delayed(const Duration(milliseconds: 500));
         final retryHandler = getAudioHandler();
         if (retryHandler != null && mounted) {
@@ -70,6 +73,8 @@ class _PlayerSettingsPageState extends ConsumerState<PlayerSettingsPage> {
               retryHandler.resumePlaybackEnabled;
           ref.read(persistentQueueEnabledProvider.notifier).state =
               retryHandler.persistentQueueEnabled;
+          ref.read(loudnessNormalizationEnabledProvider.notifier).state =
+              retryHandler.loudnessNormalizationEnabled;
 
           print('✅ [UI] Settings loaded on retry');
         }
@@ -82,7 +87,9 @@ class _PlayerSettingsPageState extends ConsumerState<PlayerSettingsPage> {
   @override
   Widget build(BuildContext context) {
     final resumePlaybackEnabled = ref.watch(resumePlaybackEnabledProvider);
-
+    final loudnessNormalizationEnabled = ref.watch(
+      loudnessNormalizationEnabledProvider,
+    );
     final persistentQueueEnabled = ref.watch(persistentQueueEnabledProvider);
 
     return _SettingsPageTemplate(
@@ -206,18 +213,72 @@ class _PlayerSettingsPageState extends ConsumerState<PlayerSettingsPage> {
           //     // Navigate to EQ page
           //   },
           // ),
-          ComingSoonToggleItem(
-            title: 'Loudness normalization',
-            subtitle: 'Normalize volume across tracks',
-            value: false,
+          _buildToggleItem(
+            ref,
+            'Loudness normalization',
+            'Normalize volume across tracks',
+            loudnessNormalizationEnabled,
+            () async {
+              final handler = getAudioHandler();
+              if (handler == null) {
+                HapticFeedbackService().vibratingForNotAllowed();
+                return;
+              }
+
+              final notifier = ref.read(
+                loudnessNormalizationEnabledProvider.notifier,
+              );
+              final newValue = !notifier.state;
+
+              try {
+                await handler.setLoudnessNormalizationEnabled(newValue);
+                notifier.state = newValue;
+
+                if (!mounted) return;
+
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text(
+                      newValue
+                          ? 'Normalization enabled'
+                          : 'Normalization disabled',
+                    ),
+                    behavior: SnackBarBehavior.floating,
+                    duration: const Duration(seconds: 2),
+                  ),
+                );
+              } catch (e) {
+                HapticFeedbackService().vibrateAudioError();
+
+                if (!mounted) return;
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('Failed to update setting'),
+                    backgroundColor: Colors.red,
+                  ),
+                );
+              }
+            },
           ),
 
           const SizedBox(height: AppSpacing.lg),
 
-          ComingSoonNavigationItem(
-            title: 'Equalizer',
-            subtitle: 'Adjust sound frequencies',
+          // ComingSoonNavigationItem(
+          //   title: 'Equalizer',
+          //   subtitle: 'Adjust sound frequencies',
+          // ),
+          _buildNavigationItem(
+            ref,
+            context,
+            'Equalizer',
+            'Adjust sound frequencies',
+            () {
+              Navigator.of(
+                context,
+              ).pushMaterialFadeThrough(const AudioEqualizerPage());
+            },
           ),
+
           const SizedBox(height: AppSpacing.xl),
 
           // PLAYBACK SECTION
@@ -477,6 +538,11 @@ class _PlayerSettingsPageState extends ConsumerState<PlayerSettingsPage> {
     }
   }
 }
+
+// In player_settings_page.dart, add this provider after the existing ones:
+final loudnessNormalizationEnabledProvider = StateProvider<bool>(
+  (ref) => false,
+);
 
 // Template for settings pages
 class _SettingsPageTemplate extends ConsumerWidget {

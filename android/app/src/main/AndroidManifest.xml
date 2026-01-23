@@ -1,15 +1,15 @@
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
 
     <!-- Internet & Wake -->
     <uses-permission android:name="android.permission.INTERNET"/>
     <uses-permission android:name="android.permission.WAKE_LOCK"/>
 
-     <!-- In-App Installer -->
-     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+    <!-- In-App Installer -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
-      <!-- In-App EQ -->
+    <!-- In-App EQ -->
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS"/>
-
 
     <!-- Foreground services -->
     <uses-permission android:name="android.permission.VIBRATE"/>
@@ -31,11 +31,17 @@
         android:name="android.permission.WRITE_EXTERNAL_STORAGE"
         android:maxSdkVersion="32"/>
 
+    <!-- Android 11+ (API 30+) - For Music/VibeFlow directory access -->
+    <uses-permission 
+        android:name="android.permission.MANAGE_EXTERNAL_STORAGE"
+        tools:ignore="ScopedStorage" />
+
     <application
         android:label="vibeflow"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher"
-        android:usesCleartextTraffic="true">
+        android:usesCleartextTraffic="true"
+        android:requestLegacyExternalStorage="true">
 
         <!-- Main Activity -->
         <activity

@@ -2,6 +2,7 @@
 import 'dart:convert';
 import 'dart:math';
 import 'package:http/http.dart' as http;
+import 'package:vibeflow/api_base/albumartistqp_cache.dart';
 import 'package:vibeflow/api_base/cache_manager.dart';
 import 'package:vibeflow/models/artist_model.dart';
 import 'package:vibeflow/models/song_model.dart';
@@ -81,8 +82,17 @@ class YTMusicArtistsScraper {
   Future<List<Artist>> getTrendingArtists({
     int limit = 50,
     int offset = 0,
+    bool forceRefresh = false,
   }) async {
     try {
+      // Try loading from cache first (only for offset 0 and not force refresh)
+      if (offset == 0 && !forceRefresh) {
+        final cachedArtists = await AlbumArtistQPCache.loadArtists();
+        if (cachedArtists != null && cachedArtists.isNotEmpty) {
+          print('⚡ [YTMusicArtistsScraper] Using cached Artists');
+          return cachedArtists.take(limit).toList();
+        }
+      }
       print(
         '🔍 [YTMusicArtistsScraper] Fetching trending artists (limit: $limit, offset: $offset)...',
       );
@@ -169,6 +179,10 @@ class YTMusicArtistsScraper {
         await _cacheManager.set('trending_artists', trendingArtists);
       }
 
+      // Save to cache only for first batch
+      if (offset == 0 && trendingArtists.isNotEmpty) {
+        await AlbumArtistQPCache.saveArtists(trendingArtists);
+      }
       print(
         '✅ [YTMusicArtistsScraper] Returning ${trendingArtists.length} artists (from ${allArtists.length} fetched)',
       );

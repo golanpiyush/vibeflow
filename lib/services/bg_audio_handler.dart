@@ -11,6 +11,7 @@ import 'package:vibeflow/models/quick_picks_model.dart';
 import 'package:vibeflow/providers/RealTimeService.dart';
 import 'package:vibeflow/services/audioGoverner.dart';
 import 'package:vibeflow/services/cacheManager.dart';
+import 'package:vibeflow/utils/audio_session_bridge.dart';
 
 BackgroundAudioHandler? _globalAudioHandler;
 BackgroundAudioHandler? getAudioHandler() {
@@ -21,6 +22,8 @@ BackgroundAudioHandler? getAudioHandler() {
 /// Handles notification controls, lock screen controls, and background playback
 class BackgroundAudioHandler extends BaseAudioHandler
     with QueueHandler, SeekHandler {
+  int? _audioSessionId;
+
   final AudioPlayer _audioPlayer = AudioPlayer();
   final VibeFlowCore _core = VibeFlowCore();
   final RealtimeListeningTracker _tracker = RealtimeListeningTracker();
@@ -36,22 +39,35 @@ class BackgroundAudioHandler extends BaseAudioHandler
   bool _isUrlExpired = false;
   bool _isShuffleEnabled = false;
   AudioSession? _audioSession;
+  DateTime? _lastSongChangeTime;
 
   // Settings
   bool _resumePlaybackEnabled = false;
   bool _persistentQueueEnabled = false;
+  bool _loudnessNormalizationEnabled = false;
+
+  // Added normalization constants for loudness
+  static const double _targetLUFS = -14.0; // Standard loudness target
+  static const double _normalizationBoost = 1.0; // Default multiplier
 
   // Current queue and playback state
   final _queue = <MediaItem>[];
   int _currentIndex = 0;
   LoopMode _loopMode = LoopMode.off;
+
   // Radio queue for autoplay
   final _radioQueue = <MediaItem>[];
   int _radioQueueIndex = -1;
   bool _isLoadingRadio = false;
   String? _lastRadioVideoId;
-
+  String? _currentRadioSourceId;
   bool _isRefreshingUrl = false;
+  bool _isChangingSong = false;
+  // Radio SETTINGS
+  static const int _initialRadioSize = 20;
+  static const int _radioRefetchThreshold = 18; // Fetch more at song #18
+  static const int _maxRadioQueueSize = 75;
+  static const int _radioBatchSize = 20;
 
   final AudioGovernor _governor = AudioGovernor.instance;
 
@@ -74,7 +90,7 @@ class BackgroundAudioHandler extends BaseAudioHandler
     print('✅ [BackgroundAudioHandler] Initialized');
   }
 
-  // Add this new method to load settings:
+  // In bg_audio_handler.dart, update _loadSettings:
   Future<void> _loadSettings() async {
     try {
       final prefs = await SharedPreferences.getInstance();
@@ -83,16 +99,24 @@ class BackgroundAudioHandler extends BaseAudioHandler
           prefs.getBool('resume_playback_enabled') ?? false;
       _persistentQueueEnabled =
           prefs.getBool('persistent_queue_enabled') ?? false;
+      _loudnessNormalizationEnabled =
+          prefs.getBool('loudness_normalization_enabled') ?? false; // ADD THIS
 
       print(
-        '⚙️ [Settings] Loaded - Resume: $_resumePlaybackEnabled, Queue: $_persistentQueueEnabled',
+        '⚙️ [Settings] Loaded - Resume: $_resumePlaybackEnabled, Queue: $_persistentQueueEnabled, Normalization: $_loudnessNormalizationEnabled',
       );
 
-      // Update custom state
+      // Apply normalization if enabled
+      if (_loudnessNormalizationEnabled) {
+        await _audioPlayer.setVolume(0.85); // Normalized volume
+      }
+
       customState.add({
         ..._safeCustomState(),
         'resume_playback_enabled': _resumePlaybackEnabled,
         'persistent_queue_enabled': _persistentQueueEnabled,
+        'loudness_normalization_enabled':
+            _loudnessNormalizationEnabled, // ADD THIS
       });
     } catch (e) {
       print('❌ [Settings] Error loading settings: $e');
@@ -271,6 +295,18 @@ class BackgroundAudioHandler extends BaseAudioHandler
     } catch (e) {
       print('❌ [AudioSession] Setup failed: $e');
     }
+
+    _initializeAudioEffects();
+  }
+
+  Future<void> _initializeAudioEffects() async {
+    try {
+      // Get audio session ID
+      _audioSessionId = await AudioSessionBridge.getAudioSessionId();
+      print('🎛️ [AudioEffects] Initialized with session ID: $_audioSessionId');
+    } catch (e) {
+      print('❌ [AudioEffects] Failed to initialize: $e');
+    }
   }
 
   // Also update the _handleAudioInterruption method with better logging
@@ -379,13 +415,14 @@ class BackgroundAudioHandler extends BaseAudioHandler
     _audioPlayer.playerStateStream.listen((playerState) {
       final isPlaying = playerState.playing;
       final processingState = playerState.processingState;
-      // ADD THESE
+
       _governor.updatePlayingState(isPlaying);
       _governor.updateProcessingState(processingState);
-      // ADD THIS for buffering
+
       if (processingState == ProcessingState.buffering) {
         _governor.onBuffering();
       }
+
       // Track playback state for auto-resume
       if (isPlaying) {
         _wasPlayingBeforeDisconnect = true;
@@ -437,17 +474,139 @@ class BackgroundAudioHandler extends BaseAudioHandler
 
     _audioPlayer.processingStateStream.listen((state) {
       if (state == ProcessingState.completed) {
-        print('✅ [BackgroundAudioHandler] Song completed, playing next...');
+        print('✅ [BackgroundAudioHandler] Song completed');
+
+        // Handle loop mode BEFORE calling skipToNext
+        if (_loopMode == LoopMode.one) {
+          print('🔁 [LoopMode.one] Restarting current song');
+          _audioPlayer.seek(Duration.zero);
+          _audioPlayer.play();
+          return; // Don't call skipToNext
+        }
+
+        print('⏭️ [BackgroundAudioHandler] Playing next...');
         skipToNext();
       }
     });
 
-    _audioPlayer.playbackEventStream.listen((event) async {
-      if (event.processingState == ProcessingState.idle &&
-          event.currentIndex == null &&
-          !_audioPlayer.playing) {
-        await _handle403ErrorRecovery();
-      }
+    // Listen for player errors with UI notification
+    _audioPlayer.playbackEventStream.listen(
+      (event) {
+        // Check for errors in the event
+        if (event.processingState == ProcessingState.idle &&
+            !_audioPlayer.playing &&
+            _audioPlayer.duration == null &&
+            mediaItem.value != null) {
+          // This indicates a source error occurred
+          print('⚠️ [AudioPlayer] Detected potential source error');
+          _governor.onPlaybackError(
+            'Audio source error',
+            mediaItem.value?.title ?? 'Unknown',
+          );
+          _notifyPlaybackError(
+            'Audio source error detected',
+            isSourceError: true,
+          );
+          _handle403ErrorRecovery();
+        }
+      },
+      onError: (Object e, StackTrace st) {
+        // This catches actual error events
+        print('❌ [AudioPlayer] Error event: $e');
+        print('   Stack trace: $st');
+
+        final errorMessage = e.toString();
+        final songTitle = mediaItem.value?.title ?? 'Unknown';
+
+        // Notify governor about the error
+        if (errorMessage.contains('403') ||
+            errorMessage.contains('Response code: 403') ||
+            errorMessage.contains('Source error')) {
+          print('🔴 [AudioPlayer] 403 Error detected - notifying governor');
+          _governor.on403Error();
+          _notifyPlaybackError(
+            'Stream expired (403). Tap RETRY to refresh.',
+            isSourceError: true,
+          );
+          _handle403ErrorRecovery();
+        } else if (errorMessage.contains('Unable to connect') ||
+            errorMessage.contains('Connection')) {
+          _governor.onPlaybackError(errorMessage, songTitle);
+          _notifyPlaybackError(
+            'Connection error. Check your internet.',
+            isSourceError: false,
+          );
+        } else if (errorMessage.contains('HttpDataSource') ||
+            errorMessage.contains('IOException')) {
+          _governor.onPlaybackError(errorMessage, songTitle);
+          _notifyPlaybackError('Network error occurred', isSourceError: true);
+        } else {
+          // Generic playback error
+          _governor.onPlaybackError(errorMessage, songTitle);
+          _notifyPlaybackError(
+            'Playback failed: ${_sanitizeErrorMessage(errorMessage)}',
+            isSourceError: true,
+          );
+        }
+      },
+    );
+  }
+
+  // In BackgroundAudioHandler class, add this public method:
+  Future<void> stopImmediately() async {
+    print('🚨 [BackgroundAudioHandler] Immediate stop requested');
+    try {
+      // Stop tracking
+      await _tracker.stopTracking();
+
+      // Stop audio player
+      await _audioPlayer.stop();
+
+      // Clear queues
+      _queue.clear();
+      _radioQueue.clear();
+      queue.add([]);
+      mediaItem.add(null);
+
+      // Update playback state
+      playbackState.add(
+        playbackState.value.copyWith(
+          playing: false,
+          processingState: AudioProcessingState.idle,
+          controls: [],
+        ),
+      );
+
+      print('✅ [BackgroundAudioHandler] Immediate stop completed');
+    } catch (e) {
+      print('❌ [BackgroundAudioHandler] Error during immediate stop: $e');
+    }
+  }
+
+  // Helper method to sanitize error messages for user display
+  String _sanitizeErrorMessage(String error) {
+    // Remove technical stack traces and make user-friendly
+    if (error.contains('ExoPlaybackException')) {
+      return 'Media playback error';
+    }
+    if (error.contains('SourceException')) {
+      return 'Audio source error';
+    }
+    if (error.length > 100) {
+      return error.substring(0, 97) + '...';
+    }
+    return error;
+  }
+
+  // Notify UI about playback errors
+  void _notifyPlaybackError(String message, {bool isSourceError = false}) {
+    print('📢 [Error Notification] $message (Source error: $isSourceError)');
+
+    _updateCustomState({
+      'playback_error': true,
+      'error_message': message,
+      'is_source_error': isSourceError,
+      'error_timestamp': DateTime.now().millisecondsSinceEpoch,
     });
   }
 
@@ -562,20 +721,48 @@ class BackgroundAudioHandler extends BaseAudioHandler
 
   // ==================== PUBLIC API ====================
 
-  /// Play a single song - FIXED VERSION
   Future<void> playSong(QuickPick song) async {
+    // Safety: Force reset if last change was more than 5 seconds ago
+    if (_isChangingSong && _lastSongChangeTime != null) {
+      final timeSinceLastChange = DateTime.now().difference(
+        _lastSongChangeTime!,
+      );
+      if (timeSinceLastChange.inSeconds > 5) {
+        print(
+          '⚠️ [HANDLER] Forcing reset - stuck for ${timeSinceLastChange.inSeconds}s',
+        );
+        _isChangingSong = false;
+      }
+    }
+
+    // Prevent rapid concurrent calls
+    if (_isChangingSong) {
+      print('⏳ [HANDLER] Song change already in progress, waiting...');
+      await Future.delayed(const Duration(milliseconds: 200));
+      if (_isChangingSong) {
+        print('❌ [HANDLER] Still changing after 200ms, aborting');
+        return;
+      }
+    }
+
+    _isChangingSong = true;
+    _lastSongChangeTime = DateTime.now();
+
     try {
       print('🎵 [HANDLER] ========== PLAYING SONG ==========');
       print('   Title: ${song.title}');
-      print('   Artists: ${song.artists}');
       print('   VideoId: ${song.videoId}');
 
       _governor.onPlaySong(song.title, song.artists);
 
       // Check if same song is already playing
+      // Check if EXACT same song is already playing (match by videoId AND title AND artist)
       final currentMedia = mediaItem.value;
-      if (currentMedia != null && currentMedia.id == song.videoId) {
-        print('🎵 Same song already playing');
+      if (currentMedia != null &&
+          currentMedia.id == song.videoId &&
+          currentMedia.title == song.title &&
+          currentMedia.artist == song.artists) {
+        print('🎵 Exact same song already playing');
         if (!_audioPlayer.playing) {
           await _audioPlayer.play();
           _tracker.resumeTracking();
@@ -583,23 +770,316 @@ class BackgroundAudioHandler extends BaseAudioHandler
         return;
       }
 
-      // 🔧 FIX: Stop tracking with longer delay
-      print('🛑 [HANDLER] Stopping previous tracking...');
-      await _tracker.stopTracking();
-
-      // 🔧 FIX: Add delay after stopping tracking
-      await Future.delayed(const Duration(milliseconds: 300));
-
-      // Pause if playing
-      if (_audioPlayer.playing) {
-        await _audioPlayer.pause();
+      // If videoId matches but title/artist different, it's a different version - continue playing
+      if (currentMedia != null && currentMedia.id == song.videoId) {
+        print(
+          '🎵 Same videoId but different song (${song.title} vs ${currentMedia.title}) - playing new version',
+        );
       }
 
-      // Clear radio queue
-      _radioQueue.clear();
-      _radioQueueIndex = -1;
-      _lastRadioVideoId = null;
-      _isLoadingRadio = false;
+      // CRITICAL: Set loading state IMMEDIATELY
+      playbackState.add(
+        playbackState.value.copyWith(
+          processingState: AudioProcessingState.loading,
+          playing: false,
+        ),
+      );
+
+      print('🛑 [HANDLER] Stopping previous playback...');
+
+      // CRITICAL: Stop in correct order
+      await _tracker.stopTracking();
+      await Future.delayed(const Duration(milliseconds: 100));
+
+      if (_audioPlayer.playing) {
+        await _audioPlayer.pause();
+        await Future.delayed(const Duration(milliseconds: 50));
+      }
+
+      await _audioPlayer.stop();
+      await Future.delayed(const Duration(milliseconds: 100));
+
+      // 🔥 CRITICAL: Only clear radio if user explicitly selected a NEW source
+      // Don't clear if they're just playing from the existing radio queue
+      final isPlayingFromRadio = _radioQueue.any(
+        (item) => item.id == song.videoId,
+      );
+      final isFirstSongInNewRadio = _currentRadioSourceId == null;
+      final isDifferentSource =
+          !isPlayingFromRadio &&
+          _currentRadioSourceId != song.videoId &&
+          !isFirstSongInNewRadio;
+
+      print('🔍 [HANDLER] Source analysis:');
+      print('   Is from radio: $isPlayingFromRadio');
+      print('   Current source: $_currentRadioSourceId');
+      print('   New song: ${song.videoId}');
+      print('   Is different source: $isDifferentSource');
+
+      if (isDifferentSource) {
+        print('🗑️ [HANDLER] NEW SOURCE - Clearing old radio');
+        print('   Old source: $_currentRadioSourceId');
+        print('   New source: ${song.videoId}');
+
+        _radioQueue.clear();
+        _radioQueueIndex = -1;
+        _lastRadioVideoId = null;
+        _isLoadingRadio = false;
+        _currentRadioSourceId = song.videoId;
+        _updateCustomState({'radio_queue': [], 'radio_queue_count': 0});
+      } else if (isPlayingFromRadio) {
+        print('✅ [HANDLER] Playing from EXISTING radio, keeping intact');
+        print('   Radio source: $_currentRadioSourceId');
+        print(
+          '   Song position in radio: ${_radioQueue.indexWhere((item) => item.id == song.videoId) + 1}/${_radioQueue.length}',
+        );
+
+        // 🔥 UPDATE radio index when playing from existing radio
+        final radioPos = _radioQueue.indexWhere(
+          (item) => item.id == song.videoId,
+        );
+        if (radioPos != -1) {
+          _radioQueueIndex = radioPos;
+          print('   Updated radio index to: $_radioQueueIndex');
+        }
+      }
+
+      // Create new media item
+      final newMediaItem = MediaItem(
+        id: song.videoId,
+        title: song.title,
+        artist: song.artists,
+        artUri:
+            song.thumbnail.isNotEmpty &&
+                (song.thumbnail.startsWith('http://') ||
+                    song.thumbnail.startsWith('https://'))
+            ? Uri.parse(song.thumbnail)
+            : null,
+        duration: song.duration != null
+            ? _parseDurationString(song.duration!)
+            : null,
+      );
+
+      // Update queue and media item
+      _queue.clear();
+      _queue.add(newMediaItem);
+      _currentIndex = 0;
+      queue.add(_queue);
+
+      // CRITICAL: Update mediaItem BEFORE getting audio URL
+      mediaItem.add(newMediaItem);
+
+      print('🔍 [HANDLER] Getting audio URL...');
+      _governor.onLoadingUrl(song.title);
+
+      final audioUrl = await _getAudioUrl(song.videoId, song: song);
+      if (audioUrl == null) throw Exception('Failed to get audio URL');
+
+      print('✅ [HANDLER] Audio URL obtained, setting player...');
+
+      // CRITICAL: Set audio source with proper error handling
+      try {
+        await _audioPlayer.setUrl(audioUrl);
+      } catch (e) {
+        print('❌ [HANDLER] setUrl failed: $e');
+        throw Exception('Failed to set audio source: $e');
+      }
+
+      print('▶️ [HANDLER] Starting playback...');
+      await _audioPlayer.play();
+
+      // Wait for duration
+      print('⏱️ [HANDLER] Waiting for duration...');
+      int attempts = 0;
+      while (_audioPlayer.duration == null && attempts < 30) {
+        await Future.delayed(const Duration(milliseconds: 100));
+        attempts++;
+      }
+
+      if (_audioPlayer.duration != null) {
+        print('✅ [HANDLER] Duration available: ${_audioPlayer.duration}');
+        // Update mediaItem with duration
+        mediaItem.add(newMediaItem.copyWith(duration: _audioPlayer.duration));
+      } else {
+        print('⚠️ [HANDLER] Duration still null after waiting');
+      }
+
+      print('📝 [HANDLER] Starting realtime tracking...');
+      await _tracker.startTracking(song);
+
+      print('✅ [HANDLER] ========== PLAYBACK STARTED ==========');
+
+      // Cache URL
+      AudioUrlCache().cache(song, audioUrl);
+
+      // Load radio if needed
+      final shouldLoadRadio = isDifferentSource || _radioQueue.isEmpty;
+
+      if (shouldLoadRadio) {
+        print('📻 [HANDLER] Loading radio (New source: $isDifferentSource)');
+        _loadRadioImmediately(song);
+      }
+    } catch (e, stackTrace) {
+      print('❌ [HANDLER] Error playing song: $e');
+      print('   Stack: $stackTrace');
+
+      playbackState.add(
+        playbackState.value.copyWith(
+          processingState: AudioProcessingState.error,
+          playing: false,
+        ),
+      );
+
+      _notifyPlaybackError(
+        'Failed to play: ${e.toString()}',
+        isSourceError: true,
+      );
+    } finally {
+      _isChangingSong = false;
+    }
+  }
+
+  Future<bool> hardRefetchCurrentUrl() async {
+    try {
+      final currentMedia = mediaItem.value;
+      if (currentMedia == null) {
+        print('❌ [Hard Refetch] No current media item');
+        return false;
+      }
+
+      print('🔄 [Hard Refetch] Forcing URL refresh for: ${currentMedia.title}');
+      _governor.onUrlRefreshAttempt();
+
+      // Clear all caches
+      final audioCache = AudioUrlCache();
+      await audioCache.remove(currentMedia.id);
+      _urlCache.remove(currentMedia.id);
+      _urlCacheTime.remove(currentMedia.id);
+
+      // Get fresh URL
+      final quickPick = _quickPickFromMediaItem(currentMedia);
+      final freshUrl = await _core.getAudioUrl(
+        currentMedia.id,
+        song: quickPick,
+      );
+
+      if (freshUrl == null || freshUrl.isEmpty) {
+        print('❌ [Hard Refetch] Failed to get fresh URL');
+        _governor.onUrlRefreshFailed();
+        return false;
+      }
+
+      print('✅ [Hard Refetch] Got fresh URL, setting audio source...');
+
+      // Set new audio source
+      await _audioPlayer.setUrl(freshUrl);
+      await _audioPlayer.play();
+
+      // Wait for playback to stabilize
+      await Future.delayed(const Duration(milliseconds: 300));
+
+      // Resume tracking
+      await _tracker.startTracking(quickPick);
+
+      // Cache the new URL
+      _urlCache[currentMedia.id] = freshUrl;
+      _urlCacheTime[currentMedia.id] = DateTime.now();
+      await audioCache.cache(quickPick, freshUrl);
+
+      // Clear error state
+      _updateCustomState({
+        'playback_error': false,
+        'error_message': null,
+        'is_source_error': false,
+      });
+
+      _governor.onUrlRefreshSuccess();
+      print('✅ [Hard Refetch] Playback resumed successfully');
+      return true;
+    } catch (e) {
+      print('❌ [Hard Refetch] Error: $e');
+      _governor.onUrlRefreshFailed();
+      return false;
+    }
+  }
+
+  void clearPlaybackError() {
+    _updateCustomState({
+      'playback_error': false,
+      'error_message': null,
+      'is_source_error': false,
+    });
+  }
+
+  Future<void> playSongFromRadio(QuickPick song) async {
+    // Prevent concurrent song changes
+    if (_isChangingSong) {
+      print('⏳ [HANDLER] Song change already in progress, queuing...');
+      await Future.delayed(const Duration(milliseconds: 100));
+      if (_isChangingSong) {
+        print('❌ [HANDLER] Still changing, aborting duplicate request');
+        return;
+      }
+    }
+
+    _isChangingSong = true;
+
+    try {
+      print('🎵 [HANDLER] ========== PLAYING FROM RADIO ==========');
+      print('   Title: ${song.title}');
+      print('   VideoId: ${song.videoId}');
+
+      _governor.onPlaySong(song.title, song.artists);
+
+      // Check if EXACT same song is already playing
+      final currentMedia = mediaItem.value;
+      if (currentMedia != null &&
+          currentMedia.id == song.videoId &&
+          currentMedia.title == song.title &&
+          currentMedia.artist == song.artists) {
+        print('🎵 Same song already playing: ${song.title} by ${song.artists}');
+
+        if (!_audioPlayer.playing) {
+          print('   ▶️ Resuming paused playback');
+          await _audioPlayer.play();
+          _tracker.resumeTracking();
+        } else {
+          print('   ✅ Already playing, no action needed');
+        }
+
+        _isChangingSong = false;
+        return;
+      }
+
+      // Different song - log what changed
+      if (currentMedia != null) {
+        print('🔄 Different song detected:');
+        print('   Old: ${currentMedia.title} by ${currentMedia.artist}');
+        print('   New: ${song.title} by ${song.artists}');
+      }
+
+      // CRITICAL: Set loading state IMMEDIATELY
+      playbackState.add(
+        playbackState.value.copyWith(
+          processingState: AudioProcessingState.loading,
+          playing: false,
+        ),
+      );
+
+      print('🛑 [HANDLER] Stopping previous playback...');
+
+      await _tracker.stopTracking();
+      await Future.delayed(const Duration(milliseconds: 100));
+
+      if (_audioPlayer.playing) {
+        await _audioPlayer.pause();
+        await Future.delayed(const Duration(milliseconds: 50));
+      }
+
+      await _audioPlayer.stop();
+      await Future.delayed(const Duration(milliseconds: 100));
+
+      print('✅ [HANDLER] Playing from radio source: $_currentRadioSourceId');
 
       final newMediaItem = MediaItem(
         id: song.videoId,
@@ -616,57 +1096,125 @@ class BackgroundAudioHandler extends BaseAudioHandler
             : null,
       );
 
-      _queue.clear();
-      _queue.add(newMediaItem);
-      _currentIndex = 0;
+      // 🔥 CRITICAL FIX: Find the song in radio queue and update index
+      final radioIndex = _radioQueue.indexWhere(
+        (item) => item.id == song.videoId,
+      );
+
+      if (radioIndex != -1) {
+        _radioQueueIndex = radioIndex;
+        print('✅ [HANDLER] Found in radio queue at index: $_radioQueueIndex');
+        print(
+          '   Current position: ${_radioQueueIndex + 1}/${_radioQueue.length}',
+        );
+        print(
+          '   Next skip will play: ${_radioQueueIndex + 1 < _radioQueue.length ? _radioQueue[_radioQueueIndex + 1].title : "End of queue"}',
+        );
+      } else {
+        print('⚠️ [HANDLER] Song NOT found in radio queue!');
+        print('   This should not happen - adding to end of queue');
+        _radioQueue.add(newMediaItem);
+        _radioQueueIndex = _radioQueue.length - 1;
+
+        // Update UI with new queue
+        final radioQueueData = _radioQueue.map((item) {
+          return {
+            'id': item.id,
+            'title': item.title,
+            'artist': item.artist ?? 'Unknown Artist',
+            'artUri': item.artUri?.toString(),
+            'duration': item.duration?.inMilliseconds,
+          };
+        }).toList();
+
+        _updateCustomState({
+          'radio_queue': radioQueueData,
+          'radio_queue_count': radioQueueData.length,
+        });
+      }
+
+      // Update manual queue
+      if (_queue.isEmpty) {
+        _queue.add(newMediaItem);
+        _currentIndex = 0;
+      } else {
+        final existingIndex = _queue.indexWhere(
+          (item) => item.id == song.videoId,
+        );
+        if (existingIndex != -1) {
+          _currentIndex = existingIndex;
+        } else {
+          _queue.add(newMediaItem);
+          _currentIndex = _queue.length - 1;
+        }
+      }
+
       queue.add(_queue);
+
+      // 🔥 CRITICAL FIX: Update mediaItem BEFORE getting URL
+      // This prevents metadata mismatch
       mediaItem.add(newMediaItem);
 
-      // Get audio URL with caching
+      // Small delay to ensure UI updates
+      await Future.delayed(const Duration(milliseconds: 50));
+
       print('🔍 [HANDLER] Getting audio URL...');
       _governor.onLoadingUrl(song.title);
+
       final audioUrl = await _getAudioUrl(song.videoId, song: song);
       if (audioUrl == null) throw Exception('Failed to get audio URL');
 
       print('✅ [HANDLER] Audio URL obtained, setting player...');
-      await _audioPlayer.setUrl(audioUrl);
+
+      try {
+        await _audioPlayer.setUrl(audioUrl);
+      } catch (e) {
+        print('❌ [HANDLER] setUrl failed: $e');
+        throw Exception('Failed to set audio source: $e');
+      }
 
       print('▶️ [HANDLER] Starting playback...');
       await _audioPlayer.play();
-      print('✅ [HANDLER] Play completed successfully!');
 
-      // 🔧 FIX: Wait for duration to be available before tracking
-      print('⏱️ [HANDLER] Waiting for duration...');
-
-      // Wait up to 2 seconds for duration to become available
+      // Wait for duration
       int attempts = 0;
-      while (_audioPlayer.duration == null && attempts < 20) {
+      while (_audioPlayer.duration == null && attempts < 30) {
         await Future.delayed(const Duration(milliseconds: 100));
         attempts++;
       }
 
       if (_audioPlayer.duration != null) {
-        print('✅ [HANDLER] Duration available: ${_audioPlayer.duration}');
-      } else {
-        print('⚠️ [HANDLER] Duration still null after waiting');
+        mediaItem.add(newMediaItem.copyWith(duration: _audioPlayer.duration));
       }
 
       print('📝 [HANDLER] Starting realtime tracking...');
       await _tracker.startTracking(song);
 
-      print('✅ [HANDLER] ========== PLAYBACK STARTED ==========');
+      print('✅ [HANDLER] ========== PLAYBACK STARTED FROM RADIO ==========');
+      print(
+        '   Radio queue position: ${_radioQueueIndex + 1}/${_radioQueue.length}',
+      );
+      print('   Radio source ID: $_currentRadioSourceId');
 
-      // Cache and load radio in background
+      // Cache URL but DON'T reload radio
       AudioUrlCache().cache(song, audioUrl);
-      _loadRadioImmediately(song);
     } catch (e, stackTrace) {
-      print('❌ [HANDLER] Error playing song: $e');
+      print('❌ [HANDLER] Error playing from radio: $e');
       print('   Stack: $stackTrace');
+
       playbackState.add(
         playbackState.value.copyWith(
           processingState: AudioProcessingState.error,
+          playing: false,
         ),
       );
+
+      _notifyPlaybackError(
+        'Failed to play: ${e.toString()}',
+        isSourceError: true,
+      );
+    } finally {
+      _isChangingSong = false;
     }
   }
 
@@ -714,13 +1262,64 @@ class BackgroundAudioHandler extends BaseAudioHandler
   }
 
   // ==================== FIXED setLoopMode() METHOD ====================
+  // In BackgroundAudioHandler class, update the setLoopMode method:
   Future<void> setLoopMode(LoopMode mode) async {
     _loopMode = mode;
+
+    // Sync with audio player
     await _audioPlayer.setLoopMode(mode);
+
+    // Also sync with AudioService repeat mode
+    switch (mode) {
+      case LoopMode.off:
+        await super.setRepeatMode(AudioServiceRepeatMode.none);
+        break;
+      case LoopMode.one:
+        await super.setRepeatMode(AudioServiceRepeatMode.one);
+        break;
+      case LoopMode.all:
+        await super.setRepeatMode(AudioServiceRepeatMode.all);
+        break;
+    }
+
     _governor.onLoopModeChange(mode);
     print('🔁 [LoopMode] Set to: $mode');
 
     _updateCustomState({'loop_mode': mode.index});
+  }
+
+  Future<void> _setLoopMode(LoopMode mode) async {
+    print('🔄 [Handler] Applying loop mode: $mode');
+
+    // Update just_audio
+    await _audioPlayer.setLoopMode(
+      mode == LoopMode.one
+          ? LoopMode.one
+          : mode == LoopMode.all
+          ? LoopMode.all
+          : LoopMode.off,
+    );
+
+    // 🔥 Update customState so UI can react
+    final current = Map<String, dynamic>.from(customState.value ?? {});
+    current['loop_mode'] = mode.index;
+
+    customState.add(current);
+  }
+
+  @override
+  Future<dynamic> customAction(
+    String name, [
+    Map<String, dynamic>? extras,
+  ]) async {
+    switch (name) {
+      case 'set_loop_mode':
+        final index = extras?['loop_mode'] as int? ?? 0;
+        final mode = LoopMode.values[index];
+        await _setLoopMode(mode);
+        return null;
+    }
+    return super.customAction(name, extras);
   }
 
   @override
@@ -760,6 +1359,22 @@ class BackgroundAudioHandler extends BaseAudioHandler
       _radioQueue[j] = temp;
     }
 
+    // Update custom state with shuffled queue
+    final radioQueueData = _radioQueue.map((item) {
+      return {
+        'id': item.id,
+        'title': item.title,
+        'artist': item.artist ?? 'Unknown Artist',
+        'artUri': item.artUri?.toString(),
+        'duration': item.duration?.inMilliseconds,
+      };
+    }).toList();
+
+    _updateCustomState({
+      'radio_queue': radioQueueData,
+      'radio_queue_count': radioQueueData.length,
+    });
+
     print('🔀 [Radio] Queue shuffled: ${_radioQueue.length} songs');
   }
 
@@ -791,22 +1406,25 @@ class BackgroundAudioHandler extends BaseAudioHandler
   }
 
   // Helper method for UI
+  // Helper method for UI - fix the logic
   Future<void> toggleLoopMode() async {
-    AudioServiceRepeatMode newMode;
+    LoopMode newMode;
 
     switch (_loopMode) {
       case LoopMode.off:
-        newMode = AudioServiceRepeatMode.all;
+        newMode = LoopMode.all;
         break;
       case LoopMode.all:
-        newMode = AudioServiceRepeatMode.one;
+        newMode = LoopMode.one;
         break;
       case LoopMode.one:
-        newMode = AudioServiceRepeatMode.none;
+        newMode = LoopMode.off;
         break;
+      default:
+        newMode = LoopMode.off;
     }
 
-    await setRepeatMode(newMode);
+    await setLoopMode(newMode);
   }
 
   // ==================== SETTINGS METHODS ====================
@@ -849,17 +1467,85 @@ class BackgroundAudioHandler extends BaseAudioHandler
     });
   }
 
+  Future<void> setLoudnessNormalizationEnabled(bool enabled) async {
+    _loudnessNormalizationEnabled = enabled;
+    print('⚙️ [Settings] Loudness normalization: ${enabled ? "ON" : "OFF"}');
+
+    // Apply normalization
+    if (enabled) {
+      await _audioPlayer.setVolume(0.85); // Normalized volume level
+      print('🔊 [Normalization] Applied normalized volume: 0.85');
+    } else {
+      await _audioPlayer.setVolume(1.0); // Full volume
+      print('🔊 [Normalization] Reset to full volume: 1.0');
+    }
+
+    // Save to SharedPreferences
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool('loudness_normalization_enabled', enabled);
+      print('✅ [Settings] Loudness normalization saved to storage');
+    } catch (e) {
+      print('❌ [Settings] Error saving loudness normalization: $e');
+    }
+
+    customState.add({
+      ..._safeCustomState(),
+      'loudness_normalization_enabled': enabled,
+    });
+  }
+
+  // ============================================================================
+  // FIXED _loadRadioImmediately() METHOD
+  // Replace your existing _loadRadioImmediately() with this
+  // ============================================================================
+
   Future<void> _loadRadioImmediately(QuickPick song) async {
+    print('📻 [Radio] _loadRadioImmediately called for: ${song.title}');
+    print('   VideoId: ${song.videoId}');
+    print('   Current _isLoadingRadio: $_isLoadingRadio');
+    print('   Current _lastRadioVideoId: $_lastRadioVideoId');
+    print('   Current _radioQueue.length: ${_radioQueue.length}');
+
+    // Layer 1: Check if already loading
     if (_isLoadingRadio) {
-      print('⏳ [BackgroundAudioHandler] Already loading radio, skipping');
+      print('⏳ [Radio] Already loading radio, skipping');
       return;
     }
 
+    // Layer 2: Check if we already have radio for this exact song
+    if (_lastRadioVideoId == song.videoId && _radioQueue.isNotEmpty) {
+      print('✅ [Radio] Radio already loaded for ${song.videoId}');
+      print('   Queue size: ${_radioQueue.length}');
+
+      // 🔥 CRITICAL FIX: Re-publish to UI to ensure both players see it
+      final radioQueueData = _radioQueue.map((item) {
+        return {
+          'id': item.id,
+          'title': item.title,
+          'artist': item.artist ?? 'Unknown Artist',
+          'artUri': item.artUri?.toString(),
+          'duration': item.duration?.inMilliseconds,
+        };
+      }).toList();
+
+      _updateCustomState({
+        'radio_queue': radioQueueData,
+        'radio_queue_count': radioQueueData.length,
+      });
+
+      return;
+    }
+
+    // Continue with rest of the method (unchanged)...
     _isLoadingRadio = true;
     _lastRadioVideoId = song.videoId;
     _governor.onRadioStart(song.title);
+
+    print('🔄 [Radio] Starting radio load...');
+
     try {
-      print('📻 [BackgroundAudioHandler] Fetching radio for: ${song.title}');
+      print('📻 [Radio] Calling RadioService.getRadioForSong...');
 
       final radioSongs = await _radioService.getRadioForSong(
         videoId: song.videoId,
@@ -868,16 +1554,25 @@ class BackgroundAudioHandler extends BaseAudioHandler
         limit: 25,
       );
 
+      print('📻 [Radio] RadioService returned ${radioSongs.length} songs');
+
       if (radioSongs.isEmpty) {
-        print('⚠️ [BackgroundAudioHandler] No radio songs returned');
+        print('⚠️ [Radio] No radio songs returned');
         _governor.onRadioQueueEmpty();
+        _updateCustomState({'radio_queue': [], 'radio_queue_count': 0});
         return;
       }
 
+      print(
+        '✅ [Radio] Got ${radioSongs.length} songs, converting to MediaItems...',
+      );
+
       _radioQueue.clear();
-      _radioQueue.addAll(
-        radioSongs.map(
-          (song) => MediaItem(
+
+      int successCount = 0;
+      for (final song in radioSongs) {
+        try {
+          final mediaItem = MediaItem(
             id: song.videoId,
             title: song.title,
             artist: song.artists,
@@ -890,38 +1585,278 @@ class BackgroundAudioHandler extends BaseAudioHandler
             duration: song.duration != null
                 ? _parseDurationString(song.duration!)
                 : null,
-          ),
-        ),
+          );
+
+          _radioQueue.add(mediaItem);
+          successCount++;
+        } catch (e) {
+          print('⚠️ [Radio] Failed to convert song ${song.title}: $e');
+        }
+      }
+
+      print(
+        '✅ [Radio] Successfully added $successCount MediaItems to _radioQueue',
       );
+      print('   _radioQueue.length is now: ${_radioQueue.length}');
+
+      if (_radioQueue.isEmpty) {
+        print(
+          '❌ [Radio] CRITICAL ERROR: _radioQueue is still empty after adding!',
+        );
+        _updateCustomState({'radio_queue': [], 'radio_queue_count': 0});
+        return;
+      }
 
       if (_isShuffleEnabled) {
+        print('🔀 [Radio] Shuffling queue...');
         _shuffleRadioQueue();
       }
 
       _radioQueueIndex = -1;
+      print('   Reset _radioQueueIndex to: $_radioQueueIndex');
+
+      print('📢 [Radio] Publishing to customState...');
+
+      final radioQueueData = _radioQueue.map((item) {
+        return {
+          'id': item.id,
+          'title': item.title,
+          'artist': item.artist ?? 'Unknown Artist',
+          'artUri': item.artUri?.toString(),
+          'duration': item.duration?.inMilliseconds,
+        };
+      }).toList();
+
+      print('   radioQueueData.length: ${radioQueueData.length}');
+
+      _updateCustomState({
+        'radio_queue': radioQueueData,
+        'radio_queue_count': radioQueueData.length,
+      });
+
+      print('✅ [Radio] ========== RADIO LOADED SUCCESSFULLY ==========');
+      print('   Total songs: ${_radioQueue.length}');
+      print('   Radio source: $_currentRadioSourceId');
+      print('   Published to UI: ${radioQueueData.length} songs');
+      print('=========================================================');
+    } catch (e, stackTrace) {
+      print('❌ [Radio] Load failed with exception: $e');
+      print('   Stack trace:');
+      print(stackTrace.toString().split('\n').take(5).join('\n'));
+
+      _radioQueue.clear();
+      _updateCustomState({'radio_queue': [], 'radio_queue_count': 0});
+    } finally {
+      _isLoadingRadio = false;
+      print('🏁 [Radio] Finished loading (success or fail)');
+      print('   Final _radioQueue.length: ${_radioQueue.length}');
+      print('   Final _isLoadingRadio: $_isLoadingRadio');
+    }
+  } // ============================================================================
+  // INTELLIGENT RADIO QUEUE EXPANSION
+  // ============================================================================
+
+  Future<void> _checkAndFetchMoreRadio() async {
+    // Don't fetch if already loading
+    if (_isLoadingRadio) {
+      print('⏳ [Radio Expansion] Already loading, skipping');
+      return;
+    }
+
+    final currentPosition = _radioQueueIndex + 1; // Human-readable position
+    final queueSize = _radioQueue.length;
+
+    print('📊 [Radio Expansion] Check: Position $currentPosition/$queueSize');
+
+    // Calculate which "batch" we're in (every 20 songs = 1 batch)
+    final currentBatch = (currentPosition / _initialRadioSize).floor();
+    final positionInBatch = currentPosition % _initialRadioSize;
+
+    print('   Batch: $currentBatch, Position in batch: $positionInBatch');
+
+    // Trigger condition: At song #18 of any batch (18, 38, 58, etc.)
+    final isAtThreshold = positionInBatch == _radioRefetchThreshold;
+
+    if (!isAtThreshold) {
+      return; // Not at threshold yet
+    }
+
+    print(
+      '🎯 [Radio Expansion] Threshold reached at position $currentPosition!',
+    );
+
+    // Check if we've hit max queue size (75 songs)
+    if (queueSize >= _maxRadioQueueSize) {
       print(
-        '✅ [BackgroundAudioHandler] Radio loaded: ${_radioQueue.length} songs',
+        '⚠️ [Radio Expansion] Max queue size reached ($queueSize/$_maxRadioQueueSize)',
       );
-    } catch (e) {
-      print('❌ [BackgroundAudioHandler] Radio load failed: $e');
+      print('   Will clear and restart on next threshold');
+
+      // Check if we're near the end (song 73+)
+      final nearEnd = currentPosition >= _maxRadioQueueSize - 2;
+
+      if (nearEnd) {
+        print(
+          '🔄 [Radio Expansion] Near end of max queue, preparing to reset...',
+        );
+
+        // Get the CURRENT song to base new radio on
+        final currentSong = _radioQueue[_radioQueueIndex];
+
+        // Clear everything and fetch fresh
+        _radioQueue.clear();
+        _radioQueueIndex = -1;
+        _lastRadioVideoId = null;
+        _currentRadioSourceId = currentSong.id;
+
+        print(
+          '🗑️ [Radio Expansion] Cleared queue, fetching fresh 20 based on: ${currentSong.title}',
+        );
+
+        final quickPick = _quickPickFromMediaItem(currentSong);
+        await _loadRadioImmediately(quickPick);
+
+        return;
+      }
+
+      return; // Don't fetch more if at max but not near end
+    }
+
+    // Get the current song (the 18th, 38th, 58th, etc.)
+    final seedSong = _radioQueue[_radioQueueIndex];
+
+    print(
+      '🌱 [Radio Expansion] Using seed song: ${seedSong.title} by ${seedSong.artist}',
+    );
+    print('   Fetching $_radioBatchSize more songs...');
+
+    _isLoadingRadio = true;
+
+    try {
+      // Calculate how many songs we can actually add
+      final remainingSpace = _maxRadioQueueSize - queueSize;
+      final songsToFetch = remainingSpace < _radioBatchSize
+          ? remainingSpace
+          : _radioBatchSize;
+
+      print(
+        '   Can add $songsToFetch songs (${queueSize} + $songsToFetch = ${queueSize + songsToFetch})',
+      );
+
+      // Fetch more radio songs based on current song
+      final newRadioSongs = await _radioService.getRadioForSong(
+        videoId: seedSong.id,
+        title: seedSong.title,
+        artist: seedSong.artist ?? 'Unknown Artist',
+        limit: songsToFetch,
+      );
+
+      if (newRadioSongs.isEmpty) {
+        print('⚠️ [Radio Expansion] No new songs returned');
+        return;
+      }
+
+      print('✅ [Radio Expansion] Got ${newRadioSongs.length} new songs');
+
+      // Convert to MediaItems and APPEND to existing queue
+      int addedCount = 0;
+      for (final song in newRadioSongs) {
+        try {
+          // Skip if song already exists in queue (avoid duplicates)
+          final alreadyExists = _radioQueue.any(
+            (item) => item.id == song.videoId,
+          );
+          if (alreadyExists) {
+            print('   ⏭️ Skipping duplicate: ${song.title}');
+            continue;
+          }
+
+          final mediaItem = MediaItem(
+            id: song.videoId,
+            title: song.title,
+            artist: song.artists,
+            artUri:
+                song.thumbnail.isNotEmpty &&
+                    (song.thumbnail.startsWith('http://') ||
+                        song.thumbnail.startsWith('https://'))
+                ? Uri.parse(song.thumbnail)
+                : null,
+            duration: song.duration != null
+                ? _parseDurationString(song.duration!)
+                : null,
+          );
+
+          _radioQueue.add(mediaItem);
+          addedCount++;
+
+          // Stop if we hit max size
+          if (_radioQueue.length >= _maxRadioQueueSize) {
+            print('   🛑 Reached max queue size, stopping');
+            break;
+          }
+        } catch (e) {
+          print('   ⚠️ Failed to add song ${song.title}: $e');
+        }
+      }
+
+      print('✅ [Radio Expansion] Added $addedCount new songs');
+      print('   New queue size: ${_radioQueue.length}/$_maxRadioQueueSize');
+
+      // Update UI with expanded queue
+      final radioQueueData = _radioQueue.map((item) {
+        return {
+          'id': item.id,
+          'title': item.title,
+          'artist': item.artist ?? 'Unknown Artist',
+          'artUri': item.artUri?.toString(),
+          'duration': item.duration?.inMilliseconds,
+        };
+      }).toList();
+
+      _updateCustomState({
+        'radio_queue': radioQueueData,
+        'radio_queue_count': radioQueueData.length,
+      });
+
+      print('🎉 [Radio Expansion] ========== EXPANSION COMPLETE ==========');
+      print('   Total queue: ${_radioQueue.length} songs');
+      print('   Current position: ${_radioQueueIndex + 1}');
+      print('   Remaining: ${_radioQueue.length - _radioQueueIndex - 1} songs');
+      print('===========================================================');
+    } catch (e, stackTrace) {
+      print('❌ [Radio Expansion] Failed: $e');
+      print(
+        '   Stack: ${stackTrace.toString().split('\n').take(3).join('\n')}',
+      );
     } finally {
       _isLoadingRadio = false;
     }
   }
+  // ============================================================================
+  // HELPER: Verify radio queue is actually populated
+  // ============================================================================
 
-  bool _isSameSong(MediaItem currentMedia, QuickPick song) {
-    // Check by videoId
-    if (currentMedia.id == song.videoId) {
-      return true;
+  Future<void> _waitForRadioToLoad() async {
+    print('⏳ [Radio] Waiting for radio to load...');
+
+    int attempts = 0;
+    const maxAttempts = 30; // 3 seconds max wait
+
+    while (_isLoadingRadio && attempts < maxAttempts) {
+      await Future.delayed(const Duration(milliseconds: 100));
+      attempts++;
+
+      if (attempts % 10 == 0) {
+        print('   Still waiting... (${attempts * 100}ms)');
+      }
     }
 
-    // Check by title and artist name (case-insensitive)
-    final currentTitle = (currentMedia.title ?? '').toLowerCase();
-    final currentArtist = (currentMedia.artist ?? '').toLowerCase();
-    final songTitle = song.title.toLowerCase();
-    final songArtist = song.artists.toLowerCase();
-
-    return currentTitle == songTitle && currentArtist == songArtist;
+    if (_isLoadingRadio) {
+      print('⚠️ [Radio] Timeout waiting for radio to load');
+    } else {
+      print('✅ [Radio] Radio loading completed');
+      print('   Final queue size: ${_radioQueue.length}');
+    }
   }
 
   /// Play a list of songs
@@ -1056,62 +1991,302 @@ class BackgroundAudioHandler extends BaseAudioHandler
     await _audioPlayer.seek(position);
   }
 
+  // ============================================================================
+  // FIXED skipToNext() METHOD
+  // Replace your existing skipToNext() with this complete implementation
+  // ============================================================================
+
   @override
   Future<void> skipToNext() async {
-    print('⏭️ Skip to next');
+    print('⏭️ [SKIP] Skip to next requested');
     _governor.onSkipForward();
+
+    // CRITICAL: Check radio queue status BEFORE stopping tracking
+    print('📊 [SKIP] Current state:');
+    print('   Manual queue: ${_queue.length} songs, index: $_currentIndex');
+    print(
+      '   Radio queue: ${_radioQueue.length} songs, index: $_radioQueueIndex',
+    );
+    print('   Loop mode: $_loopMode');
+
     await _tracker.stopTracking();
 
     MediaItem? nextMedia;
     QuickPick? nextSong;
 
+    // Handle LoopMode.one - restart current song
     if (_loopMode == LoopMode.one) {
-      final currentMedia = mediaItem.value;
-      if (currentMedia != null) {
-        print('🔁 [LoopMode] Repeating current song');
-        await _audioPlayer.seek(Duration.zero);
-        await _audioPlayer.play();
-
-        final currentSong = _quickPickFromMediaItem(currentMedia);
-        await Future.delayed(const Duration(milliseconds: 300));
-        await _tracker.startTracking(currentSong);
-        return;
-      }
+      print('🔁 [LoopMode.one] Restarting current song');
+      await _audioPlayer.seek(Duration.zero);
+      await _audioPlayer.play();
+      return;
     }
 
+    // ============================================================================
+    // PRIORITY SYSTEM FOR NEXT SONG SELECTION
+    // ============================================================================
+
+    // Priority 1: Check manual queue (has more songs)
     if (_queue.isNotEmpty && _currentIndex < _queue.length - 1) {
       _currentIndex++;
       nextMedia = _queue[_currentIndex];
-    } else if (_loopMode == LoopMode.all && _queue.isNotEmpty) {
+      print(
+        '✅ [SKIP] Next from manual queue [${_currentIndex + 1}/${_queue.length}]: ${nextMedia.title}',
+      );
+    }
+    // Priority 2: Loop all - restart manual queue
+    else if (_loopMode == LoopMode.all && _queue.isNotEmpty) {
       _currentIndex = 0;
       nextMedia = _queue[_currentIndex];
-      print('🔁 [LoopMode] Looping back to start of queue');
-    } else if (_radioQueue.isNotEmpty && _radioQueueIndex == -1) {
-      print('📻 Starting radio queue');
+      print('🔁 [LoopMode.all] Looping back to start of manual queue');
+    }
+    // Priority 3: Start radio queue (first time)
+    else if (_radioQueue.isNotEmpty && _radioQueueIndex == -1) {
+      print('📻 [SKIP] Starting radio queue (first song)');
       _radioQueueIndex = 0;
       nextMedia = _radioQueue[_radioQueueIndex];
-    } else if (_radioQueue.isNotEmpty &&
+      print('   Playing: ${nextMedia.title}');
+    }
+    // Priority 3.5: Wait for radio if it's loading
+    else if (_radioQueue.isEmpty && _isLoadingRadio) {
+      print('⏳ [SKIP] Radio is loading, waiting...');
+
+      // Wait up to 3 seconds for radio to load
+      int attempts = 0;
+      while (_isLoadingRadio && attempts < 30) {
+        await Future.delayed(const Duration(milliseconds: 100));
+        attempts++;
+      }
+
+      print(
+        '✅ [SKIP] Radio loading completed, queue size: ${_radioQueue.length}',
+      );
+
+      // Try again now that radio might be loaded
+      if (_radioQueue.isNotEmpty) {
+        _radioQueueIndex = 0;
+        nextMedia = _radioQueue[_radioQueueIndex];
+        print('📻 [SKIP] Now starting radio queue: ${nextMedia.title}');
+      }
+    }
+    // Priority 4: Continue in radio queue
+    // Priority 4: Continue in radio queue
+    else if (_radioQueue.isNotEmpty &&
+        _radioQueueIndex >= 0 &&
         _radioQueueIndex < _radioQueue.length - 1) {
       _radioQueueIndex++;
       nextMedia = _radioQueue[_radioQueueIndex];
+      print(
+        '📻 [SKIP] Next from radio queue [${_radioQueueIndex + 1}/${_radioQueue.length}]: ${nextMedia.title}',
+      );
+
+      // 🔥 CRITICAL: Check if we need to fetch more radio songs
+      await _checkAndFetchMoreRadio();
     }
 
+    // ADD this debug logging right after the above section:
+
     if (nextMedia != null) {
-      mediaItem.add(nextMedia);
-      nextSong = _quickPickFromMediaItem(nextMedia);
-
-      final audioUrl = await _getAudioUrl(nextMedia.id, song: nextSong);
-      if (audioUrl != null) {
-        await _audioPlayer.setUrl(audioUrl);
-        await _audioPlayer.play();
-
-        await Future.delayed(const Duration(milliseconds: 300));
-        await _tracker.startTracking(nextSong);
+      print('🎵 [SKIP] ========== NEXT SONG SELECTED ==========');
+      print('   Song: ${nextMedia.title}');
+      print(
+        '   Source: ${_radioQueueIndex >= 0 ? "Radio queue" : "Manual queue"}',
+      );
+      print('   Radio index: ${_radioQueueIndex + 1}/${_radioQueue.length}');
+      print('   Manual index: ${_currentIndex + 1}/${_queue.length}');
+      print('===================================================');
+    }
+    // Priority 5: End of radio queue reached
+    else if (_radioQueue.isNotEmpty &&
+        _radioQueueIndex >= _radioQueue.length - 1) {
+      print('⚠️ [SKIP] End of radio queue reached');
+      // Could optionally loop radio or stop
+      if (_loopMode == LoopMode.all) {
+        _radioQueueIndex = 0;
+        nextMedia = _radioQueue[_radioQueueIndex];
+        print('🔁 [SKIP] Looping radio queue from start');
+      } else {
+        print('🛑 [SKIP] No loop mode, stopping playback');
+        // Set idle state and stop
+        playbackState.add(
+          playbackState.value.copyWith(
+            processingState: AudioProcessingState.idle,
+            playing: false,
+          ),
+        );
         return;
       }
     }
 
-    print('⚠️ No next song available');
+    // ============================================================================
+    // PLAY THE NEXT SONG
+    // ============================================================================
+
+    if (nextMedia != null) {
+      print('🎵 [SKIP] Playing next song: ${nextMedia.title}');
+
+      nextSong = _quickPickFromMediaItem(nextMedia);
+
+      // CRITICAL: Set loading state FIRST (fixes play/pause icon)
+      playbackState.add(
+        playbackState.value.copyWith(
+          processingState: AudioProcessingState.loading,
+          playing: false,
+        ),
+      );
+
+      // Update media item
+      mediaItem.add(nextMedia);
+
+      try {
+        // Get audio URL
+        print('🔍 [SKIP] Getting audio URL...');
+        final audioUrl = await _getAudioUrl(nextMedia.id, song: nextSong);
+
+        if (audioUrl == null) {
+          throw Exception('Failed to get audio URL for ${nextMedia.title}');
+        }
+
+        print('✅ [SKIP] Got audio URL, setting player...');
+
+        // Set audio source
+        try {
+          await _audioPlayer.setUrl(audioUrl);
+        } catch (e) {
+          throw Exception('Failed to set audio source: $e');
+        }
+
+        // Start playback
+        print('▶️ [SKIP] Starting playback...');
+        await _audioPlayer.play();
+
+        // Wait for audio to stabilize
+        await Future.delayed(const Duration(milliseconds: 300));
+
+        // Start tracking
+        print('📝 [SKIP] Starting tracking...');
+        await _tracker.startTracking(nextSong);
+
+        print('✅ [SKIP] Successfully playing: ${nextMedia.title}');
+        return;
+      } catch (e, stackTrace) {
+        print('❌ [SKIP] Error playing next song: $e');
+        print('   Stack: $stackTrace');
+
+        // Set error state
+        playbackState.add(
+          playbackState.value.copyWith(
+            processingState: AudioProcessingState.error,
+            playing: false,
+          ),
+        );
+
+        // Notify user
+        _notifyPlaybackError(
+          'Failed to skip: ${e.toString()}',
+          isSourceError: true,
+        );
+        return;
+      }
+    }
+
+    // ============================================================================
+    // NO NEXT SONG AVAILABLE - DIAGNOSTIC LOGGING
+    // ============================================================================
+
+    print('❌ [SKIP] ========== NO NEXT SONG AVAILABLE ==========');
+    print(
+      '   Manual queue: ${_queue.length} songs (current index: $_currentIndex)',
+    );
+    print(
+      '   Radio queue: ${_radioQueue.length} songs (current index: $_radioQueueIndex)',
+    );
+    print('   Loop mode: $_loopMode');
+    print('   Current radio source: $_currentRadioSourceId');
+    print('   Last radio video ID: $_lastRadioVideoId');
+    print('   Is loading radio: $_isLoadingRadio');
+    print('   Current media: ${mediaItem.value?.title ?? "null"}');
+    print('   Current media ID: ${mediaItem.value?.id ?? "null"}');
+
+    if (_radioQueue.isEmpty && !_isLoadingRadio) {
+      print('   ❌ CRITICAL ISSUE: Radio queue is EMPTY and NOT loading!');
+      print('   This means:');
+      print('      1. Radio never loaded for this song, OR');
+      print('      2. Radio was cleared incorrectly, OR');
+      print('      3. Radio load failed silently');
+
+      // Try to force load radio now
+      final currentMedia = mediaItem.value;
+      if (currentMedia != null) {
+        print('   🔄 Attempting emergency radio load...');
+        final emergencySong = _quickPickFromMediaItem(currentMedia);
+        _loadRadioImmediately(emergencySong);
+
+        // Wait a bit
+        await Future.delayed(const Duration(seconds: 2));
+
+        if (_radioQueue.isNotEmpty) {
+          print(
+            '   ✅ Emergency radio load succeeded! Queue: ${_radioQueue.length}',
+          );
+          _radioQueueIndex = 0;
+          nextMedia = _radioQueue[_radioQueueIndex];
+
+          // Continue with playback
+          print('🎵 [SKIP] Playing emergency radio song: ${nextMedia!.title}');
+          nextSong = _quickPickFromMediaItem(nextMedia);
+
+          playbackState.add(
+            playbackState.value.copyWith(
+              processingState: AudioProcessingState.loading,
+              playing: false,
+            ),
+          );
+
+          mediaItem.add(nextMedia);
+
+          try {
+            final audioUrl = await _getAudioUrl(nextMedia.id, song: nextSong);
+            if (audioUrl != null) {
+              await _audioPlayer.setUrl(audioUrl);
+              await _audioPlayer.play();
+              await Future.delayed(const Duration(milliseconds: 300));
+              await _tracker.startTracking(nextSong);
+              print('✅ [SKIP] Emergency playback successful!');
+              return;
+            }
+          } catch (e) {
+            print('❌ [SKIP] Emergency playback failed: $e');
+          }
+        } else {
+          print('   ❌ Emergency radio load also failed');
+        }
+      }
+    }
+
+    if (_radioQueue.isEmpty && _isLoadingRadio) {
+      print('   ⏳ TIMING ISSUE: Radio is still loading');
+      print('   User skipped before radio finished loading');
+    }
+
+    if (_radioQueue.isNotEmpty) {
+      print('   ⚠️ LOGIC ISSUE: Radio queue exists but logic failed!');
+      print('   This should never happen with the new priority system');
+      print('   First 3 radio songs:');
+      for (int i = 0; i < _radioQueue.length.clamp(0, 3); i++) {
+        print('      [$i] ${_radioQueue[i].title}');
+      }
+    }
+
+    print('=====================================================');
+
+    // Set idle state
+    playbackState.add(
+      playbackState.value.copyWith(
+        processingState: AudioProcessingState.idle,
+        playing: false,
+      ),
+    );
   }
 
   @override
@@ -1244,4 +2419,6 @@ class BackgroundAudioHandler extends BaseAudioHandler
   LoopMode get currentLoopMode => _loopMode;
   bool get resumePlaybackEnabled => _resumePlaybackEnabled;
   bool get persistentQueueEnabled => _persistentQueueEnabled;
+  bool get loudnessNormalizationEnabled => _loudnessNormalizationEnabled;
+  int? get audioSessionId => _audioSessionId;
 }

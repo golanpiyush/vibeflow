@@ -9,19 +9,20 @@ import 'package:vibeflow/utils/secure_storage.dart';
 class AccessCodeScreen extends ConsumerStatefulWidget {
   final bool showSkipButton;
   final VoidCallback? onSuccess;
-  final bool isFromDialog; // NEW: Track if opened from dialog
+  final bool isFromDialog;
+  final bool isBannedUser; // NEW: Track if user is banned
 
   const AccessCodeScreen({
     super.key,
     this.showSkipButton = true,
     this.onSuccess,
-    this.isFromDialog = false, // NEW
+    this.isFromDialog = false,
+    this.isBannedUser = false, // NEW
   });
 
   @override
   _AccessCodeScreenState createState() => _AccessCodeScreenState();
 
-  // Add this static method to check for orphan access codes
   static Future<bool> hasOrphanAccessCode() async {
     final secureStorage = SecureStorageService();
     final status = await secureStorage.getAccessCodeStatus();
@@ -30,10 +31,8 @@ class AccessCodeScreen extends ConsumerStatefulWidget {
       final validatedAt = await secureStorage.getAccessCodeValidatedAt();
       if (validatedAt != null &&
           DateTime.now().difference(validatedAt).inDays < 30) {
-        // Check if profile setup was completed
-        // You'll need to add this method to SecureStorageService
         final profileCompleted = await secureStorage.isProfileSetupCompleted();
-        return !profileCompleted; // Returns true if access code validated but profile not completed
+        return !profileCompleted;
       }
     }
     return false;
@@ -50,8 +49,9 @@ class _AccessCodeScreenState extends ConsumerState<AccessCodeScreen> {
   @override
   void initState() {
     super.initState();
-    // Don't check existing code if opened from dialog
-    if (!widget.isFromDialog && widget.onSuccess != null) {
+    if (!widget.isFromDialog &&
+        widget.onSuccess != null &&
+        !widget.isBannedUser) {
       _checkExistingAccessCodeForCallback();
     }
   }
@@ -93,11 +93,9 @@ class _AccessCodeScreenState extends ConsumerState<AccessCodeScreen> {
         await Future.delayed(const Duration(milliseconds: 1500));
 
         if (mounted) {
-          // If opened from dialog, just pop back
           if (widget.isFromDialog) {
-            Navigator.of(context).pop(true); // Just pop with success result
+            Navigator.of(context).pop(true);
           } else {
-            // Otherwise navigate to profile setup
             Navigator.of(context).pushReplacement(
               MaterialPageRoute(
                 builder: (context) =>
@@ -132,7 +130,7 @@ class _AccessCodeScreenState extends ConsumerState<AccessCodeScreen> {
 
     if (mounted) {
       if (widget.isFromDialog) {
-        Navigator.of(context).pop(false); // Return skipped
+        Navigator.of(context).pop(false);
       } else {
         Navigator.of(context).pushReplacementNamed('/home');
       }
@@ -162,9 +160,139 @@ class _AccessCodeScreenState extends ConsumerState<AccessCodeScreen> {
             )
           : null,
       body: SafeArea(
-        child: _showValidationMessage
-            ? _buildSuccessMessage(isDark)
-            : _buildAccessCodeForm(isDark),
+        child: widget.isBannedUser
+            ? _buildBannedUserMessage(isDark)
+            : (_showValidationMessage
+                  ? _buildSuccessMessage(isDark)
+                  : _buildAccessCodeForm(isDark)),
+      ),
+    );
+  }
+
+  // NEW: Build banned user message
+  Widget _buildBannedUserMessage(bool isDark) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(32.0),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            // Ban Icon
+            Container(
+              padding: const EdgeInsets.all(24),
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                border: Border.all(color: Colors.red.shade400, width: 3),
+                color: Colors.red.shade900.withOpacity(0.1),
+              ),
+              child: Icon(
+                Icons.block_rounded,
+                size: 80,
+                color: Colors.red.shade400,
+              ),
+            ),
+
+            const SizedBox(height: 40),
+
+            // Title
+            Text(
+              'You Seem to be Banned',
+              style: GoogleFonts.inter(
+                fontSize: 28,
+                fontWeight: FontWeight.w800,
+                color: Colors.red.shade400,
+                letterSpacing: -0.5,
+              ),
+              textAlign: TextAlign.center,
+            ),
+
+            const SizedBox(height: 16),
+
+            // Message
+            Text(
+              'Your account has been suspended due to violation of our terms of service.',
+              style: GoogleFonts.inter(
+                fontSize: 15,
+                color: isDark ? Colors.white70 : Colors.black87,
+                height: 1.5,
+              ),
+              textAlign: TextAlign.center,
+            ),
+
+            const SizedBox(height: 40),
+
+            // Info Container
+            Container(
+              padding: const EdgeInsets.all(20),
+              decoration: BoxDecoration(
+                color: isDark
+                    ? Colors.white.withOpacity(0.05)
+                    : Colors.black.withOpacity(0.03),
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(
+                  color: isDark
+                      ? Colors.white.withOpacity(0.1)
+                      : Colors.black.withOpacity(0.1),
+                ),
+              ),
+              child: Column(
+                children: [
+                  Icon(
+                    Icons.info_outline_rounded,
+                    color: isDark ? Colors.white60 : Colors.black54,
+                    size: 32,
+                  ),
+                  const SizedBox(height: 12),
+                  Text(
+                    'If you believe this is a mistake, please contact our support team at support@vibeflow.com',
+                    style: GoogleFonts.inter(
+                      fontSize: 14,
+                      color: isDark ? Colors.white60 : Colors.black54,
+                      height: 1.4,
+                    ),
+                    textAlign: TextAlign.center,
+                  ),
+                ],
+              ),
+            ),
+
+            const SizedBox(height: 40),
+
+            // Disabled message
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+              decoration: BoxDecoration(
+                color: Colors.orange.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(
+                  color: Colors.orange.withOpacity(0.3),
+                  width: 1,
+                ),
+              ),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Icon(
+                    Icons.warning_amber_rounded,
+                    color: Colors.orange.shade400,
+                    size: 20,
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
+                      'Access to login and registration is currently disabled for your account.',
+                      style: GoogleFonts.inter(
+                        fontSize: 13,
+                        color: isDark ? Colors.white70 : Colors.black87,
+                        height: 1.4,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -293,15 +421,23 @@ class _AccessCodeScreenState extends ConsumerState<AccessCodeScreen> {
                       children: [
                         TextFormField(
                           controller: _codeController,
+
+                          // ✅ TEXT COLOR
                           style: GoogleFonts.inter(
                             fontSize: 16,
                             fontWeight: FontWeight.w500,
+                            color: isDark ? Colors.white : Colors.black87,
                           ),
+
+                          // ✅ CURSOR COLOR
+                          cursorColor: Colors.white,
+
                           decoration: InputDecoration(
                             labelText: 'Access Code',
                             labelStyle: GoogleFonts.inter(
                               fontSize: 14,
                               fontWeight: FontWeight.w500,
+                              color: isDark ? Colors.white70 : Colors.black54,
                             ),
                             hintText: 'Enter your code',
                             hintStyle: GoogleFonts.inter(

@@ -485,7 +485,27 @@ class _SocialScreenState extends ConsumerState<SocialScreen> {
   }
 }
 
-// FRIENDS ACTIVITY CONTENT
+// Provider to check if user's listening activity is enabled
+final userListeningActivityEnabledProvider = StreamProvider<bool>((ref) {
+  final currentUser = ref.watch(currentUserProvider);
+
+  if (currentUser == null) {
+    return Stream.value(true); // Default to true if no user
+  }
+
+  final supabase = ref.watch(supabaseClientProvider);
+
+  return supabase
+      .from('profiles')
+      .stream(primaryKey: ['id'])
+      .eq('id', currentUser.id)
+      .map((data) {
+        if (data.isEmpty) return true;
+        return data.first['show_listening_activity'] ?? true;
+      });
+});
+
+// UPDATED FRIENDS ACTIVITY CONTENT
 class _FriendsActivityContent extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -493,346 +513,450 @@ class _FriendsActivityContent extends ConsumerWidget {
     final currentUserActivityAsync = ref.watch(
       currentUserLatestActivityProvider,
     );
+    final listeningActivityEnabledAsync = ref.watch(
+      userListeningActivityEnabledProvider,
+    );
     final currentUser = ref.watch(currentUserProvider);
     final textPrimaryColor = ref.watch(themeTextPrimaryColorProvider);
     final textSecondaryColor = ref.watch(themeTextSecondaryColorProvider);
     final iconActiveColor = ref.watch(themeIconActiveColorProvider);
+    final cardBackgroundColor = ref.watch(themeCardBackgroundColorProvider);
+    final backgroundColor = ref.watch(themeBackgroundColorProvider);
 
-    return activitiesAsync.when(
-      data: (friendsActivities) {
-        // Filter out current user from friends list (shouldn't be there, but just in case)
-        final filteredFriendsActivities = friendsActivities
-            .where(
-              (activity) =>
-                  currentUser == null || activity.userId != currentUser.id,
-            )
-            .toList();
+    return listeningActivityEnabledAsync.when(
+      data: (isListeningActivityEnabled) {
+        // If listening activity is OFF, show overlay message
+        if (!isListeningActivityEnabled) {
+          return Center(
+            child: Padding(
+              padding: const EdgeInsets.all(AppSpacing.xl),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(
+                    Icons.visibility_off,
+                    size: 80,
+                    color: textSecondaryColor.withOpacity(0.5),
+                  ),
+                  const SizedBox(height: AppSpacing.lg),
+                  Text(
+                    'Listening Activity is Off',
+                    style: AppTypography.pageTitle(context).copyWith(
+                      color: textPrimaryColor,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  const SizedBox(height: AppSpacing.sm),
+                  Text(
+                    'Enable "Show Listening Activity" in Edit Profile\nto see what your friends are listening to',
+                    style: AppTypography.caption(
+                      context,
+                    ).copyWith(color: textSecondaryColor),
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: AppSpacing.xl),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: AppSpacing.lg,
+                      vertical: AppSpacing.md,
+                    ),
+                    decoration: BoxDecoration(
+                      color: iconActiveColor.withOpacity(0.1),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(
+                        color: iconActiveColor.withOpacity(0.3),
+                        width: 1.5,
+                      ),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          Icons.info_outline,
+                          size: 20,
+                          color: iconActiveColor,
+                        ),
+                        const SizedBox(width: AppSpacing.sm),
+                        Flexible(
+                          child: Text(
+                            'Your activity is also hidden from friends',
+                            style: AppTypography.caption(
+                              context,
+                            ).copyWith(color: textPrimaryColor, fontSize: 12),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          );
+        }
 
-        return RefreshIndicator(
-          onRefresh: () async {
-            ref.invalidate(followingActivitiesProvider);
-            ref.invalidate(currentUserLatestActivityProvider);
-            // Wait a bit for the refresh
-            await Future.delayed(const Duration(milliseconds: 500));
-          },
-          child: CustomScrollView(
-            slivers: [
-              // Current User's Activity at Top
-              SliverToBoxAdapter(
-                child: currentUserActivityAsync.when(
-                  data: (currentUserActivity) {
-                    if (currentUserActivity == null) {
-                      // Show placeholder when user hasn't listened to anything
-                      return Padding(
+        // Original content when listening activity is enabled
+        return activitiesAsync.when(
+          data: (friendsActivities) {
+            final filteredFriendsActivities = friendsActivities
+                .where(
+                  (activity) =>
+                      currentUser == null || activity.userId != currentUser.id,
+                )
+                .toList();
+
+            return RefreshIndicator(
+              onRefresh: () async {
+                ref.invalidate(followingActivitiesProvider);
+                ref.invalidate(currentUserLatestActivityProvider);
+                await Future.delayed(const Duration(milliseconds: 500));
+              },
+              child: CustomScrollView(
+                slivers: [
+                  // Current User's Activity at Top
+                  SliverToBoxAdapter(
+                    child: currentUserActivityAsync.when(
+                      data: (currentUserActivity) {
+                        if (currentUserActivity == null) {
+                          // Show placeholder when user hasn't listened to anything
+                          return Padding(
+                            padding: const EdgeInsets.all(AppSpacing.lg),
+                            child: Container(
+                              padding: const EdgeInsets.all(16),
+                              decoration: BoxDecoration(
+                                color: iconActiveColor.withOpacity(0.05),
+                                borderRadius: BorderRadius.circular(16),
+                                border: Border.all(
+                                  color: iconActiveColor.withOpacity(0.2),
+                                  width: 1.5,
+                                ),
+                              ),
+                              child: Row(
+                                children: [
+                                  Icon(
+                                    Icons.music_note,
+                                    color: textSecondaryColor.withOpacity(0.5),
+                                    size: 36,
+                                  ),
+                                  const SizedBox(width: 16),
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                          'Start listening',
+                                          style: AppTypography.subtitle(context)
+                                              .copyWith(
+                                                color: textPrimaryColor,
+                                                fontWeight: FontWeight.w600,
+                                              ),
+                                        ),
+                                        const SizedBox(height: 4),
+                                        Text(
+                                          'Play a song to share with your friends',
+                                          style: AppTypography.caption(
+                                            context,
+                                          ).copyWith(color: textSecondaryColor),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                  Icon(
+                                    Icons.play_circle_fill,
+                                    color: iconActiveColor,
+                                    size: 32,
+                                  ),
+                                ],
+                              ),
+                            ),
+                          );
+                        }
+
+                        return Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Padding(
+                              padding: const EdgeInsets.fromLTRB(
+                                AppSpacing.lg,
+                                AppSpacing.lg,
+                                AppSpacing.lg,
+                                AppSpacing.sm,
+                              ),
+                              child: Row(
+                                children: [
+                                  Text(
+                                    currentUserActivity.isCurrentlyPlaying
+                                        ? '🎵 You\'re listening now'
+                                        : '⏸️ Your last listen',
+                                    style: AppTypography.caption(context)
+                                        .copyWith(
+                                          color:
+                                              currentUserActivity
+                                                  .isCurrentlyPlaying
+                                              ? Colors.green
+                                              : textSecondaryColor,
+                                          fontSize: 11,
+                                          fontWeight: FontWeight.w600,
+                                          letterSpacing: 0.5,
+                                        ),
+                                  ),
+                                  const Spacer(),
+                                  if (currentUserActivity.isCurrentlyPlaying)
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 8,
+                                        vertical: 2,
+                                      ),
+                                      decoration: BoxDecoration(
+                                        color: Colors.green.withOpacity(0.2),
+                                        borderRadius: BorderRadius.circular(10),
+                                      ),
+                                      child: Row(
+                                        children: [
+                                          Container(
+                                            width: 6,
+                                            height: 6,
+                                            decoration: BoxDecoration(
+                                              color: Colors.green,
+                                              borderRadius:
+                                                  BorderRadius.circular(3),
+                                            ),
+                                          ),
+                                          const SizedBox(width: 4),
+                                          Text(
+                                            'LIVE',
+                                            style:
+                                                AppTypography.caption(
+                                                  context,
+                                                ).copyWith(
+                                                  color: Colors.green,
+                                                  fontSize: 9,
+                                                  fontWeight: FontWeight.w700,
+                                                  letterSpacing: 0.5,
+                                                ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                ],
+                              ),
+                            ),
+                            Padding(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: AppSpacing.lg,
+                              ),
+                              child: _ActivityCard(
+                                activity: currentUserActivity,
+                                ref: ref,
+                                isCurrentUser: true,
+                              ),
+                            ),
+                            const SizedBox(height: AppSpacing.lg),
+                            Padding(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: AppSpacing.lg,
+                              ),
+                              child: Divider(
+                                color: textSecondaryColor.withOpacity(0.2),
+                                thickness: 1,
+                              ),
+                            ),
+                          ],
+                        );
+                      },
+                      loading: () => Padding(
+                        padding: const EdgeInsets.all(AppSpacing.lg),
+                        child: Center(
+                          child: SizedBox(
+                            height: 40,
+                            child: CircularProgressIndicator(
+                              color: iconActiveColor,
+                              strokeWidth: 2,
+                            ),
+                          ),
+                        ),
+                      ),
+                      error: (error, stack) => Padding(
                         padding: const EdgeInsets.all(AppSpacing.lg),
                         child: Container(
                           padding: const EdgeInsets.all(16),
                           decoration: BoxDecoration(
-                            color: iconActiveColor.withOpacity(0.05),
-                            borderRadius: BorderRadius.circular(16),
+                            color: Colors.red.withOpacity(0.1),
+                            borderRadius: BorderRadius.circular(12),
                             border: Border.all(
-                              color: iconActiveColor.withOpacity(0.2),
-                              width: 1.5,
+                              color: Colors.red.withOpacity(0.3),
+                              width: 1,
                             ),
                           ),
                           child: Row(
                             children: [
                               Icon(
-                                Icons.music_note,
-                                color: textSecondaryColor.withOpacity(0.5),
-                                size: 36,
+                                Icons.error_outline,
+                                color: Colors.red,
+                                size: 24,
                               ),
-                              const SizedBox(width: 16),
+                              const SizedBox(width: 12),
                               Expanded(
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Text(
-                                      'Start listening',
-                                      style: AppTypography.subtitle(context)
-                                          .copyWith(
-                                            color: textPrimaryColor,
-                                            fontWeight: FontWeight.w600,
-                                          ),
-                                    ),
-                                    const SizedBox(height: 4),
-                                    Text(
-                                      'Play a song to share with your friends',
-                                      style: AppTypography.caption(
-                                        context,
-                                      ).copyWith(color: textSecondaryColor),
-                                    ),
-                                  ],
+                                child: Text(
+                                  'Could not load your activity',
+                                  style: AppTypography.caption(
+                                    context,
+                                  ).copyWith(color: textPrimaryColor),
                                 ),
-                              ),
-                              Icon(
-                                Icons.play_circle_fill,
-                                color: iconActiveColor,
-                                size: 32,
                               ),
                             ],
                           ),
-                        ),
-                      );
-                    }
-
-                    return Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Padding(
-                          padding: const EdgeInsets.fromLTRB(
-                            AppSpacing.lg,
-                            AppSpacing.lg,
-                            AppSpacing.lg,
-                            AppSpacing.sm,
-                          ),
-                          child: Row(
-                            children: [
-                              Text(
-                                currentUserActivity.isCurrentlyPlaying
-                                    ? '🎵 You\'re listening now'
-                                    : '⏸️ Your last listen',
-                                style: AppTypography.caption(context).copyWith(
-                                  color: currentUserActivity.isCurrentlyPlaying
-                                      ? Colors.green
-                                      : textSecondaryColor,
-                                  fontSize: 11,
-                                  fontWeight: FontWeight.w600,
-                                  letterSpacing: 0.5,
-                                ),
-                              ),
-                              const Spacer(),
-                              if (currentUserActivity.isCurrentlyPlaying)
-                                Container(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 8,
-                                    vertical: 2,
-                                  ),
-                                  decoration: BoxDecoration(
-                                    color: Colors.green.withOpacity(0.2),
-                                    borderRadius: BorderRadius.circular(10),
-                                  ),
-                                  child: Row(
-                                    children: [
-                                      Container(
-                                        width: 6,
-                                        height: 6,
-                                        decoration: BoxDecoration(
-                                          color: Colors.green,
-                                          borderRadius: BorderRadius.circular(
-                                            3,
-                                          ),
-                                        ),
-                                      ),
-                                      const SizedBox(width: 4),
-                                      Text(
-                                        'LIVE',
-                                        style: AppTypography.caption(context)
-                                            .copyWith(
-                                              color: Colors.green,
-                                              fontSize: 9,
-                                              fontWeight: FontWeight.w700,
-                                              letterSpacing: 0.5,
-                                            ),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                            ],
-                          ),
-                        ),
-                        Padding(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: AppSpacing.lg,
-                          ),
-                          child: _ActivityCard(
-                            activity: currentUserActivity,
-                            ref: ref,
-                            isCurrentUser: true,
-                          ),
-                        ),
-                        const SizedBox(height: AppSpacing.lg),
-                        Padding(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: AppSpacing.lg,
-                          ),
-                          child: Divider(
-                            color: textSecondaryColor.withOpacity(0.2),
-                            thickness: 1,
-                          ),
-                        ),
-                      ],
-                    );
-                  },
-                  loading: () => Padding(
-                    padding: const EdgeInsets.all(AppSpacing.lg),
-                    child: Center(
-                      child: SizedBox(
-                        height: 40,
-                        child: CircularProgressIndicator(
-                          color: iconActiveColor,
-                          strokeWidth: 2,
                         ),
                       ),
                     ),
                   ),
-                  error: (error, stack) => Padding(
-                    padding: const EdgeInsets.all(AppSpacing.lg),
-                    child: Container(
-                      padding: const EdgeInsets.all(16),
-                      decoration: BoxDecoration(
-                        color: Colors.red.withOpacity(0.1),
-                        borderRadius: BorderRadius.circular(12),
-                        border: Border.all(
-                          color: Colors.red.withOpacity(0.3),
-                          width: 1,
+
+                  // Friends Activity Header
+                  SliverToBoxAdapter(
+                    child: Padding(
+                      padding: const EdgeInsets.fromLTRB(
+                        AppSpacing.lg,
+                        AppSpacing.md,
+                        AppSpacing.lg,
+                        AppSpacing.sm,
+                      ),
+                      child: Text(
+                        'Friends Activity',
+                        style: AppTypography.caption(context).copyWith(
+                          color: textSecondaryColor,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w600,
+                          letterSpacing: 0.5,
                         ),
                       ),
-                      child: Row(
-                        children: [
-                          Icon(
-                            Icons.error_outline,
-                            color: Colors.red,
-                            size: 24,
-                          ),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: Text(
-                              'Could not load your activity',
-                              style: AppTypography.caption(
+                    ),
+                  ),
+
+                  // Friends Activity List or Empty State
+                  if (filteredFriendsActivities.isEmpty)
+                    SliverFillRemaining(
+                      child: Center(
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(
+                              Icons.people_outline,
+                              size: 64,
+                              color: textSecondaryColor.withOpacity(0.5),
+                            ),
+                            const SizedBox(height: 16),
+                            Text(
+                              'No friend activity yet',
+                              style: AppTypography.subtitle(
                                 context,
                               ).copyWith(color: textPrimaryColor),
                             ),
-                          ),
-                        ],
+                            const SizedBox(height: 8),
+                            Text(
+                              'Your friends haven\'t listened to anything recently',
+                              style: AppTypography.caption(
+                                context,
+                              ).copyWith(color: textSecondaryColor),
+                              textAlign: TextAlign.center,
+                            ),
+                          ],
+                        ),
+                      ),
+                    )
+                  else
+                    SliverPadding(
+                      padding: const EdgeInsets.only(
+                        left: AppSpacing.lg,
+                        right: AppSpacing.lg,
+                        bottom: 120,
+                      ),
+                      sliver: SliverList(
+                        delegate: SliverChildBuilderDelegate((context, index) {
+                          return _ActivityCard(
+                            activity: filteredFriendsActivities[index],
+                            ref: ref,
+                          );
+                        }, childCount: filteredFriendsActivities.length),
                       ),
                     ),
-                  ),
-                ),
+                ],
               ),
+            );
+          },
+          loading: () =>
+              Center(child: CircularProgressIndicator(color: iconActiveColor)),
+          error: (error, stack) {
+            print('❌ Error in followingActivitiesProvider: $error');
+            print('Stack trace: $stack');
 
-              // Friends Activity Header
-              SliverToBoxAdapter(
-                child: Padding(
-                  padding: const EdgeInsets.fromLTRB(
-                    AppSpacing.lg,
-                    AppSpacing.md,
-                    AppSpacing.lg,
-                    AppSpacing.sm,
+            return Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(
+                    Icons.error_outline,
+                    size: 64,
+                    color: textSecondaryColor.withOpacity(0.5),
                   ),
-                  child: Text(
-                    'Friends Activity',
-                    style: AppTypography.caption(context).copyWith(
-                      color: textSecondaryColor,
-                      fontSize: 11,
-                      fontWeight: FontWeight.w600,
-                      letterSpacing: 0.5,
+                  const SizedBox(height: 16),
+                  Text(
+                    'Error loading activities',
+                    style: AppTypography.subtitle(
+                      context,
+                    ).copyWith(color: textPrimaryColor),
+                  ),
+                  const SizedBox(height: 8),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 32),
+                    child: Text(
+                      error.toString(),
+                      style: AppTypography.caption(
+                        context,
+                      ).copyWith(color: textSecondaryColor),
+                      textAlign: TextAlign.center,
                     ),
                   ),
-                ),
+                  const SizedBox(height: 16),
+                  ElevatedButton.icon(
+                    onPressed: () {
+                      ref.invalidate(followingActivitiesProvider);
+                      ref.invalidate(currentUserLatestActivityProvider);
+                    },
+                    icon: const Icon(Icons.refresh),
+                    label: const Text('Retry'),
+                  ),
+                ],
               ),
-
-              // Friends Activity List or Empty State
-              if (filteredFriendsActivities.isEmpty)
-                SliverFillRemaining(
-                  child: Center(
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Icon(
-                          Icons.people_outline,
-                          size: 64,
-                          color: textSecondaryColor.withOpacity(0.5),
-                        ),
-                        const SizedBox(height: 16),
-                        Text(
-                          'No friend activity yet',
-                          style: AppTypography.subtitle(
-                            context,
-                          ).copyWith(color: textPrimaryColor),
-                        ),
-                        const SizedBox(height: 8),
-                        Text(
-                          'Your friends haven\'t listened to anything recently',
-                          style: AppTypography.caption(
-                            context,
-                          ).copyWith(color: textSecondaryColor),
-                          textAlign: TextAlign.center,
-                        ),
-                      ],
-                    ),
-                  ),
-                )
-              else
-                SliverPadding(
-                  padding: const EdgeInsets.only(
-                    left: AppSpacing.lg,
-                    right: AppSpacing.lg,
-                    bottom: 120,
-                  ),
-                  sliver: SliverList(
-                    delegate: SliverChildBuilderDelegate((context, index) {
-                      return _ActivityCard(
-                        activity: filteredFriendsActivities[index],
-                        ref: ref,
-                      );
-                    }, childCount: filteredFriendsActivities.length),
-                  ),
-                ),
-            ],
-          ),
+            );
+          },
         );
       },
       loading: () =>
           Center(child: CircularProgressIndicator(color: iconActiveColor)),
-      error: (error, stack) {
-        print('❌ Error in followingActivitiesProvider: $error');
-        print('Stack trace: $stack');
-
-        return Center(
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(
-                Icons.error_outline,
-                size: 64,
-                color: textSecondaryColor.withOpacity(0.5),
-              ),
-              const SizedBox(height: 16),
-              Text(
-                'Error loading activities',
-                style: AppTypography.subtitle(
-                  context,
-                ).copyWith(color: textPrimaryColor),
-              ),
-              const SizedBox(height: 8),
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 32),
-                child: Text(
-                  error.toString(),
-                  style: AppTypography.caption(
-                    context,
-                  ).copyWith(color: textSecondaryColor),
-                  textAlign: TextAlign.center,
-                ),
-              ),
-              const SizedBox(height: 16),
-              ElevatedButton.icon(
-                onPressed: () {
-                  ref.invalidate(followingActivitiesProvider);
-                  ref.invalidate(currentUserLatestActivityProvider);
-                },
-                icon: const Icon(Icons.refresh),
-                label: const Text('Retry'),
-              ),
-            ],
-          ),
-        );
-      },
+      error: (error, stack) => Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              Icons.error_outline,
+              size: 64,
+              color: textSecondaryColor.withOpacity(0.5),
+            ),
+            const SizedBox(height: 16),
+            Text(
+              'Error checking settings',
+              style: AppTypography.subtitle(
+                context,
+              ).copyWith(color: textPrimaryColor),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
 
+// ACTIVITY CARD (Unchanged - keeping your original aesthetic)
 class _ActivityCard extends StatefulWidget {
   final ListeningActivity activity;
   final WidgetRef ref;
@@ -883,7 +1007,6 @@ class _ActivityCardState extends State<_ActivityCard> {
 
   String _getStatusText() {
     if (widget.activity.isCurrentlyPlaying) {
-      // ✅ Use real-time position
       final position = widget.activity.realtimePositionMs;
       final minutes = (position / 60000).floor();
       final seconds = ((position % 60000) / 1000).floor();
@@ -926,7 +1049,6 @@ class _ActivityCardState extends State<_ActivityCard> {
     final iconActiveColor = widget.ref.watch(themeIconActiveColorProvider);
     final thumbnailRadius = widget.ref.watch(thumbnailRadiusProvider);
 
-    // ✅ Use real-time progress
     final progressPercentage = widget.activity.realtimeProgressPercentage;
 
     return Container(
@@ -990,7 +1112,6 @@ class _ActivityCardState extends State<_ActivityCard> {
                         ),
                       ),
               ),
-              // Online indicator
               if (widget.activity.isCurrentlyPlaying)
                 Positioned(
                   right: 0,
@@ -1033,7 +1154,6 @@ class _ActivityCardState extends State<_ActivityCard> {
                           ),
                         ),
                       ),
-                      // Progress overlay
                       if (widget.activity.isCurrentlyPlaying)
                         Positioned(
                           bottom: 0,
@@ -1070,7 +1190,6 @@ class _ActivityCardState extends State<_ActivityCard> {
               crossAxisAlignment: CrossAxisAlignment.start,
               mainAxisSize: MainAxisSize.min,
               children: [
-                // User and Status Row
                 Row(
                   children: [
                     Expanded(
@@ -1113,7 +1232,6 @@ class _ActivityCardState extends State<_ActivityCard> {
                 ),
                 const SizedBox(height: 4),
 
-                // Song Title
                 Text(
                   widget.activity.songTitle,
                   style: AppTypography.songTitle(context).copyWith(
@@ -1126,7 +1244,6 @@ class _ActivityCardState extends State<_ActivityCard> {
                 ),
                 const SizedBox(height: 2),
 
-                // Artists and Status
                 Row(
                   children: [
                     Expanded(
@@ -1157,7 +1274,6 @@ class _ActivityCardState extends State<_ActivityCard> {
                   ],
                 ),
 
-                // Progress Bar (only when playing)
                 if (widget.activity.isCurrentlyPlaying &&
                     widget.activity.durationMs > 0)
                   Column(
@@ -1177,7 +1293,6 @@ class _ActivityCardState extends State<_ActivityCard> {
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
                           Text(
-                            // ✅ FIX: Use real-time calculated position instead of widget.activity.currentPositionMs
                             _formatDuration(
                               widget.activity.realtimeCurrentPositionMs,
                             ),
