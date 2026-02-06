@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'dart:math';
 import 'dart:ui';
@@ -88,6 +89,9 @@ class _NewPlayerPageState extends ConsumerState<NewPlayerPage>
   bool _isRefetchingUrl = false;
   double _lastRotationValue = 0.0;
   bool _isReturningToNormal = false;
+  String? _currentVideoId;
+  String? _lastProcessedVideoId;
+  String? _lastProcessedTitle;
 
   @override
   void initState() {
@@ -103,14 +107,12 @@ class _NewPlayerPageState extends ConsumerState<NewPlayerPage>
       vsync: this,
     );
 
-    // ✅ UPDATED: Listen to rotation controller to track position
     _rotationController.addListener(() {
-      if (!_isReturningToNormal) {
+      if (!_isReturningToNormal && mounted) {
         _lastRotationValue = _rotationController.value;
       }
     });
 
-    // ✅ OPTIMIZED: Defer heavy operations until after first frame
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
         _scaleController.forward();
@@ -123,22 +125,143 @@ class _NewPlayerPageState extends ConsumerState<NewPlayerPage>
     _checkIfLiked();
     _listenForPlaybackErrors();
 
-    // ✅ UPDATED: Listen for playback state changes
     _audioService.playbackStateStream.listen((state) {
       if (mounted) {
         _updateRotation(state.playing);
       }
     });
+
+    // ✅ CRITICAL FIX: Debounce mediaItemStream to prevent duplicate triggers
+    Timer? _debounceTimer;
+    String? _lastProcessedVideoId;
+    String? _lastProcessedTitle;
+
+    _audioService.mediaItemStream.listen((mediaItem) {
+      if (!mounted) return;
+
+      if (mediaItem != null) {
+        final newVideoId = mediaItem.id;
+        final newTitle = mediaItem.title;
+
+        // ✅ FIX: Cancel pending debounce if same song
+        if (_debounceTimer?.isActive ?? false) {
+          if (newVideoId == _lastProcessedVideoId &&
+              newTitle == _lastProcessedTitle) {
+            print('⏭️ [MediaStream] Ignoring duplicate emission');
+            return;
+          }
+          _debounceTimer?.cancel();
+        }
+
+        print('🎵 [MediaStream] Received update:');
+        print('   VideoId: $newVideoId (current: $_currentVideoId)');
+        print('   Title: $newTitle');
+        print('   Last processed: $_lastProcessedVideoId');
+
+        // ✅ FIX: Check if this is truly a new song
+        final isDifferentSong =
+            newVideoId != _currentVideoId ||
+            newVideoId != _lastProcessedVideoId;
+
+        if (isDifferentSong || _currentVideoId == null) {
+          print('🔄 [MediaStream] New song detected, updating UI');
+
+          // ✅ FIX: Debounce to prevent multiple rapid calls
+          _debounceTimer = Timer(const Duration(milliseconds: 150), () {
+            if (!mounted) return;
+
+            _currentVideoId = newVideoId;
+            _lastProcessedVideoId = newVideoId;
+            _lastProcessedTitle = newTitle;
+
+            _onSongChanged(mediaItem);
+          });
+        } else {
+          print(
+            '✓ [MediaStream] Same song as current/last processed, no update',
+          );
+        }
+      }
+    });
+  }
+
+  // ✅ ADD: Cleanup debounce timer
+  Timer? _mediaItemDebounceTimer;
+
+  // ✅ ADD: Handle song changes
+  Future<void> _onSongChanged(MediaItem mediaItem) async {
+    if (!mounted) return;
+
+    print('🔄 [_onSongChanged] Updating UI for: ${mediaItem.title}');
+    print('   VideoId: ${mediaItem.id}');
+    print('   Artist: ${mediaItem.artist}');
+    print('   Artwork: ${mediaItem.artUri}');
+
+    // ✅ FIX 1: Update like status FIRST (critical for saved songs)
+    setState(() {
+      _isCheckingLiked = true;
+    });
+
+    await _checkIfLiked();
+
+    // ✅ FIX 2: Update album art and palette
+    final artworkUrl = mediaItem.artUri?.toString() ?? '';
+    if (artworkUrl.isNotEmpty) {
+      print(
+        '🎨 [_onSongChanged] Loading new artwork: ${artworkUrl.substring(0, 50)}...',
+      );
+      _lastArtworkUrl = null; // Force reload even if URL is similar
+      await _loadAlbumPalette(artworkUrl);
+      _preloadArtworkFromUrl(artworkUrl);
+    }
+
+    // ✅ FIX 3: Force UI rebuild with delay to ensure state propagation
+    if (mounted) {
+      setState(() {
+        // Force rebuild
+      });
+
+      // Additional rebuild after short delay to catch any async updates
+      await Future.delayed(const Duration(milliseconds: 100));
+      if (mounted) {
+        setState(() {
+          // Second rebuild to ensure everything is in sync
+        });
+      }
+    }
+    _logCurrentState();
+    print('✅ [_onSongChanged] UI update complete');
+  }
+
+  Future<void> _forceRefreshMetadata() async {
+    if (!mounted) return;
+
+    final currentMedia = _audioService.currentMediaItem;
+    if (currentMedia != null) {
+      print('🔄 [ForceRefresh] Manually refreshing metadata');
+      await _onSongChanged(currentMedia);
+    }
   }
 
   Future<void> _checkIfLiked() async {
+    if (!mounted) return; // ✅ ADD: Safety check
+
     try {
+      final currentMedia = _audioService.currentMediaItem;
+      if (currentMedia == null) {
+        if (mounted) {
+          setState(() {
+            _isLiked = false;
+            _isCheckingLiked = false;
+          });
+        }
+        return;
+      }
+
       final downloadService = DownloadService.instance;
       final savedSongs = await downloadService.getDownloadedSongs();
 
-      final isLiked = savedSongs.any(
-        (song) => song.videoId == widget.song.videoId,
-      );
+      final isLiked = savedSongs.any((song) => song.videoId == currentMedia.id);
 
       if (mounted) {
         setState(() {
@@ -152,6 +275,19 @@ class _NewPlayerPageState extends ConsumerState<NewPlayerPage>
         setState(() => _isCheckingLiked = false);
       }
     }
+  }
+
+  // ✅ ADD: Helper to preload artwork from URL
+  void _preloadArtworkFromUrl(String url) {
+    if (url.isEmpty || !mounted) return;
+
+    precacheImage(
+      NetworkImage(url),
+      context,
+      onError: (exception, stackTrace) {
+        print('⚠️ Artwork preload failed: $exception');
+      },
+    );
   }
 
   Future<bool> _ensureStoragePermission() async {
@@ -224,11 +360,20 @@ class _NewPlayerPageState extends ConsumerState<NewPlayerPage>
       final hasError = customState['playback_error'] as bool? ?? false;
       final errorMessage = customState['error_message'] as String?;
       final isSourceError = customState['is_source_error'] as bool? ?? false;
+      final isAutoRetrying = customState['auto_retrying'] as bool? ?? false;
+      final recoverySuccess = customState['recovery_success'] as bool? ?? false;
+
+      if (recoverySuccess) {
+        _showRecoverySuccessSnackbar();
+        return;
+      }
 
       if (hasError && errorMessage != null) {
         print('🔴 [NewPlayerPage] Playback error detected: $errorMessage');
 
-        if (isSourceError) {
+        if (isAutoRetrying) {
+          _showAutoRetrySnackbar(errorMessage);
+        } else if (isSourceError) {
           _showErrorSnackbarWithRetry(errorMessage);
         } else {
           _showErrorSnackbar(errorMessage);
@@ -240,35 +385,25 @@ class _NewPlayerPageState extends ConsumerState<NewPlayerPage>
     });
   }
 
-  void _showErrorSnackbar(String message) {
+  // ADD this NEW method:
+  void _showAutoRetrySnackbar(String message) {
     if (!mounted) return;
 
-    ScaffoldMessenger.of(context).showSnackBar(
+    final messenger = ScaffoldMessenger.of(context);
+    messenger.clearSnackBars();
+
+    messenger.showSnackBar(
       SnackBar(
         content: Row(
           children: [
-            const Icon(Icons.error_outline, color: Colors.white),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Text(message, style: const TextStyle(color: Colors.white)),
+            const SizedBox(
+              width: 20,
+              height: 20,
+              child: CircularProgressIndicator(
+                strokeWidth: 2,
+                valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+              ),
             ),
-          ],
-        ),
-        backgroundColor: Colors.red.shade700,
-        duration: const Duration(seconds: 4),
-        behavior: SnackBarBehavior.floating,
-      ),
-    );
-  }
-
-  void _showErrorSnackbarWithRetry(String message) {
-    if (!mounted) return;
-
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Row(
-          children: [
-            const Icon(Icons.error_outline, color: Colors.white),
             const SizedBox(width: 12),
             Expanded(
               child: Column(
@@ -276,12 +411,113 @@ class _NewPlayerPageState extends ConsumerState<NewPlayerPage>
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   const Text(
-                    'Playback Error',
+                    'Auto-recovering...',
                     style: TextStyle(
                       color: Colors.white,
                       fontWeight: FontWeight.bold,
+                      fontSize: 14,
                     ),
                   ),
+                  const SizedBox(height: 2),
+                  Text(
+                    'Trying alternative sources',
+                    style: const TextStyle(color: Colors.white70, fontSize: 12),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+        backgroundColor: Colors.orange.shade700,
+        duration: const Duration(seconds: 3),
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
+  }
+
+  // ADD this NEW method:
+  void _showRecoverySuccessSnackbar() {
+    if (!mounted) return;
+
+    final messenger = ScaffoldMessenger.of(context);
+    messenger.clearSnackBars();
+
+    messenger.showSnackBar(
+      SnackBar(
+        content: Row(
+          children: [
+            const Icon(Icons.check_circle, color: Colors.white, size: 20),
+            const SizedBox(width: 12),
+            const Expanded(
+              child: Text(
+                'Playback recovered',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ),
+          ],
+        ),
+        backgroundColor: Colors.green.shade700,
+        duration: const Duration(seconds: 2),
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
+  }
+
+  // UPDATE _showErrorSnackbar():
+  void _showErrorSnackbar(String message) {
+    if (!mounted) return;
+
+    final messenger = ScaffoldMessenger.of(context);
+    messenger.clearSnackBars();
+
+    messenger.showSnackBar(
+      SnackBar(
+        content: Row(
+          children: [
+            const Icon(Icons.error_outline, color: Colors.white, size: 20),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(message, style: const TextStyle(color: Colors.white)),
+            ),
+          ],
+        ),
+        backgroundColor: Colors.red.shade700,
+        duration: const Duration(seconds: 3),
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
+  }
+
+  // UPDATE _showErrorSnackbarWithRetry():
+  void _showErrorSnackbarWithRetry(String message) {
+    if (!mounted) return;
+
+    final messenger = ScaffoldMessenger.of(context);
+    messenger.clearSnackBars();
+
+    messenger.showSnackBar(
+      SnackBar(
+        content: Row(
+          children: [
+            const Icon(Icons.error_outline, color: Colors.white, size: 20),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'Playback Issue',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 14,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
                   Text(
                     message,
                     style: const TextStyle(color: Colors.white70, fontSize: 12),
@@ -292,7 +528,7 @@ class _NewPlayerPageState extends ConsumerState<NewPlayerPage>
           ],
         ),
         backgroundColor: Colors.red.shade700,
-        duration: const Duration(seconds: 6),
+        duration: const Duration(seconds: 4),
         behavior: SnackBarBehavior.floating,
         action: SnackBarAction(
           label: 'RETRY',
@@ -400,11 +636,12 @@ class _NewPlayerPageState extends ConsumerState<NewPlayerPage>
   }
 
   Future<void> _loadAlbumPalette(String artworkUrl) async {
+    if (!mounted) return; // ✅ ADD: Safety check
+
     if (artworkUrl.isEmpty || artworkUrl == _lastArtworkUrl) return;
 
     _lastArtworkUrl = artworkUrl;
 
-    // ✅ CRITICAL: Load asynchronously without blocking UI
     try {
       AlbumColorGenerator.fromAnySource(artworkUrl)
           .then((palette) {
@@ -413,25 +650,31 @@ class _NewPlayerPageState extends ConsumerState<NewPlayerPage>
             }
           })
           .catchError((e) {
-            // Silent fail - don't block UI for colors
             print('⚠️ Palette extraction failed: $e');
           });
     } catch (e) {
-      // Silent fail
       print('⚠️ Palette load error: $e');
     }
   }
 
   void _updateRotation(bool isPlaying) {
+    if (!mounted) return; // ✅ ADD: Safety check
+
     if (isPlaying) {
       // Resume rotation from where we left off
       if (_isReturningToNormal) {
         // If we were returning to normal, continue from current position
         _isReturningToNormal = false;
-        _rotationController.forward(from: _rotationController.value);
+        if (mounted && _rotationController.isAnimating) {
+          // ✅ ADD: Check if already animating
+          _rotationController.forward(from: _rotationController.value);
+        }
       } else if (!_rotationController.isAnimating) {
         // Start fresh rotation
-        _rotationController.repeat();
+        if (mounted) {
+          // ✅ ADD: Safety check
+          _rotationController.repeat();
+        }
       }
     } else {
       // Paused - rotate back to normal (0° or 360°)
@@ -516,6 +759,15 @@ class _NewPlayerPageState extends ConsumerState<NewPlayerPage>
     );
   }
 
+  void _logCurrentState() {
+    print('📊 [Player State]');
+    print('   Current VideoId: $_currentVideoId');
+    print('   Widget song: ${widget.song.title}');
+    print('   Is liked: $_isLiked');
+    print('   Last artwork URL: $_lastArtworkUrl');
+    print('   Has palette: ${_albumPalette != null}');
+  }
+
   Widget _buildTopBar() {
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -544,6 +796,37 @@ class _NewPlayerPageState extends ConsumerState<NewPlayerPage>
   }
 
   Widget _buildSongTitle(MediaItem? currentMedia) {
+    // ✅ CRITICAL: Show nothing if no current media
+    if (currentMedia == null) {
+      return Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Loading...',
+                  style: GoogleFonts.inter(
+                    fontSize: 38,
+                    fontWeight: FontWeight.w300,
+                    color: Colors.white.withOpacity(0.5),
+                    letterSpacing: -0.5,
+                    height: 1.1,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      );
+    }
+
+    // ✅ ALWAYS use currentMedia
+    final displayTitle = currentMedia.title;
+    final displayArtist = currentMedia.artist ?? 'Unknown artist';
+
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -553,7 +836,7 @@ class _NewPlayerPageState extends ConsumerState<NewPlayerPage>
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                currentMedia?.title ?? widget.song.title,
+                displayTitle,
                 style: GoogleFonts.inter(
                   fontSize: 38,
                   fontWeight: FontWeight.w300,
@@ -566,7 +849,7 @@ class _NewPlayerPageState extends ConsumerState<NewPlayerPage>
               ),
               const SizedBox(height: 4),
               Text(
-                currentMedia?.artist ?? widget.song.artists,
+                displayArtist,
                 style: GoogleFonts.inter(
                   fontSize: 15,
                   fontWeight: FontWeight.w500,
@@ -580,7 +863,6 @@ class _NewPlayerPageState extends ConsumerState<NewPlayerPage>
           ),
         ),
         const SizedBox(width: 12),
-        // Updated like button with loading state
         _isCheckingLiked
             ? const SizedBox(
                 width: 48,
@@ -625,14 +907,13 @@ class _NewPlayerPageState extends ConsumerState<NewPlayerPage>
     bool isPlaying,
     Duration position,
   ) {
-    final artworkUrl =
-        currentMedia?.artUri?.toString() ?? widget.song.thumbnail;
+    // ✅ CRITICAL FIX: ALWAYS use currentMedia for artwork
+    final artworkUrl = currentMedia?.artUri?.toString() ?? '';
     final palette = _albumPalette;
 
     return AnimatedBuilder(
       animation: _scaleController,
       builder: (context, child) {
-        // ✅ OPTIMIZED: Smoother curve
         final scaleValue = Tween<double>(begin: 0.88, end: 1.0)
             .animate(
               CurvedAnimation(
@@ -668,46 +949,27 @@ class _NewPlayerPageState extends ConsumerState<NewPlayerPage>
         alignment: Alignment.center,
         clipBehavior: Clip.none,
         children: [
-          // ✅ UPDATED: Glow rotates with album art
+          // ✅ FIXED: Static glow (doesn't rotate)
           if (palette != null)
-            AnimatedBuilder(
-              animation: _rotationController,
-              builder: (context, child) {
-                return Transform.rotate(
-                  angle: _rotationController.value * 2 * pi,
-                  child: Container(
-                    width: 380,
-                    height: 380,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      boxShadow: [
-                        BoxShadow(
-                          color: palette.vibrant.withOpacity(
-                            isPlaying ? 0.4 : 0.25,
-                          ),
-                          blurRadius: isPlaying ? 40 : 30,
-                          spreadRadius: isPlaying ? 8 : 5,
-                        ),
-                      ],
-                    ),
+            Container(
+              width: 380,
+              height: 380,
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(24),
+                boxShadow: [
+                  BoxShadow(
+                    color: palette.vibrant.withOpacity(isPlaying ? 0.4 : 0.25),
+                    blurRadius: isPlaying ? 40 : 30,
+                    spreadRadius: isPlaying ? 8 : 5,
                   ),
-                );
-              },
+                ],
+              ),
             ),
 
-          // ✅ UPDATED: Album frame always synced with rotation controller
-          AnimatedBuilder(
-            animation: _rotationController,
-            builder: (context, child) {
-              return Transform.rotate(
-                angle: _rotationController.value * 2 * pi,
-                child: child,
-              );
-            },
-            child: _buildAlbumFrame(artworkUrl, isPlaying),
-          ),
+          // ✅ FIXED: No rotation - static album frame
+          _buildAlbumFrame(artworkUrl, isPlaying),
 
-          // TIME BADGE
+          // TIME BADGE (doesn't rotate)
           Positioned(
             bottom: -12,
             child: Container(
@@ -740,9 +1002,9 @@ class _NewPlayerPageState extends ConsumerState<NewPlayerPage>
     return Container(
       width: 350,
       height: 350,
-      padding: const EdgeInsets.all(14),
+      padding: const EdgeInsets.all(4),
       decoration: BoxDecoration(
-        shape: BoxShape.circle,
+        borderRadius: BorderRadius.circular(20),
         gradient: const LinearGradient(
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
@@ -756,12 +1018,12 @@ class _NewPlayerPageState extends ConsumerState<NewPlayerPage>
           ),
         ],
       ),
-      child: ClipOval(
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(12),
         child: Stack(
           fit: StackFit.expand,
           children: [
             if (artworkUrl.isNotEmpty)
-              // ✅ OPTIMIZED: Conditionally use Hero
               widget.heroTag != null
                   ? Hero(
                       tag: widget.heroTag!,
@@ -1156,8 +1418,18 @@ class _NewPlayerPageState extends ConsumerState<NewPlayerPage>
     );
   }
 
+  // ✅ UPDATE: Toggle like for current song, not widget.song
   Future<void> _toggleLike() async {
     if (_isSavingLike) return;
+
+    // Get current playing song
+    final currentMedia = _audioService.currentMediaItem;
+    if (currentMedia == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No song currently playing')),
+      );
+      return;
+    }
 
     setState(() => _isSavingLike = true);
 
@@ -1165,9 +1437,7 @@ class _NewPlayerPageState extends ConsumerState<NewPlayerPage>
       final downloadService = DownloadService.instance;
 
       if (_isLiked) {
-        final success = await downloadService.deleteDownload(
-          widget.song.videoId,
-        );
+        final success = await downloadService.deleteDownload(currentMedia.id);
 
         if (success && mounted) {
           setState(() => _isLiked = false);
@@ -1180,7 +1450,6 @@ class _NewPlayerPageState extends ConsumerState<NewPlayerPage>
           );
         }
       } else {
-        // ✅ CHECK STORAGE PERMISSION FIRST
         final hasPermission = await _ensureStoragePermission();
         if (!hasPermission) {
           ScaffoldMessenger.of(context).showSnackBar(
@@ -1189,11 +1458,20 @@ class _NewPlayerPageState extends ConsumerState<NewPlayerPage>
           return;
         }
 
-        // Continue download
         final core = VibeFlowCore();
+
+        // ✅ Create QuickPick from current media
+        final currentSong = QuickPick(
+          videoId: currentMedia.id,
+          title: currentMedia.title,
+          artists: currentMedia.artist ?? 'Unknown Artist',
+          thumbnail: currentMedia.artUri?.toString() ?? '',
+          duration: currentMedia.duration?.inSeconds.toString(),
+        );
+
         final audioUrl = await core.getAudioUrl(
-          widget.song.videoId,
-          song: widget.song,
+          currentSong.videoId,
+          song: currentSong,
         );
 
         if (audioUrl == null || audioUrl.isEmpty) {
@@ -1201,11 +1479,11 @@ class _NewPlayerPageState extends ConsumerState<NewPlayerPage>
         }
 
         final result = await downloadService.downloadSong(
-          videoId: widget.song.videoId,
+          videoId: currentSong.videoId,
           audioUrl: audioUrl,
-          title: widget.song.title,
-          artist: widget.song.artists,
-          thumbnailUrl: widget.song.thumbnail,
+          title: currentSong.title,
+          artist: currentSong.artists,
+          thumbnailUrl: currentSong.thumbnail,
         );
 
         if (result.success && mounted) {
@@ -1232,20 +1510,23 @@ class _NewPlayerPageState extends ConsumerState<NewPlayerPage>
     }
   }
 
-  // 5. UPDATE _buildLyricsView to have transparent background
+  // ✅ UPDATE: Lyrics view should use current song
   Widget _buildLyricsView(MediaItem? currentMedia) {
+    if (currentMedia == null) {
+      return const Center(
+        child: Text('No song playing', style: TextStyle(color: Colors.white70)),
+      );
+    }
+
     return Container(
       width: 420,
       height: 420,
-      decoration: BoxDecoration(
-        // Transparent background - only glow from lyrics
-        color: Colors.transparent,
-      ),
+      decoration: const BoxDecoration(color: Colors.transparent),
       child: CenteredLyricsWidget(
-        title: currentMedia?.title ?? widget.song.title,
-        artist: currentMedia?.artist ?? widget.song.artists,
-        videoId: widget.song.videoId,
-        duration: int.tryParse(widget.song.duration ?? '') ?? 0,
+        title: currentMedia.title,
+        artist: currentMedia.artist ?? 'Unknown Artist',
+        videoId: currentMedia.id,
+        duration: currentMedia.duration?.inSeconds ?? 0,
         accentColor: _albumPalette?.vibrant ?? Colors.white,
       ),
     );
@@ -1282,25 +1563,25 @@ class _NewPlayerPageState extends ConsumerState<NewPlayerPage>
   }
 
   /// Rotates the album art back to normal position (0° or 360°)
-  /// choosing the shortest path
   void _rotateToNearestNormal() {
-    if (_isReturningToNormal) return;
+    if (_isReturningToNormal || !mounted) return; // ✅ ADD: Check mounted
 
     _isReturningToNormal = true;
 
     // Stop the repeating animation
-    _rotationController.stop();
+    if (_rotationController.isAnimating) {
+      // ✅ ADD: Check before stopping
+      _rotationController.stop();
+    }
 
     // Get current rotation value (0.0 to 1.0 where 1.0 = 360°)
     final currentValue = _rotationController.value;
 
     // Determine shortest path to normal (0.0 or 1.0)
-    // If current value is less than 0.5, rotate backwards to 0.0
-    // If current value is more than 0.5, rotate forwards to 1.0
     final targetValue = currentValue < 0.5 ? 0.0 : 1.0;
     final distance = (targetValue - currentValue).abs();
 
-    // Calculate duration based on distance (slower for longer distances)
+    // Calculate duration based on distance
     final duration = Duration(
       milliseconds: (distance * 800).clamp(200, 800).toInt(),
     );
@@ -1319,6 +1600,7 @@ class _NewPlayerPageState extends ConsumerState<NewPlayerPage>
 
     animation.addListener(() {
       if (mounted) {
+        // ✅ ADD: Safety check
         _rotationController.value = animation.value;
       }
     });
@@ -1326,7 +1608,8 @@ class _NewPlayerPageState extends ConsumerState<NewPlayerPage>
     animation.addStatusListener((status) {
       if (status == AnimationStatus.completed) {
         // Reset to 0.0 if we went to 1.0
-        if (targetValue == 1.0) {
+        if (targetValue == 1.0 && mounted) {
+          // ✅ ADD: Check mounted
           _rotationController.value = 0.0;
         }
         _lastRotationValue = 0.0;
@@ -1335,13 +1618,28 @@ class _NewPlayerPageState extends ConsumerState<NewPlayerPage>
       }
     });
 
-    returnController.forward();
+    if (mounted) {
+      // ✅ ADD: Safety check before starting animation
+      returnController.forward();
+    }
   }
 
   @override
   void dispose() {
-    _scaleController.dispose();
-    _rotationController.dispose();
+    _mediaItemDebounceTimer?.cancel();
+
+    if (_rotationController.isAnimating) {
+      _rotationController.stop();
+    }
+    if (_scaleController.isAnimating) {
+      _scaleController.stop();
+    }
+
+    Future.delayed(const Duration(milliseconds: 50), () {
+      _scaleController.dispose();
+      _rotationController.dispose();
+    });
+
     super.dispose();
   }
 }

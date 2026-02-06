@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:vibeflow/api_base/community_playlistScaper.dart';
 import 'package:vibeflow/api_base/ytmusic_artists_scraper.dart';
 import 'package:vibeflow/models/artist_model.dart';
 import 'package:vibeflow/models/song_model.dart';
@@ -81,6 +82,113 @@ class CacheManager {
     }
   }
 
+  /// Serialize data for caching
+  dynamic _serializeData<T>(T data) {
+    if (data is List<Artist>) {
+      return data.map((artist) => artist.toJson()).toList();
+    } else if (data is ArtistDetails) {
+      return data.toJson();
+    } else if (data is List<Song>) {
+      return data.map((song) => song.toJson()).toList();
+    } else if (data is List<Album>) {
+      return data.map((album) => album.toJson()).toList();
+    } else if (data is List<CommunityPlaylist>) {
+      // NEW: Support for playlists
+      return data.map((playlist) => playlist.toJson()).toList();
+    } else if (data is CommunityPlaylist) {
+      // NEW: Single playlist
+      return data.toJson();
+    }
+    return data;
+  }
+
+  /// Deserialize data from cache
+  T? _deserializeData<T>(dynamic data) {
+    if (T == List<Artist>) {
+      final list = (data as List).map((item) => Artist.fromJson(item)).toList();
+      return list as T;
+    } else if (T == ArtistDetails) {
+      return ArtistDetails.fromJson(data) as T;
+    } else if (T == List<Song>) {
+      final list = (data as List).map((item) => Song.fromJson(item)).toList();
+      return list as T;
+    } else if (T == List<Album>) {
+      final list = (data as List).map((item) => Album.fromJson(item)).toList();
+      return list as T;
+    } else if (T == List<CommunityPlaylist>) {
+      // NEW: Support for playlists
+      final list = (data as List)
+          .map((item) => CommunityPlaylist.fromJson(item))
+          .toList();
+      return list as T;
+    } else if (T == CommunityPlaylist) {
+      // NEW: Single playlist
+      return CommunityPlaylist.fromJson(data) as T;
+    }
+    return data as T?;
+  }
+
+  /// Cache community playlists
+  Future<void> setCommunityPlaylists(
+    String query,
+    List<CommunityPlaylist> playlists,
+  ) async {
+    final key = 'community_playlists_${_hashQuery(query)}';
+    await set(key, playlists);
+  }
+
+  /// Get cached community playlists
+  Future<List<CommunityPlaylist>?> getCommunityPlaylists(String query) async {
+    final key = 'community_playlists_${_hashQuery(query)}';
+    return await get<List<CommunityPlaylist>>(key);
+  }
+
+  /// Cache single community playlist details
+  Future<void> setCommunityPlaylistDetails(
+    String playlistId,
+    CommunityPlaylist playlist,
+  ) async {
+    final key = 'playlist_details_$playlistId';
+    await set(key, playlist);
+  }
+
+  /// Get cached community playlist details
+  Future<CommunityPlaylist?> getCommunityPlaylistDetails(
+    String playlistId,
+  ) async {
+    final key = 'playlist_details_$playlistId';
+    return await get<CommunityPlaylist>(key);
+  }
+
+  /// Clear community playlists cache
+  Future<void> clearCommunityPlaylists() async {
+    try {
+      if (kIsWeb) return;
+
+      final cacheDir = await _cacheDir;
+      if (!await cacheDir.exists()) return;
+
+      final files = await cacheDir.list().toList();
+      for (final file in files) {
+        if (file is File) {
+          final name = file.path.split('/').last;
+          if (name.startsWith('community_playlists_') ||
+              name.startsWith('playlist_details_')) {
+            await file.delete();
+          }
+        }
+      }
+      print('🗑️ Cleared community playlists cache');
+    } catch (e) {
+      print('⚠️ Error clearing community playlists: $e');
+    }
+  }
+
+  /// Helper to hash query for cache key
+  String _hashQuery(String query) {
+    return query.toLowerCase().replaceAll(RegExp(r'[^a-z0-9]'), '_');
+  }
+
   /// Clear specific cache
   Future<void> clear(String key) async {
     try {
@@ -110,36 +218,5 @@ class CacheManager {
     } catch (e) {
       print('⚠️ Cache clear all error: $e');
     }
-  }
-
-  /// Serialize data for caching
-  dynamic _serializeData<T>(T data) {
-    if (data is List<Artist>) {
-      return data.map((artist) => artist.toJson()).toList();
-    } else if (data is ArtistDetails) {
-      return data.toJson();
-    } else if (data is List<Song>) {
-      return data.map((song) => song.toJson()).toList();
-    } else if (data is List<Album>) {
-      return data.map((album) => album.toJson()).toList();
-    }
-    return data;
-  }
-
-  /// Deserialize data from cache
-  T? _deserializeData<T>(dynamic data) {
-    if (T == List<Artist>) {
-      final list = (data as List).map((item) => Artist.fromJson(item)).toList();
-      return list as T;
-    } else if (T == ArtistDetails) {
-      return ArtistDetails.fromJson(data) as T;
-    } else if (T == List<Song>) {
-      final list = (data as List).map((item) => Song.fromJson(item)).toList();
-      return list as T;
-    } else if (T == List<Album>) {
-      final list = (data as List).map((item) => Album.fromJson(item)).toList();
-      return list as T;
-    }
-    return data as T?;
   }
 }

@@ -9,7 +9,7 @@ class AiModels {
   static const String orchestrator = 'anthropic/claude-sonnet-4';
 
   // Primary Worker: Infers taste, generates playlists
-  static const String primaryWorker = 'zai/glm-4.5-air';
+  static const String primaryWorker = 'mistralai/mistral-7b-instruct';
 
   // Inspector: Validates worker output, has veto authority
   static const String inspector = 'google/gemma-2-9b-it';
@@ -26,15 +26,13 @@ You do not explain.
 You do not justify.
 
 You receive:
-- Verified listening history (minimum 35 unique songs)
-- A rolling 7-day taste buffer
+- Verified listening history (already validated by orchestrator)
+- A rolling taste buffer from recent listening
 - A list of previously recommended songs with timestamps
 
 Rules:
-- Output NOTHING if listening history < 35 songs
-- Output NOTHING if listening span < 7 days
-- Recommend EXACTLY 35 songs
-- Never repeat a song more than once within 7 days
+- Recommend EXACTLY 8 songs
+- Never repeat a song recommended within the last 7 days
 - Prefer album tracks, deep cuts, and culturally respected music
 - Avoid viral, chart-driven, or generic algorithmic picks
 - Stay within demonstrated genre, era, mood, and energy
@@ -60,8 +58,8 @@ You receive:
 - Playlist history for the last 14 days
 
 You must verify ALL:
-1. Exactly 35 songs exist
-2. Repetition rules are respected
+1. Exactly 8 songs exist
+2. No songs repeated from the last 7 days of recommendations
 3. Playlist aligns with demonstrated taste
 4. No unexplained genre or era deviation
 5. No fabricated or hallucinated artists
@@ -102,17 +100,15 @@ class GatingRules {
 
 class ApiConfig {
   /// OpenRouter API endpoint
-  static final String baseUrl =
+  static String get baseUrl =>
       dotenv.env['OPENROUTER_BASE_URL'] ?? 'https://openrouter.ai/api/v1';
 
-  /// API Key (REQUIRED)
-  static final String apiKeyEnvVar =
-      dotenv.env['OPENROUTER_API_KEY'] ??
-      (throw StateError('OPENROUTER_API_KEY not found in .env'));
+  /// API Key environment variable name (just the key name, not the value)
+  static const String apiKeyEnvVar = 'OPENROUTER_API_KEY';
 
   /// Request timeout (seconds)
-  static final int timeoutSeconds =
-      int.tryParse(dotenv.env['OPENROUTER_TIMEOUT_SECONDS'] ?? '') ?? 10;
+  static int get timeoutSeconds =>
+      int.tryParse(dotenv.env['OPENROUTER_TIMEOUT_SECONDS'] ?? '') ?? 60;
 
   /// Max retries (HARD LOCKED — DO NOT CHANGE)
   static const int maxRetries = 0;

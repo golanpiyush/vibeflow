@@ -455,7 +455,22 @@ class DownloadService {
     // Download chunks in parallel
     for (int i = 0; i < 4; i++) {
       final start = i * chunkSize;
-      final end = (i == 3) ? totalSize - 1 : (start + chunkSize - 1);
+      // FIX: Ensure end doesn't exceed totalSize - 1 and start is valid
+      if (start >= totalSize) {
+        debugPrint(
+          '⚠️ Skipping chunk $i: start ($start) >= totalSize ($totalSize)',
+        );
+        completedChunks++;
+        if (completedChunks == 4) {
+          completer.complete();
+        }
+        continue;
+      }
+
+      // Calculate end position safely
+      final end = (i == 3)
+          ? totalSize - 1
+          : (start + chunkSize - 1).clamp(start, totalSize - 1);
 
       _downloadChunk(
         url: url,
@@ -511,17 +526,21 @@ class DownloadService {
 
     final file = File(savePath);
     final raf = await file.open(mode: FileMode.writeOnly);
-    await raf.setPosition(start);
 
-    int received = 0;
-    await for (final chunk in response.data!.stream) {
-      if (cancelToken.isCancelled) break;
-      await raf.writeFrom(chunk);
-      received += chunk.length;
-      onProgress(received);
+    try {
+      await raf.setPosition(start);
+
+      int received = 0;
+      await for (final chunk in response.data!.stream) {
+        if (cancelToken.isCancelled) break;
+        await raf.writeFrom(chunk);
+        received += chunk.length;
+        onProgress(received);
+      }
+    } finally {
+      await raf.close();
     }
 
-    await raf.close();
     onComplete();
   }
 

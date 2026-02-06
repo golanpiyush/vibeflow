@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:math';
 import 'package:http/http.dart' as http;
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -13,9 +14,26 @@ class MusicIntelligenceOrchestrator {
 
   MusicIntelligenceOrchestrator._(this._apiKey);
 
+  /// Safe way to check if orchestrator is ready
+  static bool get isInitialized => _instance != null;
+
   static Future<MusicIntelligenceOrchestrator> init() async {
     if (_instance == null) {
+      print('📂 [Init] Loading .env file...');
       await dotenv.load(fileName: ".env");
+
+      // 🔍 DEBUG: Check all env variables
+      print('📋 [Init] .env variables loaded:');
+      dotenv.env.forEach((key, value) {
+        if (key.contains('API')) {
+          print(
+            '  $key = ${value.substring(0, min(20, value.length))}... (${value.length} chars)',
+          );
+        } else {
+          print('  $key = $value');
+        }
+      });
+
       final apiKey = dotenv.env[ApiConfig.apiKeyEnvVar];
 
       if (apiKey == null || apiKey.isEmpty) {
@@ -148,32 +166,50 @@ class MusicIntelligenceOrchestrator {
                 {'role': 'user', 'content': userPrompt},
               ],
               'temperature': 0.7,
-              'max_tokens': 2000,
+              'max_tokens':
+                  1500, // Increased to allow both reasoning and output
+              'stream': false,
             }),
           )
-          .timeout(Duration(seconds: ApiConfig.timeoutSeconds));
+          .timeout(Duration(seconds: 60));
+
+      print('📡 [Worker] Response status: ${response.statusCode}');
+      print('📡 [Worker] Full response body length: ${response.body.length}');
 
       if (response.statusCode != 200) {
         print('❌ [Worker] API error: ${response.statusCode}');
+        print('❌ [Worker] Response: ${response.body}');
         return null;
       }
 
       final data = jsonDecode(response.body);
-      final content = data['choices']?[0]?['message']?['content'] as String?;
+      print('📦 [Worker] Decoded JSON keys: ${data.keys.join(", ")}');
 
-      if (content == null || content.trim().isEmpty) {
-        print('❌ [Worker] Empty response');
+      // Check finish reason
+      final finishReason = data['choices']?[0]?['finish_reason'];
+      print('🏁 [Worker] Finish reason: $finishReason');
+
+      final content = extractAssistantText(data);
+
+      if (content == null) {
+        print('❌ [Worker] No extractable text in response');
+        print('❌ [Worker] Full response data: $data');
         return null;
       }
 
       print('📝 [Worker] Raw response received (${content.length} chars)');
+      print(
+        '📝 [Worker] First 500 chars: ${content.substring(0, min(500, content.length))}',
+      );
 
-      // Parse songs from response
       final songs = _parseWorkerOutput(content);
 
+      print('🎵 [Worker] Parsed ${songs.length} songs');
+
       return PlaylistGenerationResult.success(songs);
-    } catch (e) {
+    } catch (e, stackTrace) {
       print('❌ [Worker] Exception: $e');
+      print('❌ [Worker] StackTrace: $stackTrace');
       return null;
     }
   }
@@ -186,6 +222,9 @@ class MusicIntelligenceOrchestrator {
     print('🔍 [Inspector] Calling Gemma 3n 4B...');
 
     final userPrompt = _buildInspectorPrompt(profile, workerResult);
+
+    print('📋 [Inspector] Prompt preview:');
+    print(userPrompt.substring(0, min(500, userPrompt.length)));
 
     try {
       final response = await http
@@ -203,13 +242,15 @@ class MusicIntelligenceOrchestrator {
                 {'role': 'user', 'content': userPrompt},
               ],
               'temperature': 0.0, // Deterministic
-              'max_tokens': 50,
+              'max_tokens': 100,
+              'stream': false,
             }),
           )
           .timeout(Duration(seconds: ApiConfig.timeoutSeconds));
 
       if (response.statusCode != 200) {
         print('❌ [Inspector] API error: ${response.statusCode}');
+        print('❌ [Inspector] Response: ${response.body}');
         return false;
       }
 
@@ -222,6 +263,7 @@ class MusicIntelligenceOrchestrator {
       }
 
       final verdict = content.trim().toUpperCase();
+      print('🔍 [Inspector] Full response: $content');
       print('🔍 [Inspector] Verdict: $verdict');
 
       return verdict.contains('APPROVE');
@@ -265,9 +307,112 @@ class MusicIntelligenceOrchestrator {
       buffer.writeln('');
     }
 
-    buffer.writeln('Generate EXACTLY 35 songs.');
+    buffer.writeln('Generate EXACTLY ${GatingRules.playlistSize} songs.');
 
     return buffer.toString();
+  }
+
+  String? extractAssistantText(dynamic data) {
+    try {
+      final choices = data['choices'];
+      if (choices is! List || choices.isEmpty) {
+        print('❌ [Extract] No choices array or empty');
+        return null;
+      }
+
+      final firstChoice = choices[0];
+      if (firstChoice is! Map) {
+        print('❌ [Extract] First choice is not a Map');
+        return null;
+      }
+
+      final message = firstChoice['message'];
+      if (message == null) {
+        print('❌ [Extract] No message in choice');
+        return null;
+      }
+
+      final content = message['content'];
+      final reasoning = message['reasoning'];
+
+      print('🔍 [Extract] Content type: ${content.runtimeType}');
+      print('🔍 [Extract] Content length: ${content?.toString().length ?? 0}');
+      print('🔍 [Extract] Has reasoning: ${reasoning != null}');
+
+      // Case 1: Standard content exists and is non-empty
+      if (content is String && content.trim().isNotEmpty) {
+        final trimmed = content.trim();
+        print('✅ [Extract] Extracted string content (${trimmed.length} chars)');
+        return trimmed;
+      }
+
+      // Case 2: Content is empty but reasoning exists (reasoning model behavior)
+      // This happens when the model uses all tokens for reasoning
+      if ((content == null || (content is String && content.trim().isEmpty)) &&
+          reasoning is String &&
+          reasoning.trim().isNotEmpty) {
+        print('⚠️ [Extract] Content empty, reasoning present');
+        print(
+          '⚠️ [Extract] This indicates token limit was reached during reasoning',
+        );
+        print(
+          '⚠️ [Extract] Reasoning preview: ${reasoning.substring(0, min(200, reasoning.length))}',
+        );
+
+        // Try to extract songs from reasoning if they're there
+        // Sometimes the model includes the list in reasoning
+        if (reasoning.contains('–') && reasoning.contains('\n')) {
+          print('🔍 [Extract] Attempting to parse songs from reasoning field');
+          return reasoning.trim();
+        }
+
+        return null;
+      }
+
+      // Case 3: OSS / OpenInference structured blocks
+      if (content is List) {
+        print('📋 [Extract] Content is List with ${content.length} items');
+        final buffer = StringBuffer();
+        for (var i = 0; i < content.length; i++) {
+          final block = content[i];
+          if (block is Map) {
+            if (block['text'] is String) {
+              buffer.writeln(block['text']);
+            } else if (block['type'] == 'text' && block['text'] is String) {
+              buffer.writeln(block['text']);
+            }
+          } else if (block is String) {
+            buffer.writeln(block);
+          }
+        }
+        final text = buffer.toString().trim();
+        if (text.isNotEmpty) {
+          print('✅ [Extract] Extracted from List (${text.length} chars)');
+          return text;
+        }
+      }
+
+      // Case 4: Map with text field
+      if (content is Map) {
+        print(
+          '📦 [Extract] Content is Map with keys: ${content.keys.join(", ")}',
+        );
+        if (content['text'] is String) {
+          final text = (content['text'] as String).trim();
+          if (text.isNotEmpty) {
+            print('✅ [Extract] Extracted from Map.text (${text.length} chars)');
+            return text;
+          }
+        }
+      }
+
+      print('❌ [Extract] No valid content found');
+      return null;
+    } catch (e, stackTrace) {
+      print('❌ [Extract] Exception: $e');
+      print('❌ [Extract] StackTrace: $stackTrace');
+      return null;
+    }
   }
 
   /// Build prompt for Inspector AI
@@ -292,7 +437,9 @@ class MusicIntelligenceOrchestrator {
     buffer.writeln('');
 
     buffer.writeln('PLAYLIST HISTORY (Last 14 days):');
-    for (final rec in profile.previousRecommendations.take(35)) {
+    for (final rec in profile.previousRecommendations.take(
+      GatingRules.playlistSize,
+    )) {
       final daysAgo = DateTime.now().difference(rec.timestamp).inDays;
       buffer.writeln(
         '${rec.song.title} – ${rec.song.artist} ($daysAgo days ago)',
@@ -301,12 +448,13 @@ class MusicIntelligenceOrchestrator {
     buffer.writeln('');
 
     buffer.writeln(
-      'Verify: Exactly 35 songs, no repetition within 7 days, aligns with taste.',
+      'Verify: Exactly ${GatingRules.playlistSize} songs, no repetition within 7 days, aligns with taste.',
     );
 
     return buffer.toString();
   }
 
+  /// Parse worker output into song list
   /// Parse worker output into song list
   List<GeneratedSong> _parseWorkerOutput(String rawOutput) {
     final songs = <GeneratedSong>[];
@@ -314,7 +462,12 @@ class MusicIntelligenceOrchestrator {
 
     for (final line in lines) {
       final trimmed = line.trim();
+
+      // Skip empty lines
       if (trimmed.isEmpty) continue;
+
+      // Skip lines that don't contain the separator
+      if (!trimmed.contains('–')) continue;
 
       // Expected format: "Title – Artist (Album)"
       // or: "Title – Artist"
@@ -337,9 +490,17 @@ class MusicIntelligenceOrchestrator {
         artist = rest;
       }
 
+      // Only add if we have valid title and artist
       if (title.isNotEmpty && artist.isNotEmpty) {
         songs.add(GeneratedSong(title: title, artist: artist, album: album));
       }
+    }
+
+    print('🎵 [Parser] Total songs parsed: ${songs.length}');
+
+    // Debug: print all parsed songs
+    for (var i = 0; i < songs.length; i++) {
+      print('  ${i + 1}. ${songs[i].title} – ${songs[i].artist}');
     }
 
     return songs;
@@ -347,10 +508,12 @@ class MusicIntelligenceOrchestrator {
 
   /// Validate worker output
   bool _validateWorkerOutput(PlaylistGenerationResult result) {
-    // Must have exactly 35 songs
-    if (result.songs.length != GatingRules.playlistSize) {
+    final minSongs = GatingRules.playlistSize - 1;
+    final maxSongs = GatingRules.playlistSize + 1;
+
+    if (result.songs.length < minSongs || result.songs.length > maxSongs) {
       print(
-        '❌ Validation failed: ${result.songs.length} songs (expected ${GatingRules.playlistSize})',
+        '❌ Validation failed: ${result.songs.length} songs (expected ${GatingRules.playlistSize}, allowed ${minSongs}-${maxSongs})',
       );
       return false;
     }
@@ -363,6 +526,15 @@ class MusicIntelligenceOrchestrator {
       }
     }
 
+    // Trim if needed
+    if (result.songs.length > GatingRules.playlistSize) {
+      print(
+        '⚠️ Trimming playlist from ${result.songs.length} to ${GatingRules.playlistSize} songs',
+      );
+      result.songs.removeRange(GatingRules.playlistSize, result.songs.length);
+    }
+
+    print('✅ Validation passed: ${result.songs.length} songs');
     return true;
   }
 

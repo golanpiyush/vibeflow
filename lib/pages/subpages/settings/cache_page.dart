@@ -124,9 +124,13 @@ class _CachePageState extends ConsumerState<CachePage> {
       final cacheManager = CacheManager.instance;
       final artistsScraper = YTMusicArtistsScraper();
 
+      // Clear all types of caches
       await audioCache.clearAll();
       await cacheManager.clearAll();
       artistsScraper.clearCaches();
+
+      // If you added the clearCommunityPlaylists method:
+      await cacheManager.clearCommunityPlaylists();
 
       // Refresh stats
       ref.invalidate(cacheStatsProvider);

@@ -45,6 +45,11 @@ class _EnhancedRadioSheetState extends State<EnhancedRadioSheet>
     _tabController = TabController(length: 2, vsync: this);
     _loadRadio();
     _loadQueue();
+
+    // ✅ ADD: Listen to tab changes to rebuild edit button
+    _tabController.addListener(() {
+      if (mounted) setState(() {});
+    });
   }
 
   Future<void> _loadRadio() async {
@@ -368,26 +373,47 @@ class _EnhancedRadioSheetState extends State<EnhancedRadioSheet>
       );
     }
 
-    return StreamBuilder<Map<String, dynamic>>(
-      stream: handler.customState.stream.cast<Map<String, dynamic>>(),
+    // ✅ FIX: Use StreamBuilder to rebuild when radio queue updates
+    return StreamBuilder<dynamic>(
+      stream: handler.customState.stream,
       builder: (context, snapshot) {
-        final customState = snapshot.data ?? {};
+        print('🎨 [RadioSheet] StreamBuilder rebuild:');
+        print('   Has data: ${snapshot.hasData}');
+        print('   Connection: ${snapshot.connectionState}');
+
+        // ✅ FIX: Safely extract radio queue data
+        final customState = snapshot.data as Map<String, dynamic>? ?? {};
         final radioQueueData =
             customState['radio_queue'] as List<dynamic>? ?? [];
 
+        print('   Radio queue length: ${radioQueueData.length}');
+        print('   Custom state keys: ${customState.keys.toList()}');
+
+        // ✅ IMPROVED: Better loading state with spinner
         if (radioQueueData.isEmpty) {
           return Center(
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
+                const SizedBox(
+                  width: 40,
+                  height: 40,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 3,
+                    valueColor: AlwaysStoppedAnimation<Color>(
+                      AppColors.iconActive,
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 24),
                 Icon(
                   Icons.radio,
-                  size: 64,
+                  size: 48,
                   color: Colors.white.withOpacity(0.3),
                 ),
                 const SizedBox(height: 16),
                 Text(
-                  'Radio queue is loading...',
+                  'Loading radio queue...',
                   style: TextStyle(
                     color: Colors.white.withOpacity(0.6),
                     fontSize: 18,
@@ -396,7 +422,7 @@ class _EnhancedRadioSheetState extends State<EnhancedRadioSheet>
                 ),
                 const SizedBox(height: 8),
                 Text(
-                  'Similar songs will appear here',
+                  'Finding similar songs for you',
                   style: TextStyle(
                     color: Colors.white.withOpacity(0.4),
                     fontSize: 14,
@@ -407,7 +433,7 @@ class _EnhancedRadioSheetState extends State<EnhancedRadioSheet>
           );
         }
 
-        // Convert radio queue data to QuickPick objects
+        // ✅ Convert radio queue data to QuickPick objects
         final songs = radioQueueData.map((songData) {
           final data = songData as Map<String, dynamic>;
           final durationMs = data['duration'] as int?;
@@ -422,6 +448,8 @@ class _EnhancedRadioSheetState extends State<EnhancedRadioSheet>
                 : null,
           );
         }).toList();
+
+        print('✅ [RadioSheet] Displaying ${songs.length} radio songs');
 
         return Column(
           children: [

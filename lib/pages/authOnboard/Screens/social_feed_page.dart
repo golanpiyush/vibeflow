@@ -440,26 +440,46 @@ class _SocialScreenState extends ConsumerState<SocialScreen> {
           const Spacer(),
 
           // Refresh button (only show on Friends tab)
+          // In _buildTopBar, add a cleanup action:
           if (selectedIndex == 0)
             IconButton(
-              onPressed: () {
-                ref.invalidate(followingActivitiesProvider);
-                ref.invalidate(currentUserLatestActivityProvider);
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(
-                    content: Text(
-                      'Refreshing feed...',
-                      style: AppTypography.caption(
-                        context,
-                      ).copyWith(color: Colors.white),
+              onPressed: () async {
+                // Cleanup stale activities
+                try {
+                  final supabase = Supabase.instance.client;
+                  final cutoffTime = DateTime.now().toUtc().subtract(
+                    const Duration(minutes: 5),
+                  );
+
+                  await supabase
+                      .from('listening_activity')
+                      .update({
+                        'is_currently_playing': false,
+                        'current_position_ms': 0,
+                      })
+                      .eq('is_currently_playing', true)
+                      .lt('played_at', cutoffTime.toIso8601String());
+
+                  // Refresh
+                  ref.invalidate(followingActivitiesProvider);
+                  ref.invalidate(currentUserLatestActivityProvider);
+
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text('Cleaned up stale activities'),
+                      duration: const Duration(seconds: 2),
                     ),
-                    duration: const Duration(seconds: 1),
-                    backgroundColor: iconActiveColor.withOpacity(0.8),
-                  ),
-                );
+                  );
+                } catch (e) {
+                  print('Error cleaning activities: $e');
+                }
               },
-              icon: Icon(Icons.refresh, color: iconActiveColor, size: 24),
-              tooltip: 'Refresh',
+              icon: Icon(
+                Icons.cleaning_services,
+                color: iconActiveColor,
+                size: 24,
+              ),
+              tooltip: 'Cleanup',
             ),
 
           const SizedBox(width: 8),
@@ -1056,6 +1076,7 @@ class _ActivityCardState extends State<_ActivityCard> {
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
       decoration: BoxDecoration(
         color: widget.isCurrentUser
+            // ignore: deprecated_member_use
             ? iconActiveColor.withOpacity(0.1)
             : cardBackgroundColor,
         borderRadius: BorderRadius.circular(16),
@@ -1093,7 +1114,7 @@ class _ActivityCardState extends State<_ActivityCard> {
                         errorBuilder: (_, __, ___) => Container(
                           width: 36,
                           height: 36,
-                          color: cardBackgroundColor,
+                          color: Colors.black,
                           child: Icon(
                             Icons.person,
                             color: textSecondaryColor,
@@ -1104,7 +1125,7 @@ class _ActivityCardState extends State<_ActivityCard> {
                     : Container(
                         width: 36,
                         height: 36,
-                        color: cardBackgroundColor,
+                        color: Colors.black,
                         child: Icon(
                           Icons.person,
                           color: textSecondaryColor,
@@ -1173,7 +1194,7 @@ class _ActivityCardState extends State<_ActivityCard> {
                 : Container(
                     width: 54,
                     height: 54,
-                    color: cardBackgroundColor,
+                    color: Colors.black,
                     child: Icon(
                       Icons.music_note,
                       color: textSecondaryColor,

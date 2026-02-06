@@ -1,16 +1,19 @@
 // lib/pages/audio_equalizer_page.dart
+import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:vibeflow/utils/audio_session_bridge.dart';
+import 'package:vibeflow/utils/theme_provider.dart';
 
-class AudioEqualizerPage extends StatefulWidget {
+class AudioEqualizerPage extends ConsumerStatefulWidget {
   const AudioEqualizerPage({Key? key}) : super(key: key);
 
   @override
-  State<AudioEqualizerPage> createState() => _AudioEqualizerPageState();
+  ConsumerState<AudioEqualizerPage> createState() => _AudioEqualizerPageState();
 }
 
-class _AudioEqualizerPageState extends State<AudioEqualizerPage> {
+class _AudioEqualizerPageState extends ConsumerState<AudioEqualizerPage> {
   static const MethodChannel _channel = MethodChannel('audio_effects');
 
   // Audio effects values
@@ -43,16 +46,13 @@ class _AudioEqualizerPageState extends State<AudioEqualizerPage> {
     _initializeAudioEffects();
   }
 
-  // Replace _initializeAudioEffects with this improved version:
   Future<void> _initializeAudioEffects() async {
     try {
       print('🎛️ [EQ] Starting initialization...');
 
-      // Get audio session ID
       final sessionId = await AudioSessionBridge.getAudioSessionId();
       print('🎛️ [EQ] Got session ID: $sessionId');
 
-      // Initialize effects
       final initialized = await _channel.invokeMethod<bool>(
         'initializeEffects',
         {'sessionId': sessionId ?? 0},
@@ -61,7 +61,6 @@ class _AudioEqualizerPageState extends State<AudioEqualizerPage> {
       print('🎛️ [EQ] Initialize result: $initialized');
 
       if (initialized == true) {
-        // Load current settings (which includes saved settings from SharedPreferences)
         await _loadCurrentSettings();
 
         if (mounted) {
@@ -83,7 +82,6 @@ class _AudioEqualizerPageState extends State<AudioEqualizerPage> {
     }
   }
 
-  // Update _loadCurrentSettings to handle null values:
   Future<void> _loadCurrentSettings() async {
     try {
       final settings = await _channel.invokeMethod<Map>('getCurrentSettings');
@@ -95,10 +93,8 @@ class _AudioEqualizerPageState extends State<AudioEqualizerPage> {
           _audioBalance = (settings['audioBalance'] ?? 0.5).toDouble();
           _eqBandCount = settings['equalizerBandCount'] ?? 5;
 
-          // Load EQ bands
           if (_eqBandCount > 0) {
             _eqBands = List.generate(_eqBandCount, (i) => 0.0);
-            // Try to load individual band values if available
             for (int i = 0; i < _eqBandCount; i++) {
               if (settings.containsKey('eq_band_$i')) {
                 _eqBands[i] = (settings['eq_band_$i'] ?? 0).toDouble();
@@ -257,22 +253,39 @@ class _AudioEqualizerPageState extends State<AudioEqualizerPage> {
 
   @override
   Widget build(BuildContext context) {
+    final themeState = ref.watch(themeProvider);
     final isDark = Theme.of(context).brightness == Brightness.dark;
+    final bgColor = Theme.of(context).scaffoldBackgroundColor;
+    final surfaceColor = Theme.of(context).colorScheme.surface;
+    final textColor = Theme.of(context).colorScheme.onSurface;
 
     if (!_isInitialized) {
       return Scaffold(
-        appBar: AppBar(title: const Text('Audio Equalizer'), centerTitle: true),
-        body: const Center(child: CircularProgressIndicator()),
+        backgroundColor: bgColor,
+        appBar: AppBar(
+          title: Text('Audio Equalizer', style: TextStyle(color: textColor)),
+          centerTitle: true,
+          backgroundColor: bgColor,
+          iconTheme: IconThemeData(color: textColor),
+        ),
+        body: Center(
+          child: CircularProgressIndicator(
+            color: Theme.of(context).colorScheme.primary,
+          ),
+        ),
       );
     }
 
     return Scaffold(
+      backgroundColor: bgColor,
       appBar: AppBar(
-        title: const Text('Audio Equalizer'),
+        title: Text('Audio Equalizer', style: TextStyle(color: textColor)),
         centerTitle: true,
+        backgroundColor: bgColor,
+        iconTheme: IconThemeData(color: textColor),
         actions: [
           IconButton(
-            icon: const Icon(Icons.refresh_rounded),
+            icon: Icon(Icons.refresh_rounded, color: textColor),
             onPressed: _resetAllEffects,
             tooltip: 'Reset All',
           ),
@@ -282,26 +295,19 @@ class _AudioEqualizerPageState extends State<AudioEqualizerPage> {
         padding: const EdgeInsets.all(16),
         children: [
           // Presets
-          _buildPresetsSection(),
+          _buildPresetsSection(surfaceColor, textColor),
+
+          const SizedBox(height: 24),
+
+          // Bass and Reverb Knobs
+          _buildKnobsSection(surfaceColor, textColor),
 
           const SizedBox(height: 24),
 
           // Equalizer Bands
-          _buildEqualizerSection(),
+          _buildEqualizerSection(surfaceColor, textColor),
 
           const SizedBox(height: 24),
-
-          // Bass Boost
-          _buildEffectCard(
-            title: 'Bass Boost',
-            icon: Icons.graphic_eq_rounded,
-            value: _bassBoost,
-            max: 1000,
-            onChanged: _setBassBoost,
-            color: Colors.deepPurple,
-          ),
-
-          const SizedBox(height: 16),
 
           // Loudness Enhancer
           _buildEffectCard(
@@ -311,24 +317,14 @@ class _AudioEqualizerPageState extends State<AudioEqualizerPage> {
             max: 1000,
             onChanged: _setLoudnessEnhancer,
             color: Colors.orange,
-          ),
-
-          const SizedBox(height: 16),
-
-          // Reverb
-          _buildEffectCard(
-            title: 'Reverb',
-            icon: Icons.surround_sound_rounded,
-            value: _reverbLevel,
-            max: 100,
-            onChanged: _setReverbLevel,
-            color: Colors.teal,
+            surfaceColor: surfaceColor,
+            textColor: textColor,
           ),
 
           const SizedBox(height: 16),
 
           // Audio Balance
-          _buildBalanceCard(),
+          _buildBalanceCard(surfaceColor, textColor),
 
           const SizedBox(height: 32),
         ],
@@ -336,7 +332,7 @@ class _AudioEqualizerPageState extends State<AudioEqualizerPage> {
     );
   }
 
-  Widget _buildPresetsSection() {
+  Widget _buildPresetsSection(Color surfaceColor, Color textColor) {
     return Container(
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
@@ -420,17 +416,133 @@ class _AudioEqualizerPageState extends State<AudioEqualizerPage> {
     );
   }
 
-  Widget _buildEqualizerSection() {
+  Widget _buildKnobsSection(Color surfaceColor, Color textColor) {
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: surfaceColor,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: textColor.withOpacity(0.1)),
+      ),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+        children: [
+          Expanded(
+            child: _buildKnob(
+              title: 'Bass',
+              value: _bassBoost,
+              max: 1000,
+              onChanged: _setBassBoost,
+              color: Colors.deepPurple,
+              icon: Icons.graphic_eq_rounded,
+              textColor: textColor,
+            ),
+          ),
+          const SizedBox(width: 20),
+          Expanded(
+            child: _buildKnob(
+              title: 'Reverb',
+              value: _reverbLevel,
+              max: 100,
+              onChanged: _setReverbLevel,
+              color: Colors.teal,
+              icon: Icons.surround_sound_rounded,
+              textColor: textColor,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildKnob({
+    required String title,
+    required double value,
+    required double max,
+    required ValueChanged<double> onChanged,
+    required Color color,
+    required IconData icon,
+    required Color textColor,
+  }) {
+    final percentage = (value / max * 100).toInt();
+
+    return Column(
+      children: [
+        Text(
+          title,
+          style: TextStyle(
+            fontSize: 16,
+            fontWeight: FontWeight.bold,
+            color: textColor,
+          ),
+        ),
+        const SizedBox(height: 16),
+        GestureDetector(
+          onPanUpdate: (details) {
+            final RenderBox box = context.findRenderObject() as RenderBox;
+            final center = Offset(box.size.width / 2, box.size.height / 2);
+            final angle = math.atan2(
+              details.localPosition.dy - center.dy,
+              details.localPosition.dx - center.dx,
+            );
+
+            // Convert angle to value (0 to max)
+            var normalizedAngle = (angle + math.pi / 2) % (2 * math.pi);
+            if (normalizedAngle < 0) normalizedAngle += 2 * math.pi;
+
+            // Map to 0-1 range (270 degrees of rotation)
+            final range = (3 * math.pi / 2); // 270 degrees
+            final offset = math.pi / 8; // 22.5 degrees offset
+
+            var adjustedAngle = normalizedAngle - offset;
+            if (adjustedAngle < 0) adjustedAngle += 2 * math.pi;
+
+            final normalized = (adjustedAngle / range).clamp(0.0, 1.0);
+            onChanged(normalized * max);
+          },
+          child: SizedBox(
+            width: 140,
+            height: 140,
+            child: CustomPaint(
+              painter: KnobPainter(
+                value: value,
+                max: max,
+                color: color,
+                textColor: textColor,
+              ),
+              child: Center(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(icon, color: color, size: 32),
+                    const SizedBox(height: 8),
+                    Text(
+                      '$percentage%',
+                      style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                        color: textColor,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildEqualizerSection(Color surfaceColor, Color textColor) {
     final bandLabels = ['60Hz', '230Hz', '910Hz', '3.6kHz', '14kHz'];
 
     return Container(
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
-        color: Theme.of(context).colorScheme.surface,
+        color: surfaceColor,
         borderRadius: BorderRadius.circular(20),
-        border: Border.all(
-          color: Theme.of(context).colorScheme.outline.withOpacity(0.2),
-        ),
+        border: Border.all(color: textColor.withOpacity(0.1)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -449,9 +561,13 @@ class _AudioEqualizerPageState extends State<AudioEqualizerPage> {
                 ),
               ),
               const SizedBox(width: 12),
-              const Text(
+              Text(
                 '5-Band Equalizer',
-                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                style: TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                  color: textColor,
+                ),
               ),
             ],
           ),
@@ -499,18 +615,14 @@ class _AudioEqualizerPageState extends State<AudioEqualizerPage> {
                           style: TextStyle(
                             fontSize: 11,
                             fontWeight: FontWeight.w600,
-                            color: Theme.of(
-                              context,
-                            ).colorScheme.onSurface.withOpacity(0.6),
+                            color: textColor.withOpacity(0.6),
                           ),
                         ),
                         Text(
                           '${(_eqBands[index] / 100).toStringAsFixed(1)}dB',
                           style: TextStyle(
                             fontSize: 10,
-                            color: Theme.of(
-                              context,
-                            ).colorScheme.onSurface.withOpacity(0.4),
+                            color: textColor.withOpacity(0.4),
                           ),
                         ),
                       ],
@@ -532,15 +644,15 @@ class _AudioEqualizerPageState extends State<AudioEqualizerPage> {
     required double max,
     required ValueChanged<double> onChanged,
     required Color color,
+    required Color surfaceColor,
+    required Color textColor,
   }) {
     return Container(
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
-        color: Theme.of(context).colorScheme.surface,
+        color: surfaceColor,
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(
-          color: Theme.of(context).colorScheme.outline.withOpacity(0.2),
-        ),
+        border: Border.all(color: textColor.withOpacity(0.1)),
       ),
       child: Column(
         children: [
@@ -557,9 +669,10 @@ class _AudioEqualizerPageState extends State<AudioEqualizerPage> {
               const SizedBox(width: 12),
               Text(
                 title,
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: 16,
                   fontWeight: FontWeight.bold,
+                  color: textColor,
                 ),
               ),
               const Spacer(),
@@ -588,15 +701,13 @@ class _AudioEqualizerPageState extends State<AudioEqualizerPage> {
     );
   }
 
-  Widget _buildBalanceCard() {
+  Widget _buildBalanceCard(Color surfaceColor, Color textColor) {
     return Container(
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
-        color: Theme.of(context).colorScheme.surface,
+        color: surfaceColor,
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(
-          color: Theme.of(context).colorScheme.outline.withOpacity(0.2),
-        ),
+        border: Border.all(color: textColor.withOpacity(0.1)),
       ),
       child: Column(
         children: [
@@ -611,9 +722,13 @@ class _AudioEqualizerPageState extends State<AudioEqualizerPage> {
                 child: const Icon(Icons.balance_rounded, color: Colors.indigo),
               ),
               const SizedBox(width: 12),
-              const Text(
+              Text(
                 'Audio Balance',
-                style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                style: TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.bold,
+                  color: textColor,
+                ),
               ),
               const Spacer(),
               Text(
@@ -635,7 +750,10 @@ class _AudioEqualizerPageState extends State<AudioEqualizerPage> {
             children: [
               const Icon(Icons.volume_up, size: 20, color: Colors.indigo),
               const SizedBox(width: 8),
-              const Text('L', style: TextStyle(fontWeight: FontWeight.bold)),
+              Text(
+                'L',
+                style: TextStyle(fontWeight: FontWeight.bold, color: textColor),
+              ),
               Expanded(
                 child: SliderTheme(
                   data: SliderThemeData(
@@ -652,7 +770,10 @@ class _AudioEqualizerPageState extends State<AudioEqualizerPage> {
                   ),
                 ),
               ),
-              const Text('R', style: TextStyle(fontWeight: FontWeight.bold)),
+              Text(
+                'R',
+                style: TextStyle(fontWeight: FontWeight.bold, color: textColor),
+              ),
               const SizedBox(width: 8),
               const Icon(Icons.volume_up, size: 20, color: Colors.indigo),
             ],
@@ -661,4 +782,93 @@ class _AudioEqualizerPageState extends State<AudioEqualizerPage> {
       ),
     );
   }
+}
+
+// Custom Painter for Knob
+class KnobPainter extends CustomPainter {
+  final double value;
+  final double max;
+  final Color color;
+  final Color textColor;
+
+  KnobPainter({
+    required this.value,
+    required this.max,
+    required this.color,
+    required this.textColor,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final center = Offset(size.width / 2, size.height / 2);
+    final radius = size.width / 2 - 10;
+
+    // Background circle
+    final bgPaint = Paint()
+      ..color = textColor.withOpacity(0.05)
+      ..style = PaintingStyle.fill;
+    canvas.drawCircle(center, radius, bgPaint);
+
+    // Track (full circle)
+    final trackPaint = Paint()
+      ..color = textColor.withOpacity(0.1)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 8
+      ..strokeCap = StrokeCap.round;
+
+    canvas.drawArc(
+      Rect.fromCircle(center: center, radius: radius),
+      -math.pi * 5 / 8, // Start at 225 degrees
+      math.pi * 3 / 2, // 270 degrees
+      false,
+      trackPaint,
+    );
+
+    // Active arc
+    final activePaint = Paint()
+      ..color = color
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 8
+      ..strokeCap = StrokeCap.round;
+
+    final sweepAngle = (value / max) * (math.pi * 3 / 2);
+    canvas.drawArc(
+      Rect.fromCircle(center: center, radius: radius),
+      -math.pi * 5 / 8,
+      sweepAngle,
+      false,
+      activePaint,
+    );
+
+    // Knob indicator (pointer)
+    final angle = -math.pi * 5 / 8 + sweepAngle;
+    final indicatorStart = Offset(
+      center.dx + (radius - 20) * math.cos(angle),
+      center.dy + (radius - 20) * math.sin(angle),
+    );
+    final indicatorEnd = Offset(
+      center.dx + radius * math.cos(angle),
+      center.dy + radius * math.sin(angle),
+    );
+
+    final indicatorPaint = Paint()
+      ..color = color
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 4
+      ..strokeCap = StrokeCap.round;
+
+    canvas.drawLine(indicatorStart, indicatorEnd, indicatorPaint);
+
+    // Center dot
+    final centerDotPaint = Paint()
+      ..color = color
+      ..style = PaintingStyle.fill;
+    canvas.drawCircle(center, 6, centerDotPaint);
+  }
+
+  @override
+  bool shouldRepaint(KnobPainter oldDelegate) =>
+      oldDelegate.value != value ||
+      oldDelegate.max != max ||
+      oldDelegate.color != color;
 }

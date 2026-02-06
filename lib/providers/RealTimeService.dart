@@ -92,7 +92,26 @@ class RealtimeListeningTracker {
     print('🎵 [REALTIME] ========== END START TRACKING ==========');
   }
 
-  // 🛑 STOP TRACKING CURRENT SONG
+  // ⏰ AUTO-CLEANUP: Mark old activities as stopped
+  Future<void> cleanupStaleActivities() async {
+    try {
+      final cutoffTime = DateTime.now().toUtc().subtract(
+        const Duration(minutes: 5),
+      );
+
+      await _supabase
+          .from('listening_activity')
+          .update({'is_currently_playing': false, 'current_position_ms': 0})
+          .eq('is_currently_playing', true)
+          .lt('played_at', cutoffTime.toIso8601String());
+
+      print('🧹 [CLEANUP] Cleaned up stale activities older than 5 minutes');
+    } catch (e) {
+      print('❌ [CLEANUP] Error cleaning stale activities: $e');
+    }
+  }
+
+  // Update stopTracking to be more aggressive:
   Future<void> stopTracking() async {
     print('🛑 [REALTIME] STOPPING TRACKING');
 
@@ -100,12 +119,23 @@ class RealtimeListeningTracker {
     _updateTimer?.cancel();
     _updateTimer = null;
 
-    // Mark activity as completed
-    if (_currentActivityId != null) {
-      await _markAsCompleted();
+    // Mark ALL user's activities as stopped (not just current one)
+    final user = _supabase.auth.currentUser;
+    if (user != null) {
+      try {
+        await _supabase
+            .from('listening_activity')
+            .update({
+              'is_currently_playing': false,
+              'played_at': DateTime.now().toUtc().toIso8601String(),
+            })
+            .eq('user_id', user.id)
+            .eq('is_currently_playing', true);
 
-      // 🔧 FIX 3: Add small delay after marking complete
-      await Future.delayed(const Duration(milliseconds: 100));
+        print('✅ [REALTIME] Marked all user activities as stopped');
+      } catch (e) {
+        print('❌ [REALTIME] Error stopping all activities: $e');
+      }
     }
 
     // Reset state

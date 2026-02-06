@@ -1,13 +1,14 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:vibeflow/api_base/scrapper.dart';
 import 'package:vibeflow/constants/app_colors.dart';
 import 'package:vibeflow/managers/download_maintener.dart';
 import 'package:vibeflow/managers/download_manager.dart';
 import 'package:vibeflow/models/quick_picks_model.dart';
 import 'package:vibeflow/pages/newPlayerPage.dart';
-import 'package:vibeflow/pages/player_page.dart';
 import 'package:vibeflow/services/audio_service.dart';
-import 'package:vibeflow/utils/page_transitions.dart';
+import 'package:vibeflow/services/bg_audio_handler.dart';
+import 'package:vibeflow/services/playback_governance.dart';
 import 'package:lottie/lottie.dart';
 
 class SavedSongsScreen extends StatefulWidget {
@@ -20,11 +21,15 @@ class SavedSongsScreen extends StatefulWidget {
 class _SavedSongsScreenState extends State<SavedSongsScreen> {
   final _audioService = AudioServices.instance;
   final _downloadService = DownloadService.instance;
+  final _scraper = YouTubeMusicScraper();
 
   List<DownloadedSong> _savedSongs = [];
   bool _isLoading = true;
   DownloadStats? _stats;
-  String _sortBy = 'date'; // 'date', 'title', 'artist', 'size'
+  String _sortBy = 'date';
+
+  // Cache for thumbnails (only for fallback when local thumbnail is missing)
+  final Map<String, String> _thumbnailCache = {};
 
   @override
   void initState() {
@@ -46,12 +51,65 @@ class _SavedSongsScreenState extends State<SavedSongsScreen> {
         });
 
         _applySorting();
+        // Only prefetch network thumbnails for songs without local thumbnails
+        _prefetchMissingThumbnails();
       }
     } catch (e) {
       debugPrint('Error loading saved songs: $e');
       if (mounted) {
         setState(() => _isLoading = false);
       }
+    }
+  }
+
+  /// Prefetch network thumbnails only for songs missing local thumbnails
+  Future<void> _prefetchMissingThumbnails() async {
+    for (final song in _savedSongs) {
+      // Skip if already cached
+      if (_thumbnailCache.containsKey(song.videoId)) continue;
+
+      // Skip if has local thumbnail
+      final localThumb = _getLocalThumbnailPath(song);
+      if (localThumb != null && File(localThumb).existsSync()) continue;
+
+      try {
+        final thumbnail = await _scraper.getThumbnailUrl(song.videoId);
+        _thumbnailCache[song.videoId] = thumbnail;
+      } catch (e) {
+        print('⚠️ Failed to fetch thumbnail for ${song.videoId}: $e');
+      }
+    }
+
+    if (mounted) setState(() {}); // Refresh UI with loaded thumbnails
+  }
+
+  /// Helper to get local thumbnail path from DownloadedSong
+  String? _getLocalThumbnailPath(DownloadedSong song) {
+    // Try to access thumbnailPath property - adjust based on your actual model
+    try {
+      return (song as dynamic).thumbnailPath as String?;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  /// Helper to get local audio file path from DownloadedSong
+  String? _getLocalAudioPath(DownloadedSong song) {
+    // Try to access filePath or audioPath property - adjust based on your actual model
+    try {
+      // Try common property names
+      if ((song as dynamic).filePath != null) {
+        return (song as dynamic).filePath as String?;
+      }
+      if ((song as dynamic).audioPath != null) {
+        return (song as dynamic).audioPath as String?;
+      }
+      if ((song as dynamic).path != null) {
+        return (song as dynamic).path as String?;
+      }
+      return null;
+    } catch (e) {
+      return null;
     }
   }
 
@@ -131,20 +189,129 @@ class _SavedSongsScreenState extends State<SavedSongsScreen> {
     }
   }
 
-  Future<void> _playSong(DownloadedSong downloadedSong) async {
-    // Convert DownloadedSong to QuickPick
-    final song = QuickPick(
-      videoId: downloadedSong.videoId,
-      title: downloadedSong.title,
-      artists: downloadedSong.artist,
-      thumbnail: downloadedSong.thumbnailPath ?? '',
-      duration: null,
-    );
+  Future<void> _playSong(DownloadedSong downloadedSong, int index) async {
+    try {
+      // Determine thumbnail to use
+      String thumbnail;
+      final localThumbPath = _getLocalThumbnailPath(downloadedSong);
 
-    await _audioService.playSong(song);
+      if (localThumbPath != null && File(localThumbPath).existsSync()) {
+        // Use local file path
+        thumbnail = localThumbPath;
+        print('🖼️ [SavedSongs] Using local thumbnail: $thumbnail');
+      } else {
+        // Fallback to network thumbnail
+        thumbnail = _thumbnailCache[downloadedSong.videoId] ?? '';
+        if (thumbnail.isEmpty) {
+          thumbnail = await _scraper.getThumbnailUrl(downloadedSong.videoId);
+          _thumbnailCache[downloadedSong.videoId] = thumbnail;
+        }
+        print('🌐 [SavedSongs] Using network thumbnail: $thumbnail');
+      }
 
-    if (mounted) {
-      NewPlayerPage.open(context, song);
+      // Convert DownloadedSong to QuickPick
+      final song = QuickPick(
+        videoId: downloadedSong.videoId,
+        title: downloadedSong.title,
+        artists: downloadedSong.artist,
+        thumbnail: thumbnail,
+        duration: null,
+      );
+
+      // Check if we have local audio file
+      final localAudioPath = _getLocalAudioPath(downloadedSong);
+      if (localAudioPath != null && File(localAudioPath).existsSync()) {
+        print('🎵 [SavedSongs] Local audio available: $localAudioPath');
+        // Store the local path in Song model's audioUrl field
+        final songModel = song.toSong();
+        songModel.audioUrl = localAudioPath;
+      } else {
+        print(
+          '⚠️ [SavedSongs] Local audio not found, will stream from network',
+        );
+      }
+
+      // Create queue from saved songs starting at selected index
+      final queue = <QuickPick>[];
+
+      // Add all songs from selected index to end
+      for (int i = index; i < _savedSongs.length; i++) {
+        final queueSong = _savedSongs[i];
+
+        // Determine thumbnail for queue item
+        String queueThumbnail;
+        final queueLocalThumb = _getLocalThumbnailPath(queueSong);
+
+        if (queueLocalThumb != null && File(queueLocalThumb).existsSync()) {
+          queueThumbnail = queueLocalThumb;
+        } else {
+          queueThumbnail = _thumbnailCache[queueSong.videoId] ?? '';
+          if (queueThumbnail.isEmpty) {
+            queueThumbnail = await _scraper.getThumbnailUrl(queueSong.videoId);
+            _thumbnailCache[queueSong.videoId] = queueThumbnail;
+          }
+        }
+
+        final queueItem = QuickPick(
+          videoId: queueSong.videoId,
+          title: queueSong.title,
+          artists: queueSong.artist,
+          thumbnail: queueThumbnail,
+          duration: null,
+        );
+
+        // Set local audio path if available
+        final queueLocalAudio = _getLocalAudioPath(queueSong);
+        if (queueLocalAudio != null && File(queueLocalAudio).existsSync()) {
+          final queueSongModel = queueItem.toSong();
+          queueSongModel.audioUrl = queueLocalAudio;
+        }
+
+        queue.add(queueItem);
+      }
+
+      // Get audio handler
+      final handler = getAudioHandler();
+      if (handler == null) {
+        throw Exception('Audio handler not available');
+      }
+
+      print('🎵 [SavedSongs] Playing queue of ${queue.length} songs');
+      print('📋 [SavedSongs] Starting from: ${song.title}');
+
+      // Count how many songs have local audio
+      int localCount = 0;
+      for (final q in queue) {
+        final qSong = q.toSong();
+        if (qSong.audioUrl != null && qSong.audioUrl!.isNotEmpty) {
+          localCount++;
+        }
+      }
+      print('💾 [SavedSongs] Local files: $localCount/${queue.length}');
+
+      // 🔥 CRITICAL: Play the queue as a playlist
+      // This will clear radio and set playlist mode
+      await handler.playPlaylistQueue(queue, startIndex: 0);
+
+      // After queue setup, open player
+      if (mounted) {
+        await NewPlayerPage.open(
+          context,
+          song,
+          heroTag: 'saved-${song.videoId}',
+        );
+      }
+    } catch (e) {
+      print('❌ [SavedSongs] Error playing song: $e');
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to play song: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
     }
   }
 
@@ -160,7 +327,7 @@ class _SavedSongsScreenState extends State<SavedSongsScreen> {
     final report = await DownloadMaintenanceService.runMaintenance();
 
     if (mounted) {
-      Navigator.pop(context); // Close loading dialog
+      Navigator.pop(context);
 
       showDialog(
         context: context,
@@ -359,7 +526,6 @@ class _SavedSongsScreenState extends State<SavedSongsScreen> {
             )
           : Column(
               children: [
-                // Stats Card
                 if (_stats != null)
                   Container(
                     margin: const EdgeInsets.all(16),
@@ -385,7 +551,6 @@ class _SavedSongsScreenState extends State<SavedSongsScreen> {
                     ),
                   ),
 
-                // Songs List
                 Expanded(
                   child: _savedSongs.isEmpty
                       ? Center(
@@ -430,6 +595,28 @@ class _SavedSongsScreenState extends State<SavedSongsScreen> {
                             itemBuilder: (context, index) {
                               final song = _savedSongs[index];
 
+                              // Determine which thumbnail to use
+                              String? displayThumbnail;
+                              bool isLocalThumbnail = false;
+
+                              final localThumbPath = _getLocalThumbnailPath(
+                                song,
+                              );
+                              if (localThumbPath != null &&
+                                  File(localThumbPath).existsSync()) {
+                                displayThumbnail = localThumbPath;
+                                isLocalThumbnail = true;
+                              } else {
+                                displayThumbnail =
+                                    _thumbnailCache[song.videoId];
+                              }
+
+                              // Check if local audio exists
+                              final localAudioPath = _getLocalAudioPath(song);
+                              final hasLocalAudio =
+                                  localAudioPath != null &&
+                                  File(localAudioPath).existsSync();
+
                               return Dismissible(
                                 key: Key(song.videoId),
                                 direction: DismissDirection.endToStart,
@@ -454,19 +641,40 @@ class _SavedSongsScreenState extends State<SavedSongsScreen> {
                                       width: 56,
                                       height: 56,
                                       color: AppColors.cardBackground,
-                                      child: song.thumbnailPath != null
-                                          ? Image.file(
-                                              File(song.thumbnailPath!),
-                                              fit: BoxFit.cover,
-                                              errorBuilder:
-                                                  (context, error, stackTrace) {
-                                                    return const Icon(
-                                                      Icons.music_note,
-                                                      color: AppColors
-                                                          .iconInactive,
-                                                    );
-                                                  },
-                                            )
+                                      child: displayThumbnail != null
+                                          ? (isLocalThumbnail
+                                                ? Image.file(
+                                                    File(displayThumbnail),
+                                                    fit: BoxFit.cover,
+                                                    errorBuilder:
+                                                        (
+                                                          context,
+                                                          error,
+                                                          stackTrace,
+                                                        ) {
+                                                          return const Icon(
+                                                            Icons.music_note,
+                                                            color: AppColors
+                                                                .iconInactive,
+                                                          );
+                                                        },
+                                                  )
+                                                : Image.network(
+                                                    displayThumbnail,
+                                                    fit: BoxFit.cover,
+                                                    errorBuilder:
+                                                        (
+                                                          context,
+                                                          error,
+                                                          stackTrace,
+                                                        ) {
+                                                          return const Icon(
+                                                            Icons.music_note,
+                                                            color: AppColors
+                                                                .iconInactive,
+                                                          );
+                                                        },
+                                                  ))
                                           : const Icon(
                                               Icons.music_note,
                                               color: AppColors.iconInactive,
@@ -497,12 +705,27 @@ class _SavedSongsScreenState extends State<SavedSongsScreen> {
                                         overflow: TextOverflow.ellipsis,
                                       ),
                                       const SizedBox(height: 2),
-                                      Text(
-                                        song.formattedFileSize,
-                                        style: TextStyle(
-                                          color: Colors.white.withOpacity(0.4),
-                                          fontSize: 11,
-                                        ),
+                                      Row(
+                                        children: [
+                                          // Show offline indicator if audio file exists
+                                          if (hasLocalAudio) ...[
+                                            const Icon(
+                                              Icons.offline_pin,
+                                              size: 12,
+                                              color: AppColors.iconActive,
+                                            ),
+                                            const SizedBox(width: 4),
+                                          ],
+                                          Text(
+                                            song.formattedFileSize,
+                                            style: TextStyle(
+                                              color: Colors.white.withOpacity(
+                                                0.4,
+                                              ),
+                                              fontSize: 11,
+                                            ),
+                                          ),
+                                        ],
                                       ),
                                     ],
                                   ),
@@ -518,11 +741,11 @@ class _SavedSongsScreenState extends State<SavedSongsScreen> {
                                           0xFF1A1A1A,
                                         ),
                                         builder: (context) =>
-                                            _buildSongOptions(song),
+                                            _buildSongOptions(song, index),
                                       );
                                     },
                                   ),
-                                  onTap: () => _playSong(song),
+                                  onTap: () => _playSong(song, index),
                                 ),
                               );
                             },
@@ -559,7 +782,7 @@ class _SavedSongsScreenState extends State<SavedSongsScreen> {
     );
   }
 
-  Widget _buildSongOptions(DownloadedSong song) {
+  Widget _buildSongOptions(DownloadedSong song, int index) {
     return Container(
       padding: const EdgeInsets.symmetric(vertical: 20),
       child: Column(
@@ -570,7 +793,7 @@ class _SavedSongsScreenState extends State<SavedSongsScreen> {
             title: const Text('Play', style: TextStyle(color: Colors.white)),
             onTap: () {
               Navigator.pop(context);
-              _playSong(song);
+              _playSong(song, index);
             },
           ),
           ListTile(
@@ -587,5 +810,11 @@ class _SavedSongsScreenState extends State<SavedSongsScreen> {
         ],
       ),
     );
+  }
+
+  @override
+  void dispose() {
+    _scraper.dispose();
+    super.dispose();
   }
 }

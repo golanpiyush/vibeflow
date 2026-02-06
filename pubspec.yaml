@@ -46,7 +46,7 @@ dependencies:
   permission_handler: 
   just_audio_background:
   package_info_plus:
-  yt_flutter_musicapi:
+  yt_flutter_musicapi: ^3.4.2
   dart_ytmusic_api:
   flutter_secure_storage:
   wikipedia:

@@ -7,6 +7,7 @@ import 'package:audio_service/audio_service.dart' as audio_service;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:http/http.dart' as http;
 import 'package:flutter_dotenv/flutter_dotenv.dart';
+import 'package:vibeflow/models/song_model.dart';
 
 /// The Audio Governor - Your audio player's inner thoughts with 24hr persistence
 /// Now powered by AI for dynamic, varied messages
@@ -344,7 +345,9 @@ Keep it:
 
       case 'connection_lost':
         return 'Event: Internet connection lost. Generate 3 messages about network failure.';
-
+      case 'playlist_mode_start':
+        final count = ctx['song_count'] ?? 0;
+        return 'Event: User started playing a playlist with $count songs. Radio disabled for sequential playback. Generate 3 messages about playlist mode.';
       case 'connection_restored':
         return 'Event: Internet connection restored. Generate 3 messages about network recovery.';
 
@@ -402,6 +405,12 @@ Keep it:
         'Back button pressed. Resetting to prior queue position',
         'Queue index decrementing. Previous track loading',
       ],
+      'playlist_mode_start': [
+        'Playlist loaded: $Song tracks queued. Radio disabled',
+        'Entering playlist mode. $Song songs ready. Auto-progression enabled',
+        'User playlist active. $Song tracks. No radio needed',
+      ],
+
       'paused_mid_song': [
         'Playback suspended at ${_formatDuration(ctx['position'] as Duration?)}. Buffer maintained',
         'Audio pipeline paused. Current position saved to state',
@@ -519,6 +528,10 @@ Keep it:
     _think('auto_playing_next', {
       'loop_mode': loopMode.toString().split('.').last,
     });
+  }
+
+  void onPlaylistStart(int songCount) {
+    _think('playlist_mode_start', {'song_count': songCount});
   }
 
   void onPause(Duration position) {

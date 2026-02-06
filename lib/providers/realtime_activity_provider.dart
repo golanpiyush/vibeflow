@@ -61,6 +61,7 @@ final followingActivitiesProvider = StreamProvider<List<ListeningActivity>>((
 
       if (response is List) {
         final newActivities = <ListeningActivity>[];
+        final now = DateTime.now().toUtc();
 
         for (final item in response) {
           try {
@@ -78,6 +79,20 @@ final followingActivitiesProvider = StreamProvider<List<ListeningActivity>>((
                 jsonData['is_currently_playing'] ?? false;
             jsonData['duration_ms'] = jsonData['duration_ms'] ?? 0;
             jsonData['status'] = jsonData['status'] ?? 'unknown';
+
+            // ✅ FIX: Check if activity is stale (older than 5 minutes and still marked as playing)
+            final playedAt = DateTime.parse(
+              jsonData['played_at'] as String,
+            ).toUtc();
+            final ageInMinutes = now.difference(playedAt).inMinutes;
+
+            if (jsonData['is_currently_playing'] == true && ageInMinutes > 5) {
+              print(
+                '⚠️ Stale LIVE activity detected: ${jsonData['song_title']} (${ageInMinutes}min old)',
+              );
+              jsonData['is_currently_playing'] =
+                  false; // Force mark as not playing
+            }
 
             final activity = ListeningActivity.fromMap(jsonData);
             newActivities.add(activity);

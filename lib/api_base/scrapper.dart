@@ -1423,6 +1423,9 @@ class YouTubeMusicScraper {
     }
   }
 
+  /// Get high-quality thumbnail URL for a video ID
+  /// Returns the best available thumbnail URL
+
   // ==============================================================================================================================
   // ==============================================================================================================================
 
@@ -1447,6 +1450,140 @@ class YouTubeMusicScraper {
       'Accept-Encoding': 'identity',
       'Accept-Language': 'en-US',
     };
+  }
+
+  Future<String> getThumbnailUrl(String videoId) async {
+    try {
+      print('🖼️ [YTScraper] Fetching thumbnail for: $videoId');
+
+      // Try to fetch from player endpoint for most reliable thumbnail
+      final uri = Uri.parse('$_baseUrl/player?key=$_androidApiKey');
+
+      final body = jsonEncode({
+        'context': {
+          'client': {
+            'clientName': 'ANDROID',
+            'clientVersion': '19.09.37',
+            'androidSdkVersion': 33,
+            'hl': 'en',
+            'gl': 'US',
+          },
+        },
+        'videoId': videoId,
+      });
+
+      final headers = {
+        'Content-Type': 'application/json',
+        'User-Agent':
+            'com.google.android.youtube/19.09.37 (Linux; U; Android 11) gzip',
+        'Accept': '*/*',
+      };
+
+      final response = await _httpClient
+          .post(uri, headers: headers, body: body)
+          .timeout(const Duration(seconds: 10));
+
+      if (response.statusCode == 200) {
+        final json = jsonDecode(response.body) as Map<String, dynamic>;
+
+        // Try to get thumbnail from videoDetails
+        final videoDetails = json['videoDetails'] as Map<String, dynamic>?;
+        if (videoDetails != null) {
+          final thumbnails = videoDetails['thumbnail']?['thumbnails'] as List?;
+          if (thumbnails != null && thumbnails.isNotEmpty) {
+            final thumbnail = _extractBestThumbnail(thumbnails);
+            if (thumbnail.isNotEmpty) {
+              // Clean the thumbnail URL - remove any webp or extra parameters
+              final cleanUrl = _cleanThumbnailUrl(thumbnail, videoId);
+              print('✅ [YTScraper] Got HQ thumbnail from player endpoint');
+              return cleanUrl;
+            }
+          }
+        }
+      }
+
+      // Fallback: Use direct YouTube thumbnail URLs (ALWAYS .jpg, never .webp)
+      print('⚠️ [YTScraper] Validating HQ thumbnail URLs');
+
+      // Only use .jpg format - it's universally supported and always available
+      final qualities = [
+        'maxresdefault', // 1280x720
+        'sddefault', // 640x480
+        'hqdefault', // 480x360
+        'mqdefault', // 320x180
+        'default', // 120x90
+      ];
+
+      // Use parallel validation for faster results
+      final validationFutures = qualities.map((quality) async {
+        // IMPORTANT: Always use .jpg, not .webp
+        final url = 'https://i.ytimg.com/vi/$videoId/$quality.jpg';
+        try {
+          final request = http.Request('HEAD', Uri.parse(url));
+          final response = await _httpClient
+              .send(request)
+              .timeout(const Duration(seconds: 2));
+          await response.stream.drain();
+
+          if (response.statusCode == 200) {
+            return {'quality': quality, 'url': url};
+          }
+        } catch (e) {
+          // Ignore and continue
+        }
+        return null;
+      }).toList();
+
+      // Wait for first valid result
+      final results = await Future.wait(validationFutures);
+
+      for (final result in results) {
+        if (result != null) {
+          print('✅ [YTScraper] Found ${result['quality']} thumbnail');
+          return result['url'] as String;
+        }
+      }
+
+      // Final fallback - maxresdefault (optimistic)
+      final fallbackUrl = 'https://i.ytimg.com/vi/$videoId/maxresdefault.jpg';
+      print('✅ [YTScraper] Using optimistic HQ fallback: maxresdefault');
+      return fallbackUrl;
+    } catch (e) {
+      print('❌ [YTScraper] Thumbnail fetch error: $e');
+      // Return HQ fallback URL even on error
+      return 'https://i.ytimg.com/vi/$videoId/maxresdefault.jpg';
+    }
+  }
+
+  /// Clean thumbnail URL to ensure it's a valid .jpg format
+  String _cleanThumbnailUrl(String url, String videoId) {
+    // If it's a webp URL or has extra parameters, convert to standard jpg
+    if (url.contains('vi_webp') || url.contains('.webp') || url.contains('=')) {
+      // Extract quality if possible
+      if (url.contains('maxresdefault')) {
+        return 'https://i.ytimg.com/vi/$videoId/maxresdefault.jpg';
+      } else if (url.contains('sddefault')) {
+        return 'https://i.ytimg.com/vi/$videoId/sddefault.jpg';
+      } else if (url.contains('hqdefault')) {
+        return 'https://i.ytimg.com/vi/$videoId/hqdefault.jpg';
+      }
+      // Default to maxresdefault
+      return 'https://i.ytimg.com/vi/$videoId/maxresdefault.jpg';
+    }
+
+    // Remove any query parameters
+    final cleanUrl = url.split('?').first;
+    return cleanUrl;
+  }
+
+  /// Synchronous method to get thumbnail URL (doesn't validate, just constructs)
+  /// ALWAYS returns .jpg format
+  String getThumbnailUrlSync(
+    String videoId, {
+    String quality = 'maxresdefault',
+  }) {
+    // IMPORTANT: Always use .jpg extension
+    return 'https://i.ytimg.com/vi/$videoId/$quality.jpg';
   }
 
   _CacheEntry? _getCachedUrl(String videoId) => _urlCache[videoId];
