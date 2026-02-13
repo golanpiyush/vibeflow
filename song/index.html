@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Opening VibeFlow...</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    body {
+      background: #000;
+      color: #fff;
+      font-family: sans-serif;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      height: 100vh;
+      margin: 0;
+      flex-direction: column;
+      gap: 12px;
+    }
+    p { color: #888; font-size: 14px; }
+  </style>
+</head>
+<body>
+  <h2 id="title">Opening VibeFlow...</h2>
+  <p id="artist"></p>
+  <script>
+    // Read params from current URL
+    const params = new URLSearchParams(window.location.search);
+    const videoId = window.location.pathname.split('/').pop();
+    const title = params.get('title') || 'Unknown';
+    const artist = params.get('artist') || '';
+    const thumb = params.get('thumb') || '';
+    const duration = params.get('duration') || '';
+
+    document.getElementById('title').textContent = title;
+    document.getElementById('artist').textContent = artist;
+
+    // Build vibeflow:// deep link with same params
+    const deepLink = `vibeflow://song/${videoId}?title=${encodeURIComponent(title)}&artist=${encodeURIComponent(artist)}&thumb=${encodeURIComponent(thumb)}${duration ? '&duration=' + encodeURIComponent(duration) : ''}`;
+
+    // Redirect to app
+    window.location.href = deepLink;
+  </script>
+</body>
+</html>
+```
+
+---
+
+## Step 3: Enable GitHub Pages
+
+Go to your repo → **Settings → Pages → Source → Deploy from branch → main → / (root)** → Save.
+
+Your site will be live at:
+```
+https://yourusername.github.io/vibeflow-app/song/VIDEO_ID?title=...
