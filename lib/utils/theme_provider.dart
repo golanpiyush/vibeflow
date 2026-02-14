@@ -41,7 +41,7 @@ class ThemeState {
     this.systemThemeMode = AppThemeMode.dark,
     this.seedColor,
     this.thumbnailRoundness = ThumbnailRoundness.heavy,
-    this.fontFamily = AppFontFamily.system, // ✅ DEFAULT
+    this.fontFamily = AppFontFamily.notoSans, // ✅ DEFAULT
     this.applyFontPadding = false,
   });
 

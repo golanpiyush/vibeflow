@@ -22,6 +22,7 @@ import 'package:vibeflow/utils/material_transitions.dart';
 import 'package:vibeflow/utils/page_transitions.dart';
 import 'package:vibeflow/widgets/lyrics_widget.dart';
 import 'package:vibeflow/widgets/radio_sheet.dart';
+import 'package:vibeflow/widgets/shareSong.dart';
 
 enum ViewMode { album, lyrics }
 
@@ -770,25 +771,32 @@ class _NewPlayerPageState extends ConsumerState<NewPlayerPage>
 
   Widget _buildTopBar() {
     return Row(
-      mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
+        // Option 1: With access code check
+        // SongShareButton(song: widget.song),
         IconButton(
           icon: const Icon(
             Icons.keyboard_arrow_down,
-            color: Colors.white,
-            size: 30,
+            color: Colors.white70,
+            size: 24,
           ),
-          onPressed: () => Navigator.pop(context),
           padding: EdgeInsets.zero,
+          onPressed: () {
+            Navigator.pop(context);
+          },
         ),
+
+        // Option 2: Public sharing (no access code needed)
+        // PublicSongShareButton(song: widget.song),
+        const Spacer(),
+
         IconButton(
           icon: const Icon(Icons.more_vert, color: Colors.white70, size: 24),
           padding: EdgeInsets.zero,
           onPressed: () {
-            Navigator.of(context).pushMaterialVertical(
-              const AudioThoughtsScreen(),
-              slideUp: true, // recommended for hierarchical navigation
-            );
+            Navigator.of(
+              context,
+            ).pushMaterialVertical(const AudioThoughtsScreen(), slideUp: true);
           },
         ),
       ],
@@ -862,6 +870,8 @@ class _NewPlayerPageState extends ConsumerState<NewPlayerPage>
             ],
           ),
         ),
+
+        SongShareButton(song: widget.song),
         const SizedBox(width: 12),
         _isCheckingLiked
             ? const SizedBox(

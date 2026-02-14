@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:miniplayer/miniplayer.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:vibeflow/api_base/cache_manager.dart';
 import 'package:vibeflow/api_base/community_playlistScaper.dart';
 import 'package:vibeflow/api_base/yt_music_search_suggestor.dart';
 import 'package:vibeflow/api_base/ytmusic_albums_scraper.dart';
@@ -1192,30 +1193,83 @@ class _HomePageState extends ConsumerState<HomePage> {
 
   // Open playlist details
   Future<void> _openPlaylistDetails(CommunityPlaylist playlist) async {
-    // Show loading dialog
+    // Show loading dialog with streaming support
     showDialog(
       context: context,
       barrierDismissible: false,
-      builder: (context) => const Center(child: CircularProgressIndicator()),
+      builder: (context) => StreamBuilder<List<Song>>(
+        stream: _streamPlaylistLoading(playlist.id),
+        builder: (context, snapshot) {
+          if (snapshot.hasError) {
+            return AlertDialog(
+              title: const Text('Error'),
+              content: Text('Failed to load playlist: ${snapshot.error}'),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context),
+                  child: const Text('Close'),
+                ),
+              ],
+            );
+          }
+
+          final loadedSongs = snapshot.data ?? [];
+          final isComplete = snapshot.connectionState == ConnectionState.done;
+
+          return AlertDialog(
+            title: Text('Loading ${playlist.title}'),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                CircularProgressIndicator(),
+                const SizedBox(height: 16),
+                Text(
+                  isComplete
+                      ? 'Loaded ${loadedSongs.length} songs'
+                      : 'Loading... ${loadedSongs.length} songs',
+                  style: TextStyle(fontSize: 14),
+                ),
+              ],
+            ),
+          );
+        },
+      ),
     );
 
     try {
-      // Fetch full playlist details
-      final fullPlaylist = await _scraper.getPlaylistDetails(playlist.id);
+      // Load with streaming
+      final songs = <Song>[];
+
+      await for (final song in _scraper.streamPlaylistSongs(playlist.id)) {
+        songs.add(song);
+        // Cache each song as it arrives
+        if (songs.length % 10 == 0) {
+          await CacheManager.instance.cachePlaylistSongs(playlist.id, songs);
+        }
+      }
+
+      // Final cache
+      await CacheManager.instance.cachePlaylistSongs(playlist.id, songs);
 
       if (!mounted) return;
+      Navigator.pop(context); // Close loading dialog
 
-      // Close loading dialog
-      Navigator.pop(context);
+      if (songs.isNotEmpty) {
+        final fullPlaylist = CommunityPlaylist(
+          id: playlist.id,
+          title: playlist.title,
+          creator: playlist.creator,
+          thumbnail: playlist.thumbnail,
+          songCount: songs.length,
+          songs: songs,
+        );
 
-      if (fullPlaylist != null && fullPlaylist.songs != null) {
-        // Show playlist bottom sheet with songs
         _showCommunityPlaylistBottomSheet(fullPlaylist);
       } else {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('Failed to load playlist'),
-            backgroundColor: Colors.red,
+            content: Text('No songs found in playlist'),
+            backgroundColor: Colors.orange,
           ),
         );
       }
@@ -1231,6 +1285,16 @@ class _HomePageState extends ConsumerState<HomePage> {
           backgroundColor: Colors.red,
         ),
       );
+    }
+  }
+
+  // ADD THIS NEW METHOD
+  Stream<List<Song>> _streamPlaylistLoading(String playlistId) async* {
+    final songs = <Song>[];
+
+    await for (final song in _scraper.streamPlaylistSongs(playlistId)) {
+      songs.add(song);
+      yield List<Song>.from(songs); // Yield copy to trigger rebuild
     }
   }
 
@@ -1391,7 +1455,6 @@ class _HomePageState extends ConsumerState<HomePage> {
                                   const SizedBox(height: 12),
 
                                   // Play all button
-                                  // Play all button
                                   ElevatedButton.icon(
                                     onPressed: () async {
                                       if (playlist.songs != null &&
@@ -1423,12 +1486,14 @@ class _HomePageState extends ConsumerState<HomePage> {
                                           );
                                           Navigator.pop(context);
 
-                                          // 🔥 Play entire playlist queue
+                                          // 🔥 UPDATED: Pass playlist ID for continuation
                                           final handler = getAudioHandler();
                                           if (handler != null) {
                                             await handler.playPlaylistQueue(
                                               allSongs,
                                               startIndex: 0,
+                                              playlistId:
+                                                  playlist.id, // ✅ ADD THIS
                                             );
                                           }
                                         }
@@ -1622,10 +1687,25 @@ class _HomePageState extends ConsumerState<HomePage> {
                                   if (mounted) {
                                     setState(() => _lastPlayedSong = quickPick);
                                     Navigator.pop(context);
-                                    _openPlayer(
-                                      quickPick,
-                                      heroTag: 'playlist-${song.videoId}',
-                                    );
+
+                                    // 🔥 FIX: Play with playlist context - handler will detect it
+                                    final handler = getAudioHandler();
+                                    if (handler != null) {
+                                      // Store playlist songs in handler's cache
+                                      if (playlist.songs != null &&
+                                          playlist.songs!.isNotEmpty) {
+                                        await handler.setPlaylistContext(
+                                          playlistId: playlist.id,
+                                          songs: playlist.songs!,
+                                        );
+                                      }
+
+                                      await handler.playSong(
+                                        quickPick,
+                                        sourceType:
+                                            RadioSourceType.communityPlaylist,
+                                      );
+                                    }
                                   }
                                 },
                               ),
@@ -1646,10 +1726,25 @@ class _HomePageState extends ConsumerState<HomePage> {
                                 if (mounted) {
                                   setState(() => _lastPlayedSong = quickPick);
                                   Navigator.pop(context);
-                                  _openPlayer(
-                                    quickPick,
-                                    heroTag: 'playlist-${song.videoId}',
-                                  );
+
+                                  // 🔥 FIX: Play with playlist context
+                                  final handler = getAudioHandler();
+                                  if (handler != null) {
+                                    // Store playlist songs in handler's cache
+                                    if (playlist.songs != null &&
+                                        playlist.songs!.isNotEmpty) {
+                                      await handler.setPlaylistContext(
+                                        playlistId: playlist.id,
+                                        songs: playlist.songs!,
+                                      );
+                                    }
+
+                                    await handler.playSong(
+                                      quickPick,
+                                      sourceType:
+                                          RadioSourceType.communityPlaylist,
+                                    );
+                                  }
                                 }
                               },
                             ),
@@ -3244,10 +3339,12 @@ class _HomePageState extends ConsumerState<HomePage> {
                   ElevatedButton.icon(
                     onPressed: _loadFeaturedPlaylist,
                     icon: const Icon(Icons.refresh, size: 18),
-                    label: const Text('Check Progress'),
+                    label: const Text(
+                      'Check Progress',
+                      style: TextStyle(color: Colors.black),
+                    ),
                     style: ElevatedButton.styleFrom(
                       backgroundColor: iconActiveColor,
-                      foregroundColor: Colors.white,
                     ),
                   ),
                 ],

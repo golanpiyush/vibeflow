@@ -7,8 +7,10 @@ import 'package:path_provider/path_provider.dart';
 import 'package:path/path.dart' as path;
 import 'package:vibeflow/models/DBSong.dart';
 import 'package:vibeflow/models/playlist_model.dart';
+import 'package:vibeflow/models/quick_picks_model.dart';
 import 'package:vibeflow/models/song_model.dart';
 import 'package:vibeflow/providers/playlist_providers.dart';
+import 'package:vibeflow/services/bg_audio_handler.dart';
 
 class PlaylistDetailScreen extends ConsumerStatefulWidget {
   final int playlistId;
@@ -626,13 +628,69 @@ class _PlaylistDetailScreenState extends ConsumerState<PlaylistDetailScreen> {
   }
 
   void _playAll(List<DbSong> songs) {
-    // TODO: Implement play all with audio service
-    print('Playing all ${songs.length} songs');
+    final handler = getAudioHandler();
+    if (handler == null) {
+      print('❌ Audio handler not available');
+      return;
+    }
+
+    // Convert DbSong list to QuickPick list
+    final quickPicks = songs.map((dbSong) {
+      return QuickPick(
+        videoId: dbSong.videoId,
+        title: dbSong.title,
+        artists: dbSong.artistsString,
+        thumbnail: dbSong.thumbnail,
+        duration: dbSong.duration, // Use duration field directly
+      );
+    }).toList();
+
+    // Play the entire playlist from the beginning
+    handler.playPlaylistQueue(
+      quickPicks,
+      startIndex: 0,
+      playlistId: widget.playlistId.toString(),
+    );
+
+    print('▶️ Playing all ${quickPicks.length} songs from playlist');
   }
 
   void _playSong(DbSong song, int index) {
-    // TODO: Implement song playback
-    print('Playing: ${song.title}');
+    final handler = getAudioHandler();
+    if (handler == null) {
+      print('❌ Audio handler not available');
+      return;
+    }
+
+    final playlistAsync = ref.read(
+      playlistWithSongsProvider(widget.playlistId),
+    );
+
+    playlistAsync.whenData((playlistWithSongs) {
+      if (playlistWithSongs == null) return;
+
+      final songs = playlistWithSongs.songs;
+
+      // Convert DbSong list to QuickPick list
+      final quickPicks = songs.map((dbSong) {
+        return QuickPick(
+          videoId: dbSong.videoId,
+          title: dbSong.title,
+          artists: dbSong.artistsString,
+          thumbnail: dbSong.thumbnail,
+          duration: dbSong.duration, // Use duration field directly
+        );
+      }).toList();
+
+      // Play the playlist starting from the selected index
+      handler.playPlaylistQueue(
+        quickPicks,
+        startIndex: index,
+        playlistId: widget.playlistId.toString(),
+      );
+
+      print('▶️ Playing playlist from song ${index + 1}/${quickPicks.length}');
+    });
   }
 
   String _formatDuration(int seconds) {

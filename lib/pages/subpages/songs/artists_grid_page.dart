@@ -37,6 +37,7 @@ class _ArtistsGridPageState extends ConsumerState<ArtistsGridPage> {
   Timer? _debounceTimer;
   bool isLoadingMore = false;
   bool hasMoreArtists = true;
+  bool isSearching = false;
   static const int artistsPerPage = 50;
   int currentOffset = 0;
 
@@ -151,20 +152,66 @@ class _ArtistsGridPageState extends ConsumerState<ArtistsGridPage> {
   void _onSearchChanged(String query) {
     _debounceTimer?.cancel();
 
-    _debounceTimer = Timer(const Duration(milliseconds: 300), () {
-      if (mounted) {
+    _debounceTimer = Timer(const Duration(milliseconds: 500), () async {
+      if (!mounted) return;
+
+      if (query.isEmpty) {
         setState(() {
-          if (query.isEmpty) {
-            filteredArtists = List.from(artists);
-          } else {
-            final lowerQuery = query.toLowerCase();
-            filteredArtists = artists.where((artist) {
-              return artist.name.toLowerCase().contains(lowerQuery);
-            }).toList();
-          }
+          filteredArtists = List.from(artists);
+          isSearching = false;
         });
+        return;
+      }
+
+      // First, perform local search
+      final lowerQuery = query.toLowerCase();
+      final localResults = artists.where((artist) {
+        return artist.name.toLowerCase().contains(lowerQuery);
+      }).toList();
+
+      setState(() {
+        filteredArtists = localResults;
+      });
+
+      // If local results are insufficient (less than 5), perform API search
+      if (localResults.length < 5) {
+        setState(() {
+          isSearching = true;
+        });
+
+        try {
+          print('🔍 Performing API search for: "$query"');
+          final searchResults = await _artistsScraper.searchArtists(
+            query,
+            limit: 20,
+          );
+
+          if (!mounted) return;
+
+          // Merge local and API results, removing duplicates
+          final existingIds = localResults.map((a) => a.id).toSet();
+          final uniqueApiResults = searchResults
+              .where((a) => !existingIds.contains(a.id))
+              .toList();
+
+          setState(() {
+            filteredArtists = [...localResults, ...uniqueApiResults];
+            isSearching = false;
+          });
+
+          print(
+            '✅ Search complete: ${localResults.length} local + ${uniqueApiResults.length} API = ${filteredArtists.length} total',
+          );
+        } catch (e) {
+          print('❌ API search error: $e');
+          if (!mounted) return;
+          setState(() {
+            isSearching = false;
+          });
+        }
+      } else {
         print(
-          '🔍 Search: ${filteredArtists.length} artists found for "$query"',
+          '🔍 Local search: ${localResults.length} artists found for "$query"',
         );
       }
     });
@@ -459,7 +506,7 @@ class _ArtistsGridPageState extends ConsumerState<ArtistsGridPage> {
   Widget _buildArtistsGrid() {
     final textSecondaryColor = ref.watch(themeTextSecondaryColorProvider);
 
-    if (filteredArtists.isEmpty && !isLoadingArtists) {
+    if (filteredArtists.isEmpty && !isLoadingArtists && !isSearching) {
       return Center(
         child: Padding(
           padding: const EdgeInsets.all(32.0),
@@ -507,7 +554,8 @@ class _ArtistsGridPageState extends ConsumerState<ArtistsGridPage> {
         crossAxisSpacing: AppSpacing.lg,
         mainAxisSpacing: AppSpacing.xl,
       ),
-      itemCount: filteredArtists.length + (isLoadingMore ? 2 : 0),
+      itemCount:
+          filteredArtists.length + ((isLoadingMore || isSearching) ? 2 : 0),
       itemBuilder: (context, index) {
         if (index >= filteredArtists.length) {
           return Center(

@@ -63,12 +63,20 @@ class YTMusicArtistsScraper {
         if (allArtists.length >= count * 2) break;
       }
 
+      // Filter out artists without images before shuffling
+      final artistsWithImages = allArtists
+          .where(
+            (artist) =>
+                artist.profileImage != null && artist.profileImage!.isNotEmpty,
+          )
+          .toList();
+
       // Shuffle and return requested count
-      allArtists.shuffle(_random);
-      final randomArtists = allArtists.take(count).toList();
+      artistsWithImages.shuffle(_random);
+      final randomArtists = artistsWithImages.take(count).toList();
 
       print(
-        '✅ [YTMusicArtistsScraper] Found ${randomArtists.length} random artists',
+        '✅ [YTMusicArtistsScraper] Found ${randomArtists.length} random artists with images',
       );
       return randomArtists;
     } catch (e) {
@@ -78,7 +86,6 @@ class YTMusicArtistsScraper {
   }
 
   /// Get trending artists with caching
-  /// Get trending artists with proper pagination support
   Future<List<Artist>> getTrendingArtists({
     int limit = 50,
     int offset = 0,
@@ -173,20 +180,25 @@ class YTMusicArtistsScraper {
 
       final trendingArtists = allArtists.sublist(startIndex, endIndex);
 
-      // Cache only the first batch
-      if (offset == 0 && trendingArtists.isNotEmpty) {
-        _trendingArtistsCache = trendingArtists;
-        await _cacheManager.set('trending_artists', trendingArtists);
+      // Filter out artists without profile images
+      final trendingArtistsWithImages = trendingArtists
+          .where(
+            (artist) =>
+                artist.profileImage != null && artist.profileImage!.isNotEmpty,
+          )
+          .toList();
+
+      // Cache only the first batch (update to use filtered list)
+      if (offset == 0 && trendingArtistsWithImages.isNotEmpty) {
+        _trendingArtistsCache = trendingArtistsWithImages;
+        await _cacheManager.set('trending_artists', trendingArtistsWithImages);
+        await AlbumArtistQPCache.saveArtists(trendingArtistsWithImages);
       }
 
-      // Save to cache only for first batch
-      if (offset == 0 && trendingArtists.isNotEmpty) {
-        await AlbumArtistQPCache.saveArtists(trendingArtists);
-      }
       print(
-        '✅ [YTMusicArtistsScraper] Returning ${trendingArtists.length} artists (from ${allArtists.length} fetched)',
+        '✅ [YTMusicArtistsScraper] Returning ${trendingArtistsWithImages.length} artists with images (filtered from ${trendingArtists.length})',
       );
-      return trendingArtists;
+      return trendingArtistsWithImages;
     } catch (e) {
       print('❌ [YTMusicArtistsScraper] Error: $e');
       return offset == 0 ? _getFallbackArtists() : [];
@@ -242,15 +254,23 @@ class YTMusicArtistsScraper {
 
       final artists = _parseArtistsFromSearch(response, limit);
 
-      if (artists.isEmpty) {
-        print('⚠️ No artists found for $genreName, using fallback');
+      // Filter out artists without profile images
+      final artistsWithImages = artists
+          .where(
+            (artist) =>
+                artist.profileImage != null && artist.profileImage!.isNotEmpty,
+          )
+          .toList();
+
+      if (artistsWithImages.isEmpty) {
+        print('⚠️ No artists with images found for $genreName, using fallback');
         return _getGenreFallbackArtists(genre);
       }
 
       // Cache the results only if using cache
       if (useCache) {
-        _genreArtistsCache[genreKey] = artists;
-        await _cacheManager.set('artists_genre_$genreKey', artists);
+        _genreArtistsCache[genreKey] = artistsWithImages;
+        await _cacheManager.set('artists_genre_$genreKey', artistsWithImages);
       }
 
       print(
@@ -375,9 +395,18 @@ class YTMusicArtistsScraper {
       if (response == null) return [];
 
       final artists = _parseArtistsFromSearch(response, limit);
+      // Filter out artists without profile images
+      final artistsWithImages = artists
+          .where(
+            (artist) =>
+                artist.profileImage != null && artist.profileImage!.isNotEmpty,
+          )
+          .toList();
 
-      print('✅ [YTMusicArtistsScraper] Found ${artists.length} artists');
-      return artists;
+      print(
+        '✅ [YTMusicArtistsScraper] Found ${artistsWithImages.length} artists with images (filtered from ${artists.length})',
+      );
+      return artistsWithImages;
     } catch (e) {
       print('❌ [YTMusicArtistsScraper] Search error: $e');
       return [];
@@ -946,49 +975,57 @@ class YTMusicArtistsScraper {
       Artist(
         id: 'UCN1hnUccO4FD5WfM7ithXaw',
         name: 'Maroon 5',
-        profileImage: null,
+        profileImage:
+            'https://ui-avatars.com/api/?name=Maroon+5&size=512&background=111827&color=ffffff&bold=true',
         subscribers: '39.5M subscribers',
       ),
       Artist(
         id: 'UCqECaJ8Gagnn7YCbPEzWH6g',
         name: 'Taylor Swift',
-        profileImage: null,
+        profileImage:
+            'https://ui-avatars.com/api/?name=Taylor+Swift&size=512&background=111827&color=ffffff&bold=true',
         subscribers: '62M subscribers',
       ),
       Artist(
         id: 'UC-J-KZfRV8c13fOCkhXdLiQ',
         name: 'Ed Sheeran',
-        profileImage: null,
+        profileImage:
+            'https://ui-avatars.com/api/?name=Ed+Sheeran&size=512&background=111827&color=ffffff&bold=true',
         subscribers: '54.5M subscribers',
       ),
       Artist(
         id: 'UCbulh9WdLtEXiooRcYK7SWw',
         name: 'The Weeknd',
-        profileImage: null,
+        profileImage:
+            'https://ui-avatars.com/api/?name=The+Weeknd&size=512&background=111827&color=ffffff&bold=true',
         subscribers: '37.3M subscribers',
       ),
       Artist(
         id: 'UCHkj014U2CQ2Nv0UZeYpE_A',
         name: 'Imagine Dragons',
-        profileImage: null,
+        profileImage:
+            'https://ui-avatars.com/api/?name=Imagine+Dragons&size=512&background=111827&color=ffffff&bold=true',
         subscribers: '29.8M subscribers',
       ),
       Artist(
         id: 'UC0C-w0YjGpqDXGB8IHb662A',
         name: 'Ariana Grande',
-        profileImage: null,
+        profileImage:
+            'https://ui-avatars.com/api/?name=Ariana+Grande&size=512&background=111827&color=ffffff&bold=true',
         subscribers: '54M subscribers',
       ),
       Artist(
         id: 'UC_-lkd5iACZzJ4zE_GOeUXw',
         name: 'Eminem',
-        profileImage: null,
+        profileImage:
+            'https://ui-avatars.com/api/?name=Eminem&size=512&background=111827&color=ffffff&bold=true',
         subscribers: '58M subscribers',
       ),
       Artist(
         id: 'UCa10nxShhzNrCE1o2ZOPztg',
         name: 'Marshmello',
-        profileImage: null,
+        profileImage:
+            'https://ui-avatars.com/api/?name=Marshmello&size=512&background=111827&color=ffffff&bold=true',
         subscribers: '57M subscribers',
       ),
     ];
@@ -1102,8 +1139,9 @@ class YTMusicArtistsScraper {
       return null;
     }
   }
+  // PRAGMATIC SOLUTION - Supplement with search API when needed
 
-  /// Extract all songs from artist with pagination
+  /// Extract all songs - with search API fallback
   Future<List<Song>> _extractAllSongs(
     Map<String, dynamic> initialData,
     String artistName,
@@ -1113,76 +1151,239 @@ class YTMusicArtistsScraper {
     String? continuationToken;
 
     try {
-      // Get initial songs
+      print('🎵 Starting to extract all songs for $artistName');
+
       final contents =
           initialData['contents']?['singleColumnBrowseResultsRenderer']?['tabs']?[0]?['tabRenderer']?['content']?['sectionListRenderer']?['contents']
               as List?;
 
       if (contents != null) {
-        for (final section in contents) {
-          var shelf = section['musicShelfRenderer'];
-          shelf ??= section['musicCarouselShelfRenderer'];
+        print('📂 Scanning ${contents.length} sections...');
 
+        // Find ALL song shelves (prioritize ones with continuation)
+        final candidateShelves = [];
+
+        for (final section in contents) {
+          final shelf = section['musicShelfRenderer'];
           if (shelf == null) continue;
 
-          // Check if this is a songs section
           final shelfTitle = _extractText(shelf['title']);
-          final isSongs = shelfTitle?.toLowerCase().contains('song') ?? false;
+          final lowerTitle = shelfTitle?.toLowerCase() ?? '';
 
-          if (!isSongs) continue;
+          if (!lowerTitle.contains('song')) continue;
 
           final items = shelf['contents'] as List?;
+          final itemCount = items?.length ?? 0;
+          final continuations = shelf['continuations'] as List?;
+          final hasContinuation =
+              continuations != null && continuations.isNotEmpty;
+
+          print(
+            '📂 Found shelf: "$shelfTitle" ($itemCount items, continuation: ${hasContinuation ? "YES" : "NO"})',
+          );
+
+          candidateShelves.add({
+            'shelf': shelf,
+            'title': shelfTitle,
+            'itemCount': itemCount,
+            'hasContinuation': hasContinuation,
+          });
+        }
+
+        // Select best shelf
+        if (candidateShelves.isNotEmpty) {
+          var selectedShelf = candidateShelves.firstWhere(
+            (s) => s['hasContinuation'] == true,
+            orElse: () => candidateShelves.reduce(
+              (a, b) => a['itemCount'] > b['itemCount'] ? a : b,
+            ),
+          );
+
+          final bestShelf = selectedShelf['shelf'];
+          print('✅ Selected: "${selectedShelf['title']}"');
+
+          final items = bestShelf['contents'] as List?;
           if (items != null) {
             for (final item in items) {
               final song = _parseSongMetadata(item, artistName);
               if (song != null) songs.add(song);
             }
+            print('✅ Extracted ${songs.length} songs from artist page');
           }
 
-          // Get continuation token for pagination
-          continuationToken =
-              shelf['continuations']?[0]?['nextContinuationData']?['continuation']
-                  as String?;
-          break;
+          // Try pagination if continuation exists
+          final continuations = bestShelf['continuations'] as List?;
+          if (continuations != null && continuations.isNotEmpty) {
+            continuationToken =
+                continuations[0]?['nextContinuationData']?['continuation']
+                    as String?;
+
+            if (continuationToken != null) {
+              print('🔗 Continuation found, loading more...');
+
+              int pageCount = 1;
+              while (continuationToken != null && songs.length < 500) {
+                pageCount++;
+
+                final continueResponse = await _makeRequest(
+                  endpoint: 'browse',
+                  body: {
+                    'context': _context,
+                    'continuation': continuationToken,
+                  },
+                );
+
+                if (continueResponse == null) break;
+
+                final continuationContents =
+                    continueResponse['continuationContents']?['musicShelfContinuation'];
+                if (continuationContents == null) break;
+
+                final items = continuationContents['contents'] as List?;
+                if (items == null || items.isEmpty) break;
+
+                int added = 0;
+                for (final item in items) {
+                  final song = _parseSongMetadata(item, artistName);
+                  if (song != null) {
+                    songs.add(song);
+                    added++;
+                  }
+                }
+
+                print('✅ Page $pageCount: +$added (total: ${songs.length})');
+
+                final continuations =
+                    continuationContents['continuations'] as List?;
+                continuationToken =
+                    continuations?[0]?['nextContinuationData']?['continuation']
+                        as String?;
+
+                if (continuationToken == null) break;
+                await Future.delayed(const Duration(milliseconds: 100));
+              }
+            }
+          }
         }
       }
 
-      // Continue fetching with pagination
-      while (continuationToken != null && songs.length < 200) {
-        print('🔄 Fetching more songs... (${songs.length} so far)');
+      print('📊 Songs from artist page: ${songs.length}');
 
-        final continueResponse = await _makeRequest(
-          endpoint: 'browse',
-          body: {'context': _context, 'continuation': continuationToken},
-        );
+      // If we got very few songs (less than 20), try searching for more
+      if (songs.length < 20) {
+        print('⚠️ Only ${songs.length} songs from artist page');
+        print('🔍 Searching for more songs by "$artistName"...');
 
-        if (continueResponse == null) break;
+        final searchSongs = await _searchArtistSongs(artistName);
 
-        final continuationContents =
-            continueResponse['continuationContents']?['musicShelfContinuation'];
+        if (searchSongs.isNotEmpty) {
+          print('✅ Found ${searchSongs.length} songs from search');
 
-        if (continuationContents == null) break;
+          // Merge, avoiding duplicates by video ID
+          final existingVideoIds = songs.map((s) => s.videoId).toSet();
+          final newSongs = searchSongs
+              .where((s) => !existingVideoIds.contains(s.videoId))
+              .toList();
 
-        final items = continuationContents['contents'] as List?;
-        if (items != null) {
+          songs.addAll(newSongs);
+          print(
+            '✅ Added ${newSongs.length} unique songs from search (total: ${songs.length})',
+          );
+        }
+      }
+
+      print('✅✅✅ FINAL: ${songs.length} total songs for $artistName');
+    } catch (e, stackTrace) {
+      print('❌ Error: $e');
+      print('${stackTrace.toString().split('\n').take(3).join('\n')}');
+    }
+
+    return songs;
+  }
+
+  /// NEW METHOD - Search for artist songs using search API
+  Future<List<Song>> _searchArtistSongs(String artistName) async {
+    final songs = <Song>[];
+
+    try {
+      print('🔍 Searching: "$artistName songs"');
+
+      final response = await _makeRequest(
+        endpoint: 'search',
+        body: {
+          'context': _context,
+          'query': '$artistName songs',
+          'params': 'EgWKAQIIAWoKEAoQAxAEEAkQBQ%3D%3D', // Filter for songs
+        },
+      );
+
+      if (response == null) {
+        print('⚠️ Search request failed');
+        return songs;
+      }
+
+      final contents =
+          response['contents']?['tabbedSearchResultsRenderer']?['tabs']?[0]?['tabRenderer']?['content']?['sectionListRenderer']?['contents']
+              as List?;
+
+      if (contents != null) {
+        for (final section in contents) {
+          final shelf = section['musicShelfRenderer'];
+          if (shelf == null) continue;
+
+          final items = shelf['contents'] as List?;
+          if (items == null) continue;
+
           for (final item in items) {
-            final song = _parseSongMetadata(item, artistName);
-            if (song != null) songs.add(song);
+            final songItem = item['musicResponsiveListItemRenderer'];
+            if (songItem == null) continue;
+
+            final videoId = songItem['playlistItemData']?['videoId'] as String?;
+            if (videoId == null || videoId.isEmpty) continue;
+
+            final flexColumns = songItem['flexColumns'] as List?;
+            if (flexColumns == null || flexColumns.isEmpty) continue;
+
+            final title = _extractFlexColumnText(flexColumns[0]) ?? 'Unknown';
+            final thumbnail =
+                _extractBestThumbnail(songItem['thumbnail']) ?? '';
+
+            // Extract artist from second column
+            String artist = artistName;
+            if (flexColumns.length > 1) {
+              final artistText = _extractFlexColumnText(flexColumns[1]);
+              if (artistText != null) {
+                artist = artistText.split('•').first.trim();
+              }
+            }
+
+            // Extract duration
+            final duration = flexColumns.length > 2
+                ? _extractFlexColumnText(flexColumns.last)
+                : null;
+
+            songs.add(
+              Song(
+                videoId: videoId,
+                title: title,
+                artists: [artist],
+                thumbnail: thumbnail,
+                duration: duration,
+                audioUrl: null,
+              ),
+            );
+
+            // Limit search results to 50 songs
+            if (songs.length >= 50) break;
           }
+
+          if (songs.length >= 50) break;
         }
-
-        // Get next continuation token
-        continuationToken =
-            continuationContents['continuations']?[0]?['nextContinuationData']?['continuation']
-                as String?;
-
-        // Break if no more items
-        if (items == null || items.isEmpty) break;
       }
 
-      print('✅ Total songs fetched: ${songs.length}');
+      print('✅ Search found ${songs.length} songs');
     } catch (e) {
-      print('⚠️ Error extracting all songs: $e');
+      print('❌ Search error: $e');
     }
 
     return songs;

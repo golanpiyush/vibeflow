@@ -1,4 +1,4 @@
-// lib/main.dart - WITH UPDATE CHECK ADDED
+// lib/main.dart - WITH DEEP LINKING ADDED
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -10,14 +10,18 @@ import 'package:vibeflow/pages/access_code_management_screen.dart';
 import 'package:vibeflow/pages/authOnboard/access_code_screen.dart';
 import 'package:vibeflow/pages/authOnboard/profile_setup_screen.dart';
 import 'package:vibeflow/pages/home_page.dart';
+import 'package:vibeflow/pages/newPlayerPage.dart';
 import 'package:vibeflow/services/access_code_wrapper.dart';
 import 'package:vibeflow/services/audio_service.dart';
 import 'package:vibeflow/services/haptic_feedback_service.dart';
 import 'package:vibeflow/services/sync_services/musicIntelligence.dart';
+import 'package:vibeflow/utils/deepLinkService.dart';
 import 'package:vibeflow/utils/secure_storage.dart';
 import 'package:vibeflow/utils/theme_provider.dart';
 import 'package:vibeflow/services/supabase_initializer.dart';
 import 'package:vibeflow/widgets/ban_wrapper.dart';
+
+final GlobalKey<NavigatorState> rootNavigatorKey = GlobalKey<NavigatorState>();
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -351,18 +355,35 @@ class AudioErrorHandler {
   }
 }
 
-class VibeFlowApp extends ConsumerWidget {
+class VibeFlowApp extends ConsumerStatefulWidget {
   const VibeFlowApp({Key? key}) : super(key: key);
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<VibeFlowApp> createState() => _VibeFlowAppState();
+}
+
+class _VibeFlowAppState extends ConsumerState<VibeFlowApp> {
+  @override
+  void initState() {
+    super.initState();
+
+    // 🔗 Initialize deep links after first frame
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final deepLinkService = ref.read(deepLinkServiceProvider);
+      deepLinkService.initDeepLinks(context);
+      print('✅ Deep linking initialized');
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final themeState = ref.watch(themeProvider);
     final lightTheme = ref.watch(lightThemeProvider);
     final darkTheme = ref.watch(darkThemeProvider);
     final themeNotifier = ref.read(themeProvider.notifier);
 
     return MaterialApp(
-      // ❌ DON'T wrap MaterialApp with BanWrapper
+      navigatorKey: rootNavigatorKey,
       title: 'VibeFlow',
       debugShowCheckedModeBanner: false,
       theme: lightTheme,

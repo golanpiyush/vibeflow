@@ -764,6 +764,223 @@ extension CommunityPlaylistScraper on YouTubeMusicScraper {
     }
   }
 
+  /// Stream playlist songs progressively as they're parsed
+  Stream<Song> streamPlaylistSongs(String playlistId) async* {
+    try {
+      print('📋 [Playlist Stream] Starting for: $playlistId');
+
+      final uri = Uri.parse('$_baseUrl/browse?key=$_musicApiKey');
+
+      final cleanId = playlistId.startsWith('VL')
+          ? playlistId
+          : playlistId.startsWith('RDAMPL')
+          ? playlistId
+          : 'VL$playlistId';
+
+      final body = jsonEncode({
+        'context': {
+          'client': {
+            'clientName': 'WEB_REMIX',
+            'clientVersion': '1.20231122.01.00',
+            'hl': 'en',
+            'gl': 'US',
+          },
+        },
+        'browseId': cleanId,
+      });
+
+      final response = await _makeRequest(uri, body);
+      if (response == null) return;
+
+      final json = jsonDecode(response.body);
+
+      // Navigate to contents
+      var contents =
+          json['contents']?['singleColumnBrowseResultsRenderer']?['tabs']?[0]?['tabRenderer']?['content']?['sectionListRenderer']?['contents']
+              as List?;
+
+      if (contents == null) {
+        contents =
+            json['contents']?['twoColumnBrowseResultsRenderer']?['secondaryContents']?['sectionListRenderer']?['contents']
+                as List?;
+      }
+
+      if (contents == null) return;
+
+      print('✅ [Playlist Stream] Found ${contents.length} sections');
+
+      // Parse songs from sections and yield immediately
+      for (var i = 0; i < contents.length; i++) {
+        final section = contents[i];
+
+        final shelf =
+            section['musicPlaylistShelfRenderer'] ??
+            section['musicShelfRenderer'] ??
+            section['musicCarouselShelfRenderer'];
+
+        if (shelf != null) {
+          final items = shelf['contents'] as List?;
+          if (items != null) {
+            for (final item in items) {
+              final song = _parsePlaylistSongItem(item);
+              if (song != null) {
+                print('📤 [Stream] Yielding: ${song.title}');
+                yield song; // Stream each song as it's parsed
+              }
+            }
+          }
+        }
+      }
+
+      print('✅ [Playlist Stream] Completed');
+    } catch (e, stack) {
+      print('❌ [Playlist Stream] Error: $e');
+      print('Stack: ${stack.toString().split('\n').take(3).join('\n')}');
+    }
+  }
+
+  /// Get playlist details with streaming callback
+  Future<CommunityPlaylist?> getPlaylistDetailsWithCallback(
+    String playlistId, {
+    Function(Song)? onSongParsed,
+  }) async {
+    try {
+      print('📋 [Playlist] Fetching with callback: $playlistId');
+
+      final uri = Uri.parse('$_baseUrl/browse?key=$_musicApiKey');
+
+      final cleanId = playlistId.startsWith('VL')
+          ? playlistId
+          : playlistId.startsWith('RDAMPL')
+          ? playlistId
+          : 'VL$playlistId';
+
+      final body = jsonEncode({
+        'context': {
+          'client': {
+            'clientName': 'WEB_REMIX',
+            'clientVersion': '1.20231122.01.00',
+            'hl': 'en',
+            'gl': 'US',
+          },
+        },
+        'browseId': cleanId,
+      });
+
+      final response = await _makeRequest(uri, body);
+      if (response == null) return null;
+
+      final json = jsonDecode(response.body);
+
+      String title = 'Unknown Playlist';
+      String creator = 'YouTube Music';
+      String? thumbnail;
+      final songs = <Song>[];
+
+      // Parse header (same as before)
+      var contents =
+          json['contents']?['singleColumnBrowseResultsRenderer']?['tabs']?[0]?['tabRenderer']?['content']?['sectionListRenderer']?['contents']
+              as List?;
+
+      if (contents == null) {
+        contents =
+            json['contents']?['twoColumnBrowseResultsRenderer']?['secondaryContents']?['sectionListRenderer']?['contents']
+                as List?;
+
+        if (contents != null) {
+          final primaryContents =
+              json['contents']?['twoColumnBrowseResultsRenderer']?['tabs']?[0]?['tabRenderer']?['content']?['sectionListRenderer']?['contents']
+                  as List?;
+
+          if (primaryContents != null && primaryContents.isNotEmpty) {
+            final header =
+                primaryContents[0]['musicResponsiveHeaderRenderer'] ??
+                primaryContents[0]['musicEditablePlaylistDetailHeaderRenderer'];
+
+            if (header != null) {
+              title = header['title']?['runs']?[0]?['text'] as String? ?? title;
+              final subtitle = header['subtitle']?['runs'] as List?;
+              if (subtitle != null && subtitle.isNotEmpty) {
+                creator = subtitle[0]['text'] as String? ?? creator;
+              }
+              final thumbnails =
+                  header['thumbnail']?['croppedSquareThumbnailRenderer']?['thumbnail']?['thumbnails'] ??
+                  header['thumbnail']?['musicThumbnailRenderer']?['thumbnail']?['thumbnails']
+                      as List?;
+              if (thumbnails != null && thumbnails.isNotEmpty) {
+                thumbnail = _extractBestThumbnail(thumbnails);
+              }
+            }
+          }
+        }
+      }
+
+      if (contents == null) return null;
+
+      // Parse songs with callback
+      for (var i = 0; i < contents.length; i++) {
+        final section = contents[i];
+
+        if (title == 'Unknown Playlist') {
+          final sectionHeader =
+              section['musicResponsiveHeaderRenderer'] ??
+              section['musicEditablePlaylistDetailHeaderRenderer'];
+
+          if (sectionHeader != null) {
+            title =
+                sectionHeader['title']?['runs']?[0]?['text'] as String? ??
+                title;
+            final subtitle = sectionHeader['subtitle']?['runs'] as List?;
+            if (subtitle != null && subtitle.isNotEmpty) {
+              creator = subtitle[0]['text'] as String? ?? creator;
+            }
+            final thumbnails =
+                sectionHeader['thumbnail']?['croppedSquareThumbnailRenderer']?['thumbnail']?['thumbnails'] ??
+                sectionHeader['thumbnail']?['musicThumbnailRenderer']?['thumbnail']?['thumbnails']
+                    as List?;
+            if (thumbnails != null && thumbnails.isNotEmpty) {
+              thumbnail = _extractBestThumbnail(thumbnails);
+            }
+          }
+        }
+
+        final shelf =
+            section['musicPlaylistShelfRenderer'] ??
+            section['musicShelfRenderer'] ??
+            section['musicCarouselShelfRenderer'];
+
+        if (shelf != null) {
+          final items = shelf['contents'] as List?;
+          if (items != null) {
+            for (final item in items) {
+              final song = _parsePlaylistSongItem(item);
+              if (song != null) {
+                songs.add(song);
+                // Call callback immediately when song is parsed
+                if (onSongParsed != null) {
+                  onSongParsed(song);
+                }
+              }
+            }
+          }
+        }
+      }
+
+      return CommunityPlaylist(
+        id: playlistId,
+        title: title,
+        creator: creator,
+        thumbnail: thumbnail,
+        songCount: songs.length,
+        songs: songs,
+      );
+    } catch (e, stack) {
+      print('❌ Parse details error: $e');
+      print('Stack: ${stack.toString().split('\n').take(5).join('\n')}');
+      return null;
+    }
+  }
+
   Song? _parsePlaylistSongItem(Map<String, dynamic> item) {
     try {
       final renderer = item['musicResponsiveListItemRenderer'];

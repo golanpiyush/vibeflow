@@ -39,6 +39,9 @@ class _ArtistPageState extends ConsumerState<ArtistPage> {
   String selectedTab = 'Overview';
   String artistBio = '';
   bool isBioLoading = false;
+  bool showAllSongsInTab = false;
+  List<dynamic> tabAllSongs = [];
+  bool isLoadingTabAllSongs = false;
 
   @override
   void initState() {
@@ -50,26 +53,76 @@ class _ArtistPageState extends ConsumerState<ArtistPage> {
   Future<void> _loadArtistData() async {
     setState(() => isLoading = true);
     try {
-      final details = await _artistsScraper.getArtistDetails(widget.artist.id);
-
-      // Fetch more albums - increase limit or remove it
-      final albums = await _albumsScraper.searchAlbums(
-        '${widget.artist.name} album',
-        limit: 50, // Increased from 10 to 50, or use a higher number
+      // Use getArtistDetailsExtended to get ALL songs, albums, and singles
+      final extendedDetails = await _artistsScraper.getArtistDetailsExtended(
+        widget.artist.id,
       );
 
-      // Fetch singles separately
-      final singles = await _albumsScraper.searchAlbums(
-        '${widget.artist.name} single',
-        limit: 50, // Fetch singles with higher limit
-      );
+      if (extendedDetails != null) {
+        // Fetch albums separately for more results
+        final albums = await _albumsScraper.searchAlbums(
+          '${widget.artist.name} album',
+          limit: 50,
+        );
 
-      setState(() {
-        artistDetails = details;
-        artistAlbums = albums;
-        artistSingles = singles; // Now populated with actual singles
-        isLoading = false;
-      });
+        // Fetch singles separately
+        final singles = await _albumsScraper.searchAlbums(
+          '${widget.artist.name} single',
+          limit: 50,
+        );
+
+        setState(() {
+          // Create ArtistDetails from extended details
+          artistDetails = ArtistDetails(
+            artist: extendedDetails.artist,
+            topSongs: extendedDetails.topSongs, // First 10 songs
+            albums: extendedDetails.albums.isNotEmpty
+                ? extendedDetails.albums
+                : albums,
+          );
+
+          // Store all songs separately
+          tabAllSongs = extendedDetails.allSongs;
+
+          artistAlbums = extendedDetails.albums.isNotEmpty
+              ? extendedDetails.albums
+              : albums;
+
+          artistSingles = extendedDetails.singles.isNotEmpty
+              ? extendedDetails.singles
+              : singles;
+
+          isLoading = false;
+        });
+
+        print(
+          '✅ Loaded artist with ${extendedDetails.allSongs.length} total songs, '
+          '${artistAlbums.length} albums, ${artistSingles.length} singles',
+        );
+      } else {
+        // Fallback to regular getArtistDetails if extended fails
+        final details = await _artistsScraper.getArtistDetails(
+          widget.artist.id,
+        );
+
+        final albums = await _albumsScraper.searchAlbums(
+          '${widget.artist.name} album',
+          limit: 50,
+        );
+
+        final singles = await _albumsScraper.searchAlbums(
+          '${widget.artist.name} single',
+          limit: 50,
+        );
+
+        setState(() {
+          artistDetails = details;
+          artistAlbums = albums;
+          artistSingles = singles;
+          tabAllSongs = details?.topSongs ?? [];
+          isLoading = false;
+        });
+      }
     } catch (e) {
       print('Error loading artist data: $e');
       setState(() => isLoading = false);
@@ -126,6 +179,70 @@ class _ArtistPageState extends ConsumerState<ArtistPage> {
     return '$artistName is a talented artist known for their unique sound and creative contributions to the music industry. '
         'With a dedicated fanbase of ${widget.artist.subscribers}, they continue to produce music that resonates with audiences worldwide. '
         'Their work spans various genres and collaborations, making them a versatile and influential figure in modern music.';
+  }
+
+  Future<void> _loadAllSongsForTab() async {
+    // If already loading, don't start another load
+    if (isLoadingTabAllSongs) {
+      print('⏸️ Already loading songs');
+      return;
+    }
+
+    // Check if we already have loaded all songs and they're more than just top songs
+    if (tabAllSongs.isNotEmpty && tabAllSongs.length > 10) {
+      print('📦 Using cached all songs: ${tabAllSongs.length}');
+      setState(() {
+        showAllSongsInTab = true;
+      });
+      return;
+    }
+
+    setState(() {
+      isLoadingTabAllSongs = true;
+      showAllSongsInTab = true; // Show the expanded view immediately
+    });
+
+    try {
+      print('🎵 Fetching ALL songs using getArtistDetailsExtended...');
+      print('Artist ID: ${widget.artist.id}');
+
+      final extendedDetails = await _artistsScraper.getArtistDetailsExtended(
+        widget.artist.id,
+      );
+
+      if (!mounted) return;
+
+      if (extendedDetails != null && extendedDetails.allSongs.isNotEmpty) {
+        print(
+          '✅ Successfully loaded ${extendedDetails.allSongs.length} total songs',
+        );
+        setState(() {
+          tabAllSongs = extendedDetails.allSongs;
+          isLoadingTabAllSongs = false;
+        });
+      } else {
+        print('⚠️ getArtistDetailsExtended returned null or empty');
+        print(
+          'Fallback: Using ${artistDetails?.topSongs.length ?? 0} top songs',
+        );
+        setState(() {
+          tabAllSongs = artistDetails?.topSongs ?? [];
+          isLoadingTabAllSongs = false;
+        });
+      }
+    } catch (e, stackTrace) {
+      print('❌ Error loading all songs: $e');
+      print(
+        'Stack trace: ${stackTrace.toString().split('\n').take(5).join('\n')}',
+      );
+
+      if (!mounted) return;
+
+      setState(() {
+        tabAllSongs = artistDetails?.topSongs ?? [];
+        isLoadingTabAllSongs = false;
+      });
+    }
   }
 
   int? _parseDurationToSeconds(String duration) {
@@ -803,6 +920,7 @@ class _ArtistPageState extends ConsumerState<ArtistPage> {
     final textPrimaryColor = ref.watch(themeTextPrimaryColorProvider);
     final iconActiveColor = ref.watch(themeIconActiveColorProvider);
 
+    // Initial loading state
     if (isLoading) {
       return Column(
         children: List.generate(5, (index) {
@@ -863,6 +981,7 @@ class _ArtistPageState extends ConsumerState<ArtistPage> {
       );
     }
 
+    // No songs available
     if (artistDetails == null || artistDetails!.topSongs.isEmpty) {
       return Center(
         child: Padding(
@@ -877,22 +996,151 @@ class _ArtistPageState extends ConsumerState<ArtistPage> {
       );
     }
 
-    // Show total count at top
+    // Determine which songs to show
+    final songsToShow = showAllSongsInTab && tabAllSongs.isNotEmpty
+        ? tabAllSongs
+        : artistDetails!.topSongs;
+
+    final songCount = showAllSongsInTab && tabAllSongs.isNotEmpty
+        ? tabAllSongs.length
+        : artistDetails!.topSongs.length;
+
+    // Build the songs list
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
+        // Header with count and View All / View Less button
         Padding(
           padding: const EdgeInsets.only(bottom: 16),
-          child: Text(
-            '${artistDetails!.topSongs.length} songs',
-            style: AppTypography.sectionHeader(
-              context,
-            ).copyWith(color: textPrimaryColor, fontSize: 18),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                '$songCount songs',
+                style: AppTypography.sectionHeader(
+                  context,
+                ).copyWith(color: textPrimaryColor, fontSize: 18),
+              ),
+              GestureDetector(
+                onTap: () async {
+                  print('🔘 View All button tapped');
+                  print(
+                    'Current state - showAllSongsInTab: $showAllSongsInTab',
+                  );
+                  print('Current tabAllSongs length: ${tabAllSongs.length}');
+
+                  if (showAllSongsInTab) {
+                    // Collapse back to top songs
+                    print('📥 Collapsing to top songs');
+                    setState(() {
+                      showAllSongsInTab = false;
+                    });
+                  } else {
+                    // Expand to show all songs
+                    print('📤 Expanding to show all songs');
+                    await _loadAllSongsForTab();
+                  }
+                },
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 8,
+                  ),
+                  decoration: BoxDecoration(
+                    color: iconActiveColor.withOpacity(0.15),
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        showAllSongsInTab ? 'View Less' : 'View All',
+                        style: AppTypography.subtitle(context).copyWith(
+                          color: iconActiveColor,
+                          fontSize: 14,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      const SizedBox(width: 4),
+                      Icon(
+                        showAllSongsInTab
+                            ? Icons.keyboard_arrow_up
+                            : Icons.arrow_forward_ios,
+                        size: 12,
+                        color: iconActiveColor,
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
           ),
         ),
-        ...artistDetails!.topSongs.map((song) {
-          return _buildSongItem(song, ref);
-        }).toList(),
+
+        // Loading state when fetching all songs
+        if (isLoadingTabAllSongs) ...[
+          ...List.generate(10, (index) {
+            return Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 12),
+              margin: const EdgeInsets.only(bottom: 8),
+              child: Row(
+                children: [
+                  ShimmerWidget(
+                    baseColor: cardBackgroundColor,
+                    highlightColor: iconActiveColor.withOpacity(0.3),
+                    child: Container(
+                      width: 56,
+                      height: 56,
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(6),
+                        color: cardBackgroundColor,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        ShimmerWidget(
+                          baseColor: cardBackgroundColor,
+                          highlightColor: iconActiveColor.withOpacity(0.3),
+                          child: Container(
+                            width: double.infinity,
+                            height: 14,
+                            decoration: BoxDecoration(
+                              color: cardBackgroundColor,
+                              borderRadius: BorderRadius.circular(4),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 6),
+                        ShimmerWidget(
+                          baseColor: cardBackgroundColor,
+                          highlightColor: iconActiveColor.withOpacity(0.3),
+                          child: Container(
+                            width: 100,
+                            height: 12,
+                            decoration: BoxDecoration(
+                              color: cardBackgroundColor,
+                              borderRadius: BorderRadius.circular(4),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            );
+          }),
+        ]
+        // Songs list
+        else ...[
+          ...songsToShow.map((song) {
+            return _buildSongItem(song, ref);
+          }).toList(),
+        ],
       ],
     );
   }

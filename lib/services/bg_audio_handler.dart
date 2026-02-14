@@ -5,9 +5,11 @@ import 'package:audio_session/audio_session.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:vibeflow/api_base/cache_manager.dart';
 import 'package:vibeflow/api_base/vibeflowcore.dart';
 import 'package:vibeflow/api_base/yt_radio.dart';
 import 'package:vibeflow/models/quick_picks_model.dart';
+import 'package:vibeflow/models/song_model.dart';
 import 'package:vibeflow/providers/RealTimeService.dart';
 import 'package:vibeflow/services/audioGoverner.dart';
 import 'package:vibeflow/services/cacheManager.dart';
@@ -82,6 +84,8 @@ class BackgroundAudioHandler extends BaseAudioHandler
   List<String> _playlistQueue = [];
   int _playlistCurrentIndex = -1;
   bool _isPlayingPlaylist = false;
+  String? _currentPlaylistId; // Track current playlist
+  final Map<String, List<Song>> _playlistCache = {}; // In-memory playlist cache
 
   //Refetcher settings
   int _autoRetryCount = 0;
@@ -180,6 +184,27 @@ class BackgroundAudioHandler extends BaseAudioHandler
     }
   }
 
+  /// Set playlist context for smart radio continuation
+  Future<void> setPlaylistContext({
+    required String playlistId,
+    required List<Song> songs,
+  }) async {
+    print('📋 [Playlist Context] Setting for: $playlistId');
+    print('   Songs: ${songs.length}');
+
+    _currentPlaylistId = playlistId;
+    _playlistCache[playlistId] = songs;
+
+    // Cache to disk asynchronously (don't await to keep it fast)
+    CacheManager.instance
+        .cachePlaylistSongs(playlistId, songs)
+        .then((_) {
+          print('💾 [Playlist Context] Cached to disk');
+        })
+        .catchError((e) {
+          print('⚠️ [Playlist Context] Cache failed: $e');
+        });
+  }
   // ==================== AUDIO SESSION SETUP ====================
   // Replace your entire _setupAudioSession method with this enhanced version
 
@@ -1226,7 +1251,13 @@ class BackgroundAudioHandler extends BaseAudioHandler
       if (shouldLoadNewRadio) {
         print('📻 [HANDLER] Loading new radio for: ${song.title}');
         _currentRadioSourceId = song.videoId;
-        _loadRadioImmediately(song);
+
+        // 🔥 NEW: Check if this song is from a playlist
+        if (sourceType == RadioSourceType.communityPlaylist &&
+            _currentPlaylistId != null) {
+          print('📋 [HANDLER] Using playlist continuation for radio');
+          await _loadRadioFromPlaylistContinuation(_currentPlaylistId!);
+        }
       } else if (!shouldClearRadio && _radioQueue.isEmpty) {
         print('📻 [HANDLER] Radio empty, loading...');
         _currentRadioSourceId = song.videoId;
@@ -2222,6 +2253,161 @@ class BackgroundAudioHandler extends BaseAudioHandler
 
     print('📡 [Radio] Broadcasted radio state: ${_radioQueue.length} songs');
   }
+
+  /// Load radio from playlist continuation
+  Future<void> _loadRadioFromPlaylistContinuation(String playlistId) async {
+    print('📋 [Playlist Radio] Loading from playlist: $playlistId');
+
+    try {
+      // Check cache first
+      List<Song>? playlistSongs = _playlistCache[playlistId];
+
+      // If not in memory, try disk cache
+      if (playlistSongs == null || playlistSongs.isEmpty) {
+        print('💾 [Playlist Radio] Loading from disk cache...');
+        final cacheManager = CacheManager.instance;
+        playlistSongs = await cacheManager.getCachedPlaylistSongs(playlistId);
+
+        if (playlistSongs.isNotEmpty) {
+          _playlistCache[playlistId] = playlistSongs;
+          print(
+            '✅ [Playlist Radio] Loaded ${playlistSongs.length} songs from cache',
+          );
+        }
+      }
+
+      if (playlistSongs == null || playlistSongs.isEmpty) {
+        print('⚠️ [Playlist Radio] No cached songs, using normal radio');
+        // Fallback to normal radio
+        final currentMedia = mediaItem.value;
+        if (currentMedia != null) {
+          final quickPick = _quickPickFromMediaItem(currentMedia);
+          await _loadRadioImmediately(quickPick);
+        }
+        return;
+      }
+
+      // Get current song index in playlist
+      final currentMedia = mediaItem.value;
+      if (currentMedia == null) return;
+
+      final currentIndex = playlistSongs.indexWhere(
+        (s) => s.videoId == currentMedia.id,
+      );
+
+      if (currentIndex == -1) {
+        print('⚠️ [Playlist Radio] Current song not found in playlist');
+        return;
+      }
+
+      // Get remaining songs from playlist (after current)
+      final remainingSongs = playlistSongs.sublist(
+        (currentIndex + 1).clamp(0, playlistSongs.length),
+      );
+
+      print(
+        '✅ [Playlist Radio] Found ${remainingSongs.length} remaining songs',
+      );
+
+      if (remainingSongs.isEmpty) {
+        print('📻 [Playlist Radio] No more playlist songs, using normal radio');
+        final quickPick = _quickPickFromMediaItem(currentMedia);
+        await _loadRadioImmediately(quickPick);
+        return;
+      }
+
+      // Convert to MediaItems for radio queue
+      _radioQueue.clear();
+
+      for (final song in remainingSongs.take(20)) {
+        // Limit to 20 songs
+        try {
+          final mediaItem = MediaItem(
+            id: song.videoId,
+            title: song.title,
+            artist: song.artists.join(', '),
+            artUri:
+                song.thumbnail.isNotEmpty &&
+                    (song.thumbnail.startsWith('http://') ||
+                        song.thumbnail.startsWith('https://'))
+                ? Uri.parse(song.thumbnail)
+                : null,
+            duration: song.duration != null
+                ? _parseDurationString(song.duration!)
+                : null,
+          );
+
+          _radioQueue.add(mediaItem);
+        } catch (e) {
+          print('⚠️ [Playlist Radio] Failed to add song: ${song.title}');
+        }
+      }
+
+      // If playlist songs < 20, supplement with normal radio
+      if (_radioQueue.length < 20) {
+        print(
+          '🔄 [Playlist Radio] Supplementing with ${20 - _radioQueue.length} radio songs',
+        );
+
+        final lastPlaylistSong = remainingSongs.last;
+        final radioSongs = await _radioService.getRadioForSong(
+          videoId: lastPlaylistSong.videoId,
+          title: lastPlaylistSong.title,
+          artist: lastPlaylistSong.artists.join(', '),
+          limit: 20 - _radioQueue.length,
+        );
+
+        for (final song in radioSongs) {
+          try {
+            final mediaItem = MediaItem(
+              id: song.videoId,
+              title: song.title,
+              artist: song.artists,
+              artUri:
+                  song.thumbnail.isNotEmpty &&
+                      (song.thumbnail.startsWith('http://') ||
+                          song.thumbnail.startsWith('https://'))
+                  ? Uri.parse(song.thumbnail)
+                  : null,
+              duration: song.duration != null
+                  ? _parseDurationString(song.duration!)
+                  : null,
+            );
+
+            _radioQueue.add(mediaItem);
+          } catch (e) {
+            print('⚠️ [Playlist Radio] Failed to add radio song');
+          }
+        }
+      }
+
+      _radioQueueIndex = -1;
+
+      print(
+        '✅ [Playlist Radio] Loaded ${_radioQueue.length} songs (playlist continuation)',
+      );
+
+      // Broadcast to UI
+      final radioQueueData = _radioQueue.map((item) {
+        return {
+          'id': item.id,
+          'title': item.title,
+          'artist': item.artist ?? 'Unknown Artist',
+          'artUri': item.artUri?.toString(),
+          'duration': item.duration?.inMilliseconds,
+        };
+      }).toList();
+
+      _updateCustomState({
+        'radio_queue': radioQueueData,
+        'radio_queue_count': radioQueueData.length,
+        'radio_source': 'playlist_continuation',
+      });
+    } catch (e, stack) {
+      print('❌ [Playlist Radio] Error: $e');
+      print('Stack: ${stack.toString().split('\n').take(3).join('\n')}');
+    }
+  }
   // ============================================================================
   // HELPER: Verify radio queue is actually populated
   // ============================================================================
@@ -2710,6 +2896,7 @@ class BackgroundAudioHandler extends BaseAudioHandler
   Future<void> playPlaylistQueue(
     List<QuickPick> songs, {
     int startIndex = 0,
+    String? playlistId, // ADD THIS PARAMETER
   }) async {
     if (songs.isEmpty) return;
 
@@ -2717,6 +2904,34 @@ class BackgroundAudioHandler extends BaseAudioHandler
       print('🎵 [PLAYLIST] ========== PLAYING PLAYLIST ==========');
       print('   Songs: ${songs.length}');
       print('   Start index: $startIndex');
+      print('   Playlist ID: $playlistId');
+
+      // 🔥 NEW: Store playlist ID and cache songs
+      if (playlistId != null) {
+        _currentPlaylistId = playlistId;
+
+        // Convert QuickPick to Song for caching
+        final songsToCache = songs
+            .map(
+              (qp) => Song(
+                videoId: qp.videoId,
+                title: qp.title,
+                artists: [qp.artists],
+                thumbnail: qp.thumbnail,
+                duration: qp.duration,
+                audioUrl: null,
+              ),
+            )
+            .toList();
+
+        _playlistCache[playlistId] = songsToCache;
+
+        // Cache to disk asynchronously
+        CacheManager.instance.cachePlaylistSongs(playlistId, songsToCache);
+
+        print('💾 [PLAYLIST] Cached ${songs.length} songs for continuation');
+      }
+
       _governor.onPlaylistStart(songs.length);
 
       // Stop current playback
@@ -3111,6 +3326,13 @@ class BackgroundAudioHandler extends BaseAudioHandler
         print('❌ [CustomState] Fallback also failed: $e2');
       }
     }
+  }
+
+  /// Clear playlist context
+  void clearPlaylistContext() {
+    print('🗑️ [Playlist Context] Clearing');
+    _currentPlaylistId = null;
+    _playlistCache.clear();
   }
 
   Map<String, dynamic> _safeCustomState() {

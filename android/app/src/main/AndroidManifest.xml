@@ -63,7 +63,37 @@
                 <action android:name="android.intent.action.MAIN"/>
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
+            
+
+            <intent-filter android:autoVerify="true">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data
+                    android:scheme="https"
+                    android:host="golanpiyush.github.io"
+                    android:pathPrefix="/vibeflow/song" />
+            </intent-filter>
+            
+            <!-- Deep Linkers -->
+            <intent-filter android:autoVerify="true">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                
+                <!-- Custom scheme -->
+                <data android:scheme="vibeflow" android:host="song" />
+                
+                <!-- HTTPS links (App Links) -->
+                <data
+                    android:scheme="https"
+                    android:host="vibeflow.app"
+                    android:pathPrefix="/song" />
+            </intent-filter>
+            
         </activity>
+
+        
 
         <!-- ADD FILEPROVIDER -->
         <provider

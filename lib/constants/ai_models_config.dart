@@ -80,10 +80,10 @@ APPROVE
 
 class GatingRules {
   // Minimum unique songs required before AI activation
-  static const int minUniqueSongs = 5;
+  static const int minUniqueSongs = 35;
 
   // Minimum distinct listening days required
-  static const int minListeningDays = 1;
+  static const int minListeningDays = 7;
 
   // Exact playlist size
   static const int playlistSize = 8;

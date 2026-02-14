@@ -1,10 +1,63 @@
 // lib/pages/subpages/songs/playlists.dart - FIXED VERSION
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_riverpod/legacy.dart';
+import 'package:http/http.dart' as http;
+import 'package:vibeflow/database/listening_activity_service.dart';
+import 'package:vibeflow/models/DBSong.dart';
 import 'package:vibeflow/models/playlist_model.dart';
 import 'package:vibeflow/pages/subpages/songs/playlistDetail.dart';
 import 'package:vibeflow/providers/playlist_providers.dart';
 import 'dart:io';
+import 'package:path_provider/path_provider.dart';
+import 'package:cached_network_image/cached_network_image.dart';
+import 'package:shimmer/shimmer.dart';
+import 'package:vibeflow/services/spotify_import_service.dart';
+
+final spotifyImportServiceProvider = Provider<SpotifyImportService>((ref) {
+  return SpotifyImportService();
+});
+
+enum _ImportState { idle, loading, success, error }
+
+class _SpotifyImportNotifier
+    extends
+        StateNotifier<
+          ({_ImportState state, String? error, SpotifyPlaylistData? data})
+        > {
+  final SpotifyImportService _service;
+
+  _SpotifyImportNotifier(this._service)
+    : super((state: _ImportState.idle, error: null, data: null));
+
+  Future<void> importPlaylist(String link) async {
+    state = (state: _ImportState.loading, error: null, data: null);
+    try {
+      final data = await _service.importPlaylist(link);
+      state = (state: _ImportState.success, error: null, data: data);
+    } on SpotifyImportException catch (e) {
+      state = (state: _ImportState.error, error: e.message, data: null);
+    } catch (e) {
+      state = (
+        state: _ImportState.error,
+        error: 'Something went wrong. Please try again.',
+        data: null,
+      );
+    }
+  }
+
+  void reset() {
+    state = (state: _ImportState.idle, error: null, data: null);
+  }
+}
+
+final _spotifyImportProvider =
+    StateNotifierProvider.autoDispose<
+      _SpotifyImportNotifier,
+      ({_ImportState state, String? error, SpotifyPlaylistData? data})
+    >((ref) {
+      return _SpotifyImportNotifier(ref.watch(spotifyImportServiceProvider));
+    });
 
 class IntegratedPlaylistsScreen extends ConsumerStatefulWidget {
   const IntegratedPlaylistsScreen({Key? key}) : super(key: key);
@@ -19,6 +72,7 @@ class _IntegratedPlaylistsScreenState
   @override
   Widget build(BuildContext context) {
     final playlistsAsync = ref.watch(playlistsProvider);
+    final hasAccessAsync = ref.watch(hasAccessCodeProvider);
 
     return Scaffold(
       backgroundColor: Colors.black,
@@ -30,9 +84,9 @@ class _IntegratedPlaylistsScreenState
               child: playlistsAsync.when(
                 data: (playlists) {
                   if (playlists.isEmpty) {
-                    return _buildEmptyState();
+                    return _buildEmptyState(hasAccessAsync);
                   }
-                  return _buildPlaylistGrid(playlists);
+                  return _buildPlaylistGrid(playlists, hasAccessAsync);
                 },
                 loading: () => const Center(
                   child: CircularProgressIndicator(color: Colors.white),
@@ -55,19 +109,6 @@ class _IntegratedPlaylistsScreenState
                             color: Colors.white.withOpacity(0.7),
                             fontSize: 16,
                           ),
-                        ),
-                        const SizedBox(height: 8),
-                        Text(
-                          error.toString().length > 100
-                              ? '${error.toString().substring(0, 100)}...'
-                              : error.toString(),
-                          style: TextStyle(
-                            color: Colors.white.withOpacity(0.5),
-                            fontSize: 12,
-                          ),
-                          textAlign: TextAlign.center,
-                          maxLines: 3,
-                          overflow: TextOverflow.ellipsis,
                         ),
                       ],
                     ),
@@ -115,7 +156,7 @@ class _IntegratedPlaylistsScreenState
     );
   }
 
-  Widget _buildEmptyState() {
+  Widget _buildEmptyState(AsyncValue<bool> hasAccessAsync) {
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(40),
@@ -151,7 +192,7 @@ class _IntegratedPlaylistsScreenState
             ),
             const SizedBox(height: 12),
             Text(
-              'Create your first playlist to organize\nyour favorite songs',
+              'Create your first playlist or import\none from Spotify',
               style: TextStyle(
                 color: Colors.white.withOpacity(0.6),
                 fontSize: 15,
@@ -160,25 +201,34 @@ class _IntegratedPlaylistsScreenState
               textAlign: TextAlign.center,
             ),
             const SizedBox(height: 32),
-            ElevatedButton.icon(
-              onPressed: _createNewPlaylist,
-              icon: const Icon(Icons.add, size: 20),
-              label: const Text('Create Playlist'),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFFFF4458),
-                foregroundColor: Colors.white,
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 32,
-                  vertical: 16,
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                ElevatedButton.icon(
+                  onPressed: _createNewPlaylist,
+                  icon: const Icon(Icons.add, size: 20),
+                  label: const Text('Create'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFFFF4458),
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 24,
+                      vertical: 14,
+                    ),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(24),
+                    ),
+                  ),
                 ),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(24),
+                const SizedBox(width: 12),
+                hasAccessAsync.when(
+                  data: (hasAccess) => hasAccess
+                      ? _SpotifyImportButton(onPressed: _openSpotifyImportSheet)
+                      : const SizedBox.shrink(),
+                  loading: () => const SizedBox.shrink(),
+                  error: (_, __) => const SizedBox.shrink(),
                 ),
-                textStyle: const TextStyle(
-                  fontSize: 16,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
+              ],
             ),
           ],
         ),
@@ -186,17 +236,30 @@ class _IntegratedPlaylistsScreenState
     );
   }
 
-  Widget _buildPlaylistGrid(List<Playlist> playlists) {
+  Widget _buildPlaylistGrid(
+    List<Playlist> playlists,
+    AsyncValue<bool> hasAccessAsync,
+  ) {
+    final hasAccess = hasAccessAsync.when(
+      data: (v) => v,
+      loading: () => false,
+      error: (_, __) => false,
+    );
     return GridView.builder(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 96),
       gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
         crossAxisCount: 2,
         childAspectRatio: 0.85,
         crossAxisSpacing: 16,
         mainAxisSpacing: 16,
       ),
-      itemCount: playlists.length,
+      // +1 for the Spotify import card (only shown if user has access)
+      itemCount: playlists.length + (hasAccess ? 1 : 0),
       itemBuilder: (context, index) {
+        // The Spotify import card is always the LAST item in the grid
+        if (hasAccess && index == playlists.length) {
+          return _SpotifyImportCard(onTap: _openSpotifyImportSheet);
+        }
         return _PlaylistCard(
           playlist: playlists[index],
           onTap: () => _openPlaylist(playlists[index]),
@@ -211,6 +274,17 @@ class _IntegratedPlaylistsScreenState
       MaterialPageRoute(
         builder: (context) => PlaylistDetailScreen(playlistId: playlist.id!),
       ),
+    ).then((_) {
+      ref.invalidate(playlistsProvider);
+    });
+  }
+
+  void _openSpotifyImportSheet() {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) => const _SpotifyImportSheet(),
     ).then((_) {
       ref.invalidate(playlistsProvider);
     });
@@ -236,50 +310,12 @@ class _IntegratedPlaylistsScreenState
         content: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            TextField(
-              controller: nameController,
-              autofocus: true,
-              style: const TextStyle(color: Colors.white),
-              decoration: InputDecoration(
-                hintText: 'Playlist name',
-                hintStyle: TextStyle(color: Colors.white.withOpacity(0.4)),
-                filled: true,
-                fillColor: Colors.white.withOpacity(0.05),
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
-                  borderSide: BorderSide.none,
-                ),
-                focusedBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
-                  borderSide: const BorderSide(
-                    color: Color(0xFFFF4458),
-                    width: 2,
-                  ),
-                ),
-              ),
-            ),
+            _buildTextField(nameController, 'Playlist name', autofocus: true),
             const SizedBox(height: 16),
-            TextField(
-              controller: descController,
-              style: const TextStyle(color: Colors.white),
+            _buildTextField(
+              descController,
+              'Description (optional)',
               maxLines: 3,
-              decoration: InputDecoration(
-                hintText: 'Description (optional)',
-                hintStyle: TextStyle(color: Colors.white.withOpacity(0.4)),
-                filled: true,
-                fillColor: Colors.white.withOpacity(0.05),
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
-                  borderSide: BorderSide.none,
-                ),
-                focusedBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
-                  borderSide: const BorderSide(
-                    color: Color(0xFFFF4458),
-                    width: 2,
-                  ),
-                ),
-              ),
             ),
           ],
         ),
@@ -315,15 +351,12 @@ class _IntegratedPlaylistsScreenState
 
     if (result != null && result['name']!.trim().isNotEmpty) {
       try {
-        // Use the future provider and wait for it
         final repo = await ref.read(playlistRepositoryFutureProvider.future);
         await repo.createPlaylist(
           name: result['name']!.trim(),
           description: result['description']?.trim(),
         );
-
         ref.invalidate(playlistsProvider);
-
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
@@ -346,7 +379,1088 @@ class _IntegratedPlaylistsScreenState
       }
     }
   }
+
+  Widget _buildTextField(
+    TextEditingController ctrl,
+    String hint, {
+    bool autofocus = false,
+    int maxLines = 1,
+  }) {
+    return TextField(
+      controller: ctrl,
+      autofocus: autofocus,
+      style: const TextStyle(color: Colors.white),
+      maxLines: maxLines,
+      decoration: InputDecoration(
+        hintText: hint,
+        hintStyle: TextStyle(color: Colors.white.withOpacity(0.4)),
+        filled: true,
+        fillColor: Colors.white.withOpacity(0.05),
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: BorderSide.none,
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: const BorderSide(color: Color(0xFFFF4458), width: 2),
+        ),
+      ),
+    );
+  }
 }
+
+// ── Spotify Import Card (grid cell) ──────────────────────────────────────
+
+class _SpotifyImportCard extends StatelessWidget {
+  final VoidCallback onTap;
+  const _SpotifyImportCard({required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        decoration: BoxDecoration(
+          color: const Color(0xFF1A1A1A),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+            color: const Color(0xFF1DB954).withOpacity(0.4),
+            width: 1.5,
+          ),
+        ),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Container(
+              width: 64,
+              height: 64,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: const Color(0xFF1DB954).withOpacity(0.15),
+              ),
+              child: Center(
+                child: Image.asset(
+                  'assets/spotify_icon.png', // drop the Spotify icon in assets
+                  width: 32,
+                  height: 32,
+                  errorBuilder: (_, __, ___) => const Icon(
+                    Icons.add_circle_outline,
+                    color: Color(0xFF1DB954),
+                    size: 32,
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(height: 14),
+            const Text(
+              'Import from\nSpotify',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: Color(0xFF1DB954),
+                fontSize: 14,
+                fontWeight: FontWeight.w600,
+                height: 1.4,
+              ),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              'Paste a playlist link',
+              style: TextStyle(
+                color: Colors.white.withOpacity(0.4),
+                fontSize: 11,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _SpotifyImportButton extends StatelessWidget {
+  final VoidCallback onPressed;
+  const _SpotifyImportButton({required this.onPressed});
+
+  @override
+  Widget build(BuildContext context) {
+    return ElevatedButton.icon(
+      onPressed: onPressed,
+      icon: const Icon(Icons.add_link, size: 20),
+      label: const Text('Spotify'),
+      style: ElevatedButton.styleFrom(
+        backgroundColor: const Color(0xFF1DB954),
+        foregroundColor: Colors.white,
+        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+      ),
+    );
+  }
+}
+
+// ── Spotify Import Bottom Sheet ───────────────────────────────────────────
+
+class _SpotifyImportSheet extends ConsumerStatefulWidget {
+  const _SpotifyImportSheet();
+
+  @override
+  ConsumerState<_SpotifyImportSheet> createState() =>
+      _SpotifyImportSheetState();
+}
+
+class _SpotifyImportSheetState extends ConsumerState<_SpotifyImportSheet> {
+  final _linkController = TextEditingController();
+  final _focusNode = FocusNode();
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _focusNode.requestFocus();
+    });
+  }
+
+  @override
+  void dispose() {
+    _linkController.dispose();
+    _focusNode.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final importState = ref.watch(_spotifyImportProvider);
+
+    return DraggableScrollableSheet(
+      initialChildSize: 0.75,
+      minChildSize: 0.5,
+      maxChildSize: 0.95,
+      expand: false,
+      builder: (context, scrollController) {
+        return Container(
+          decoration: const BoxDecoration(
+            color: Color(0xFF181818),
+            borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+          ),
+          child: Column(
+            children: [
+              // Handle
+              Padding(
+                padding: const EdgeInsets.only(top: 12),
+                child: Container(
+                  width: 40,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: Colors.white.withOpacity(0.2),
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+              ),
+              Expanded(
+                child: SingleChildScrollView(
+                  controller: scrollController,
+                  padding: EdgeInsets.only(
+                    left: 24,
+                    right: 24,
+                    top: 24,
+                    bottom: MediaQuery.of(context).viewInsets.bottom + 24,
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      // Header
+                      Row(
+                        children: [
+                          Container(
+                            width: 40,
+                            height: 40,
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              color: const Color(0xFF1DB954).withOpacity(0.15),
+                            ),
+                            child: const Center(
+                              child: Icon(
+                                Icons.add_link,
+                                color: Color(0xFF1DB954),
+                                size: 22,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 14),
+                          const Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                'Import Spotify Playlist',
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 18,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                              Text(
+                                'Public playlists only',
+                                style: TextStyle(
+                                  color: Color(0xFF1DB954),
+                                  fontSize: 12,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 28),
+
+                      // Link input
+                      TextField(
+                        controller: _linkController,
+                        focusNode: _focusNode,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 14,
+                        ),
+                        decoration: InputDecoration(
+                          hintText: 'https://open.spotify.com/playlist/...',
+                          hintStyle: TextStyle(
+                            color: Colors.white.withOpacity(0.3),
+                            fontSize: 13,
+                          ),
+                          filled: true,
+                          fillColor: Colors.white.withOpacity(0.06),
+                          prefixIcon: const Icon(
+                            Icons.link,
+                            color: Color(0xFF1DB954),
+                            size: 20,
+                          ),
+                          suffixIcon: _linkController.text.isNotEmpty
+                              ? IconButton(
+                                  icon: Icon(
+                                    Icons.clear,
+                                    color: Colors.white.withOpacity(0.4),
+                                    size: 18,
+                                  ),
+                                  onPressed: () {
+                                    _linkController.clear();
+                                    ref
+                                        .read(_spotifyImportProvider.notifier)
+                                        .reset();
+                                    setState(() {});
+                                  },
+                                )
+                              : null,
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(14),
+                            borderSide: BorderSide.none,
+                          ),
+                          focusedBorder: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(14),
+                            borderSide: const BorderSide(
+                              color: Color(0xFF1DB954),
+                              width: 1.5,
+                            ),
+                          ),
+                          errorBorder: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(14),
+                            borderSide: const BorderSide(
+                              color: Color(0xFFFF4458),
+                              width: 1.5,
+                            ),
+                          ),
+                        ),
+                        onChanged: (_) => setState(() {}),
+                        enabled: importState.state != _ImportState.loading,
+                      ),
+                      const SizedBox(height: 16),
+
+                      // Import button
+                      SizedBox(
+                        width: double.infinity,
+                        child: ElevatedButton(
+                          onPressed:
+                              importState.state == _ImportState.loading ||
+                                  _linkController.text.trim().isEmpty
+                              ? null
+                              : _startImport,
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: const Color(0xFF1DB954),
+                            disabledBackgroundColor: const Color(
+                              0xFF1DB954,
+                            ).withOpacity(0.3),
+                            foregroundColor: Colors.white,
+                            padding: const EdgeInsets.symmetric(vertical: 16),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(14),
+                            ),
+                          ),
+                          child: importState.state == _ImportState.loading
+                              ? const SizedBox(
+                                  width: 20,
+                                  height: 20,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2.5,
+                                    color: Colors.white,
+                                  ),
+                                )
+                              : const Text(
+                                  'Import Playlist',
+                                  style: TextStyle(
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                        ),
+                      ),
+
+                      // Error message
+                      if (importState.state == _ImportState.error) ...[
+                        const SizedBox(height: 16),
+                        _ErrorBanner(message: importState.error!),
+                      ],
+
+                      // Shimmer loading state
+                      if (importState.state == _ImportState.loading) ...[
+                        const SizedBox(height: 28),
+                        _SpotifyShimmerPreview(),
+                      ],
+
+                      // Success preview
+                      if (importState.state == _ImportState.success &&
+                          importState.data != null) ...[
+                        const SizedBox(height: 28),
+                        _SpotifyPlaylistPreview(
+                          data: importState.data!,
+                          onSave: _saveImportedPlaylist,
+                        ),
+                      ],
+
+                      // Help text
+                      if (importState.state == _ImportState.idle) ...[
+                        const SizedBox(height: 24),
+                        _buildHelpText(),
+                      ],
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildHelpText() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'How to get the link:',
+          style: TextStyle(
+            color: Colors.white.withOpacity(0.5),
+            fontSize: 13,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+        const SizedBox(height: 10),
+        _helpStep('1', 'Open Spotify and find a public playlist'),
+        _helpStep('2', 'Tap ··· → Share → Copy link'),
+        _helpStep('3', 'Paste it above and hit Import'),
+        const SizedBox(height: 12),
+        Row(
+          children: [
+            Icon(
+              Icons.lock_outline,
+              size: 14,
+              color: Colors.white.withOpacity(0.3),
+            ),
+            const SizedBox(width: 6),
+            Text(
+              'Private playlists cannot be imported',
+              style: TextStyle(
+                color: Colors.white.withOpacity(0.3),
+                fontSize: 12,
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _helpStep(String num, String text) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: 20,
+            height: 20,
+            margin: const EdgeInsets.only(right: 10, top: 1),
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: const Color(0xFF1DB954).withOpacity(0.2),
+            ),
+            child: Center(
+              child: Text(
+                num,
+                style: const TextStyle(
+                  color: Color(0xFF1DB954),
+                  fontSize: 11,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
+          ),
+          Expanded(
+            child: Text(
+              text,
+              style: TextStyle(
+                color: Colors.white.withOpacity(0.5),
+                fontSize: 13,
+                height: 1.4,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _startImport() {
+    FocusScope.of(context).unfocus();
+    ref
+        .read(_spotifyImportProvider.notifier)
+        .importPlaylist(_linkController.text.trim());
+  }
+
+  Future<void> _saveImportedPlaylist(SpotifyPlaylistData data) async {
+    // Show a blocking progress dialog so the user knows we're working
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => const _SavingDialog(),
+    );
+
+    try {
+      final repo = await ref.read(playlistRepositoryFutureProvider.future);
+
+      // ── Step 1: Download cover image to local storage ────────────────────
+      String? localCoverPath;
+      if (data.coverImageUrl != null) {
+        localCoverPath = await _downloadCoverImage(
+          url: data.coverImageUrl!,
+          playlistId: data.id,
+        );
+      }
+
+      // ── Step 2: Create the playlist row ──────────────────────────────────
+      final playlist = await repo.createPlaylist(
+        name: data.name,
+        description: (data.description?.isNotEmpty == true)
+            ? data.description
+            : null,
+        coverImagePath: localCoverPath, // local path or null
+        coverType: localCoverPath != null ? 'custom' : 'mosaic',
+      );
+
+      // ── Step 3: Convert Spotify tracks → DbSong ──────────────────────────
+      final dbSongs = data.tracks.map((t) => _spotifyTrackToDbSong(t)).toList();
+
+      // ── Step 4: Batch insert all songs ───────────────────────────────────
+      if (dbSongs.isNotEmpty) {
+        await repo.addSongsToPlaylistBatch(
+          playlistId: playlist.id!,
+          songs: dbSongs,
+        );
+      }
+
+      // ── Step 5: Dismiss dialog & show success ─────────────────────────────
+      if (mounted) {
+        Navigator.pop(context); // close progress dialog
+        Navigator.pop(context); // close import bottom sheet
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              '"${data.name}" imported · ${data.totalTracks} songs',
+            ),
+            backgroundColor: const Color(0xFF1DB954),
+            behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(10),
+            ),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        Navigator.pop(context); // close progress dialog on error too
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Import failed: $e'),
+            backgroundColor: Colors.red,
+            behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(10),
+            ),
+          ),
+        );
+      }
+    }
+  }
+
+  // ── Converts a Spotify track into the DbSong format your repo expects ───────
+  // SpotifyTrackData has no videoId (it's from Spotify, not YouTube).
+  // We store the Spotify track ID in the videoId field so the song is
+  // persistable. When the user tries to PLAY it your app can search YouTube
+  // for the title+artist the same way it does for regular songs.
+  DbSong _spotifyTrackToDbSong(SpotifyTrackData track) {
+    return DbSong(
+      videoId:
+          'spotify:${track.id}', // namespaced so it won't clash with YT IDs
+      title: track.title,
+      artists: track.artists,
+      thumbnail: track.albumArtUrl ?? '', // HQ 640×640 URL from Spotify
+      duration: _durationToString(track.duration),
+      addedAt: track.addedAt ?? DateTime.now(),
+      playCount: 0,
+      isActive: true,
+    );
+  }
+
+  // Converts Duration to the "m:ss" string your DbSong.duration field stores
+  String _durationToString(Duration d) {
+    final m = d.inMinutes.remainder(60);
+    final s = d.inSeconds.remainder(60).toString().padLeft(2, '0');
+    return '$m:$s';
+  }
+
+  // Downloads the HQ cover image and saves it to the app's documents directory.
+  // Returns the local file path on success, or null if the download fails.
+  Future<String?> _downloadCoverImage({
+    required String url,
+    required String playlistId,
+  }) async {
+    try {
+      final response = await http.get(Uri.parse(url));
+      if (response.statusCode != 200) return null;
+
+      final dir = await getApplicationDocumentsDirectory();
+      final file = File('${dir.path}/playlist_covers/spotify_$playlistId.jpg');
+
+      // Make sure the folder exists
+      await file.parent.create(recursive: true);
+      await file.writeAsBytes(response.bodyBytes);
+
+      return file.path;
+    } catch (e) {
+      // Cover download failure is non-fatal; playlist still gets created
+      debugPrint('⚠️ Cover download failed: $e');
+      return null;
+    }
+  }
+}
+
+// ── Small progress dialog shown while saving ─────────────────────────────────
+class _SavingDialog extends StatelessWidget {
+  const _SavingDialog();
+
+  @override
+  Widget build(BuildContext context) {
+    return Dialog(
+      backgroundColor: const Color(0xFF2A2A2A),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 28),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const SizedBox(
+              width: 40,
+              height: 40,
+              child: CircularProgressIndicator(
+                strokeWidth: 3,
+                color: Color(0xFF1DB954),
+              ),
+            ),
+            const SizedBox(height: 20),
+            const Text(
+              'Importing playlist…',
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 15,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              'Saving songs & cover art',
+              style: TextStyle(
+                color: Colors.white.withOpacity(0.5),
+                fontSize: 13,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+// ── Shimmer loading skeleton ──────────────────────────────────────────────
+
+class _SpotifyShimmerPreview extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    return Shimmer.fromColors(
+      baseColor: const Color(0xFF2A2A2A),
+      highlightColor: const Color(0xFF3A3A3A),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Cover + title row
+          Row(
+            children: [
+              Container(
+                width: 90,
+                height: 90,
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(10),
+                ),
+              ),
+              const SizedBox(width: 16),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Container(
+                      height: 18,
+                      width: double.infinity,
+                      color: Colors.white,
+                    ),
+                    const SizedBox(height: 10),
+                    Container(height: 14, width: 120, color: Colors.white),
+                    const SizedBox(height: 10),
+                    Container(height: 12, width: 80, color: Colors.white),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 20),
+          // Stats row
+          Row(
+            children: [
+              _shimmerChip(),
+              const SizedBox(width: 10),
+              _shimmerChip(),
+              const SizedBox(width: 10),
+              _shimmerChip(),
+            ],
+          ),
+          const SizedBox(height: 20),
+          // Track list items
+          for (int i = 0; i < 5; i++) ...[
+            Row(
+              children: [
+                Container(
+                  width: 44,
+                  height: 44,
+                  color: Colors.white,
+                  margin: const EdgeInsets.only(right: 12),
+                ),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Container(
+                        height: 13,
+                        width: double.infinity,
+                        color: Colors.white,
+                      ),
+                      const SizedBox(height: 7),
+                      Container(
+                        height: 11,
+                        width: 100 + (i * 15.0),
+                        color: Colors.white,
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _shimmerChip() {
+    return Container(
+      height: 28,
+      width: 70,
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(20),
+      ),
+    );
+  }
+}
+
+// ── Playlist preview after successful fetch ───────────────────────────────
+
+class _SpotifyPlaylistPreview extends StatelessWidget {
+  final SpotifyPlaylistData data;
+  final Future<void> Function(SpotifyPlaylistData) onSave;
+
+  const _SpotifyPlaylistPreview({required this.data, required this.onSave});
+
+  @override
+  Widget build(BuildContext context) {
+    final minutes = data.totalDuration.inMinutes;
+    final hours = minutes ~/ 60;
+    final mins = minutes % 60;
+    final durationStr = hours > 0 ? '${hours}h ${mins}m' : '${mins}m';
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // Playlist header
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // HQ Album art
+            ClipRRect(
+              borderRadius: BorderRadius.circular(10),
+              child: data.coverImageUrl != null
+                  ? CachedNetworkImage(
+                      imageUrl: data.coverImageUrl!,
+                      width: 90,
+                      height: 90,
+                      fit: BoxFit.cover,
+                      placeholder: (_, __) => Container(
+                        width: 90,
+                        height: 90,
+                        color: const Color(0xFF2A2A2A),
+                        child: const Icon(
+                          Icons.music_note,
+                          color: Colors.white30,
+                        ),
+                      ),
+                      errorWidget: (_, __, ___) => Container(
+                        width: 90,
+                        height: 90,
+                        color: const Color(0xFF2A2A2A),
+                        child: const Icon(
+                          Icons.music_note,
+                          color: Colors.white30,
+                        ),
+                      ),
+                    )
+                  : Container(
+                      width: 90,
+                      height: 90,
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF2A2A2A),
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: const Icon(
+                        Icons.playlist_play,
+                        color: Colors.white30,
+                        size: 36,
+                      ),
+                    ),
+            ),
+            const SizedBox(width: 16),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    data.name,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 17,
+                      fontWeight: FontWeight.bold,
+                    ),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  if (data.description != null &&
+                      data.description!.isNotEmpty) ...[
+                    const SizedBox(height: 4),
+                    Text(
+                      data.description!,
+                      style: TextStyle(
+                        color: Colors.white.withOpacity(0.5),
+                        fontSize: 12,
+                        height: 1.3,
+                      ),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ],
+                  const SizedBox(height: 6),
+                  Text(
+                    'By ${data.ownerName}',
+                    style: const TextStyle(
+                      color: Color(0xFF1DB954),
+                      fontSize: 12,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 16),
+
+        // Stats chips
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            _StatChip(
+              icon: Icons.music_note,
+              label: '${data.totalTracks} songs',
+            ),
+            _StatChip(icon: Icons.timer_outlined, label: durationStr),
+            if (data.addedAt != null)
+              _StatChip(
+                icon: Icons.calendar_today_outlined,
+                label: _formatDate(data.addedAt!),
+              ),
+          ],
+        ),
+        const SizedBox(height: 20),
+
+        // Track preview list (first 5)
+        Text(
+          'Preview',
+          style: TextStyle(
+            color: Colors.white.withOpacity(0.5),
+            fontSize: 12,
+            fontWeight: FontWeight.w600,
+            letterSpacing: 0.5,
+          ),
+        ),
+        const SizedBox(height: 10),
+        ...data.tracks.take(5).map((t) => _TrackPreviewTile(track: t)),
+        if (data.tracks.length > 5)
+          Padding(
+            padding: const EdgeInsets.only(top: 8, bottom: 4),
+            child: Text(
+              '+ ${data.tracks.length - 5} more songs',
+              style: TextStyle(
+                color: Colors.white.withOpacity(0.4),
+                fontSize: 13,
+              ),
+            ),
+          ),
+
+        const SizedBox(height: 24),
+
+        // Save button
+        SizedBox(
+          width: double.infinity,
+          child: ElevatedButton.icon(
+            onPressed: () => onSave(data),
+            icon: const Icon(Icons.download_done_rounded, size: 20),
+            label: Text('Save "${data.name}"'),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF1DB954),
+              foregroundColor: Colors.white,
+              padding: const EdgeInsets.symmetric(vertical: 16),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(14),
+              ),
+              textStyle: const TextStyle(
+                fontSize: 15,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  String _formatDate(DateTime dt) {
+    const months = [
+      'Jan',
+      'Feb',
+      'Mar',
+      'Apr',
+      'May',
+      'Jun',
+      'Jul',
+      'Aug',
+      'Sep',
+      'Oct',
+      'Nov',
+      'Dec',
+    ];
+    return '${months[dt.month - 1]} ${dt.year}';
+  }
+}
+
+class _StatChip extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  const _StatChip({required this.icon, required this.label});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      decoration: BoxDecoration(
+        color: Colors.white.withOpacity(0.06),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: Colors.white.withOpacity(0.08)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 13, color: const Color(0xFF1DB954)),
+          const SizedBox(width: 5),
+          Text(
+            label,
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 12,
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _TrackPreviewTile extends StatelessWidget {
+  final SpotifyTrackData track;
+  const _TrackPreviewTile({required this.track});
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Row(
+        children: [
+          // Thumbnail
+          ClipRRect(
+            borderRadius: BorderRadius.circular(6),
+            child: track.albumArtUrl != null
+                ? CachedNetworkImage(
+                    imageUrl: track.albumArtUrl!,
+                    width: 44,
+                    height: 44,
+                    fit: BoxFit.cover,
+                    placeholder: (_, __) => _thumbPlaceholder(),
+                    errorWidget: (_, __, ___) => _thumbPlaceholder(),
+                  )
+                : _thumbPlaceholder(),
+          ),
+          const SizedBox(width: 12),
+          // Title + artists
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  track.title,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w500,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  track.artists.join(', '),
+                  style: TextStyle(
+                    color: Colors.white.withOpacity(0.5),
+                    fontSize: 12,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ],
+            ),
+          ),
+          // Duration
+          Text(
+            _formatDuration(track.duration),
+            style: TextStyle(
+              color: Colors.white.withOpacity(0.4),
+              fontSize: 12,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _thumbPlaceholder() {
+    return Container(
+      width: 44,
+      height: 44,
+      decoration: BoxDecoration(
+        color: const Color(0xFF2A2A2A),
+        borderRadius: BorderRadius.circular(6),
+      ),
+      child: const Icon(Icons.music_note, color: Colors.white24, size: 20),
+    );
+  }
+
+  String _formatDuration(Duration d) {
+    final m = d.inMinutes.remainder(60).toString();
+    final s = d.inSeconds.remainder(60).toString().padLeft(2, '0');
+    return '$m:$s';
+  }
+}
+
+// ── Error banner ──────────────────────────────────────────────────────────
+
+class _ErrorBanner extends StatelessWidget {
+  final String message;
+  const _ErrorBanner({required this.message});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFF4458).withOpacity(0.1),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: const Color(0xFFFF4458).withOpacity(0.3)),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Icon(Icons.error_outline, color: Color(0xFFFF4458), size: 18),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              message,
+              style: const TextStyle(
+                color: Color(0xFFFF4458),
+                fontSize: 13,
+                height: 1.4,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ── Original PlaylistCard (unchanged) ────────────────────────────────────
 
 class _PlaylistCard extends StatelessWidget {
   final Playlist playlist;

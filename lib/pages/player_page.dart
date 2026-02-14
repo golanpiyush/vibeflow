@@ -23,6 +23,7 @@ import 'package:vibeflow/utils/theme_provider.dart';
 import 'package:vibeflow/widgets/lyrics_widget.dart';
 import 'package:vibeflow/widgets/radio_sheet.dart';
 import 'package:vibeflow/widgets/playlist_bottomSheet.dart';
+import 'package:vibeflow/widgets/shareSong.dart';
 
 // ======================================================================================================================
 
@@ -808,6 +809,13 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
                                   ),
                                   onPressed: () => Navigator.pop(context),
                                 ),
+                                const SizedBox(width: 8),
+                                // SongShareButton(song: widget.song),
+                                PublicSongShareButton(song: widget.song),
+
+                                // Option 2: Public sharing (no access code needed)
+                                const SizedBox(width: 8),
+
                                 IconButton(
                                   icon: Icon(
                                     Icons.more_horiz_rounded,

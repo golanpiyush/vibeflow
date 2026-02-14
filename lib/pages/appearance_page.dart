@@ -319,14 +319,39 @@ class _AppearancePageState extends ConsumerState<AppearancePage> {
   String _getColorLabel(Color? color) {
     if (color == null) return 'Default (Purple)';
 
-    // Map colors to names
-    if (color.value == const Color(0xFF6B4CE8).value) return 'Purple';
-    if (color.value == const Color(0xFF2196F3).value) return 'Blue';
-    if (color.value == const Color(0xFF009688).value) return 'Teal';
-    if (color.value == const Color(0xFF4CAF50).value) return 'Green';
-    if (color.value == const Color(0xFFFF9800).value) return 'Orange';
-    if (color.value == const Color(0xFFF44336).value) return 'Red';
-    if (color.value == const Color(0xFFE91E63).value) return 'Pink';
+    final value = color.value;
+
+    // Core
+    if (value == const Color(0xFF6B4CE8).value) return 'Purple';
+    if (value == const Color(0xFF2196F3).value) return 'Blue';
+    if (value == const Color(0xFF009688).value) return 'Teal';
+    if (value == const Color(0xFF4CAF50).value) return 'Green';
+    if (value == const Color(0xFFFF9800).value) return 'Orange';
+    if (value == const Color(0xFFF44336).value) return 'Red';
+    if (value == const Color(0xFFE91E63).value) return 'Pink';
+
+    // Dark / Neutral
+    if (value == const Color(0xFF000000).value) return 'Black';
+    if (value == const Color(0xFF424242).value) return 'Dark Grey';
+    if (value == const Color(0xFF9E9E9E).value) return 'Grey';
+    if (value == const Color(0xFFFFFFFF).value) return 'White';
+
+    // Cool tones
+    if (value == const Color(0xFF3F51B5).value) return 'Indigo';
+    if (value == const Color(0xFF00BCD4).value) return 'Cyan';
+    if (value == const Color(0xFF03A9F4).value) return 'Light Blue';
+
+    // Warm tones
+    if (value == const Color(0xFFFFC107).value) return 'Amber';
+    if (value == const Color(0xFFFF5722).value) return 'Deep Orange';
+    if (value == const Color(0xFFFFEB3B).value) return 'Yellow';
+
+    // Aesthetic / modern
+    if (value == const Color(0xFF795548).value) return 'Brown';
+    if (value == const Color(0xFF607D8B).value) return 'Blue Grey';
+    if (value == const Color(0xFF673AB7).value) return 'Deep Purple';
+    if (value == const Color(0xFF1DE9B6).value) return 'Mint';
+
     return 'Custom';
   }
 

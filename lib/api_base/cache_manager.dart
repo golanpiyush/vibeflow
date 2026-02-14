@@ -160,6 +160,166 @@ class CacheManager {
     return await get<CommunityPlaylist>(key);
   }
 
+  /// Cache individual playlist songs for instant access
+  Future<void> cachePlaylistSongs(String playlistId, List<Song> songs) async {
+    try {
+      if (kIsWeb) return;
+
+      final cacheDir = await _cacheDir;
+      if (!await cacheDir.exists()) {
+        await cacheDir.create(recursive: true);
+      }
+
+      // Cache each song individually
+      for (final song in songs) {
+        final songKey = 'playlist_song_${playlistId}_${song.videoId}';
+        final file = File('${cacheDir.path}/$songKey.json');
+
+        final cacheEntry = {
+          'data': song.toJson(),
+          'timestamp': DateTime.now().millisecondsSinceEpoch,
+          'expiresAt': DateTime.now()
+              .add(_defaultCacheDuration)
+              .millisecondsSinceEpoch,
+          'playlistId': playlistId,
+        };
+
+        await file.writeAsString(jsonEncode(cacheEntry));
+      }
+
+      print('💾 Cached ${songs.length} songs for playlist: $playlistId');
+    } catch (e) {
+      print('⚠️ Cache playlist songs error: $e');
+    }
+  }
+
+  /// Get next song from cached playlist
+  Future<Song?> getNextPlaylistSong(
+    String playlistId,
+    String currentVideoId,
+  ) async {
+    try {
+      if (kIsWeb) return null;
+
+      final cacheDir = await _cacheDir;
+      if (!await cacheDir.exists()) return null;
+
+      // Get all cached songs for this playlist
+      final files = await cacheDir.list().toList();
+      final playlistSongs = <Song>[];
+
+      for (final file in files) {
+        if (file is File) {
+          final name = file.path.split('/').last;
+          if (name.startsWith('playlist_song_$playlistId')) {
+            try {
+              final content = await file.readAsString();
+              final cacheEntry = jsonDecode(content) as Map<String, dynamic>;
+
+              // Check expiry
+              final expiresAt = cacheEntry['expiresAt'] as int;
+              if (DateTime.now().millisecondsSinceEpoch > expiresAt) {
+                await file.delete();
+                continue;
+              }
+
+              final songData = cacheEntry['data'];
+              playlistSongs.add(Song.fromJson(songData));
+            } catch (e) {
+              print('⚠️ Error reading playlist song cache: $e');
+            }
+          }
+        }
+      }
+
+      if (playlistSongs.isEmpty) return null;
+
+      // Find current song index
+      final currentIndex = playlistSongs.indexWhere(
+        (s) => s.videoId == currentVideoId,
+      );
+
+      if (currentIndex == -1 || currentIndex >= playlistSongs.length - 1) {
+        return null; // No next song
+      }
+
+      final nextSong = playlistSongs[currentIndex + 1];
+      print('✅ Found next playlist song from cache: ${nextSong.title}');
+      return nextSong;
+    } catch (e) {
+      print('⚠️ Get next playlist song error: $e');
+      return null;
+    }
+  }
+
+  /// Check if playlist has cached songs
+  Future<bool> hasPlaylistCache(String playlistId) async {
+    try {
+      if (kIsWeb) return false;
+
+      final cacheDir = await _cacheDir;
+      if (!await cacheDir.exists()) return false;
+
+      final files = await cacheDir.list().toList();
+
+      for (final file in files) {
+        if (file is File) {
+          final name = file.path.split('/').last;
+          if (name.startsWith('playlist_song_$playlistId')) {
+            return true;
+          }
+        }
+      }
+
+      return false;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  /// Get all cached songs for a playlist (ordered)
+  Future<List<Song>> getCachedPlaylistSongs(String playlistId) async {
+    try {
+      if (kIsWeb) return [];
+
+      final cacheDir = await _cacheDir;
+      if (!await cacheDir.exists()) return [];
+
+      final files = await cacheDir.list().toList();
+      final playlistSongs = <Song>[];
+
+      for (final file in files) {
+        if (file is File) {
+          final name = file.path.split('/').last;
+          if (name.startsWith('playlist_song_$playlistId')) {
+            try {
+              final content = await file.readAsString();
+              final cacheEntry = jsonDecode(content) as Map<String, dynamic>;
+
+              // Check expiry
+              final expiresAt = cacheEntry['expiresAt'] as int;
+              if (DateTime.now().millisecondsSinceEpoch > expiresAt) {
+                await file.delete();
+                continue;
+              }
+
+              final songData = cacheEntry['data'];
+              playlistSongs.add(Song.fromJson(songData));
+            } catch (e) {
+              print('⚠️ Error reading playlist song cache: $e');
+            }
+          }
+        }
+      }
+
+      print('✅ Got ${playlistSongs.length} cached songs for playlist');
+      return playlistSongs;
+    } catch (e) {
+      print('⚠️ Get cached playlist songs error: $e');
+      return [];
+    }
+  }
+
   /// Clear community playlists cache
   Future<void> clearCommunityPlaylists() async {
     try {
