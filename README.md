@@ -15,7 +15,7 @@
 ---
 
 > [!WARNING]
-> **VibeFlow is exclusively available through official channels listed in this repository.** Any versions found on third-party app stores, random websites, or unofficial sources are not affiliated with me and may be harmful. For your security, only download from our official releases and immediately uninstall any suspicious clones.
+> **VibeFlow is exclusively available through official channels listed in this repository.** Any versions found on third-party app stores, random websites, or unofficial sources are not affiliated with me and may be harmful. For your security, only download from my official releases and immediately uninstall any suspicious clones.
 
 ## ✨ What is VibeFlow?
 
