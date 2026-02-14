@@ -13,7 +13,10 @@
 .svn/
 .swiftpm/
 migrate_working_dir/
+
 .env
+*.env
+.env*
 # ========================================
 # IntelliJ / Android Studio
 # ========================================
@@ -21,7 +24,7 @@ migrate_working_dir/
 *.ipr
 *.iws
 .idea/
-
+.spotify-youtube-backend*
 # ========================================
 # Environment & Secrets
 # ========================================

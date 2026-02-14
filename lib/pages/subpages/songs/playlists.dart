@@ -1,4 +1,6 @@
 // lib/pages/subpages/songs/playlists.dart - FIXED VERSION
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_riverpod/legacy.dart';
@@ -511,6 +513,10 @@ class _SpotifyImportSheetState extends ConsumerState<_SpotifyImportSheet> {
   final _linkController = TextEditingController();
   final _focusNode = FocusNode();
 
+  // ✅ ADD THESE NEW FIELDS
+  bool _showBackgroundOption = false;
+  Timer? _backgroundTimer;
+
   @override
   void initState() {
     super.initState();
@@ -523,6 +529,7 @@ class _SpotifyImportSheetState extends ConsumerState<_SpotifyImportSheet> {
   void dispose() {
     _linkController.dispose();
     _focusNode.dispose();
+    _backgroundTimer?.cancel();
     super.dispose();
   }
 
@@ -710,6 +717,34 @@ class _SpotifyImportSheetState extends ConsumerState<_SpotifyImportSheet> {
                         ),
                       ),
 
+                      // ✅ ADD THIS: Background import button
+                      if (importState.state == _ImportState.loading &&
+                          _showBackgroundOption) ...[
+                        const SizedBox(height: 12),
+                        SizedBox(
+                          width: double.infinity,
+                          child: OutlinedButton.icon(
+                            onPressed: _continueInBackground,
+                            icon: const Icon(
+                              Icons.cloud_download_outlined,
+                              size: 18,
+                            ),
+                            label: const Text('Continue in Background'),
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: const Color(0xFF1DB954),
+                              side: const BorderSide(
+                                color: Color(0xFF1DB954),
+                                width: 1.5,
+                              ),
+                              padding: const EdgeInsets.symmetric(vertical: 14),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(14),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+
                       // Error message
                       if (importState.state == _ImportState.error) ...[
                         const SizedBox(height: 16),
@@ -828,9 +863,236 @@ class _SpotifyImportSheetState extends ConsumerState<_SpotifyImportSheet> {
 
   void _startImport() {
     FocusScope.of(context).unfocus();
+
+    // ✅ Start the 4-second timer
+    setState(() {
+      _showBackgroundOption = false;
+    });
+
+    _backgroundTimer?.cancel();
+    _backgroundTimer = Timer(const Duration(seconds: 4), () {
+      if (mounted) {
+        setState(() {
+          _showBackgroundOption = true;
+        });
+      }
+    });
+
     ref
         .read(_spotifyImportProvider.notifier)
         .importPlaylist(_linkController.text.trim());
+  }
+
+  void _continueInBackground() {
+    // Cancel the timer
+    _backgroundTimer?.cancel();
+
+    // Close the bottom sheet
+    Navigator.pop(context);
+
+    // Show persistent snackbar
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Row(
+          children: [
+            const SizedBox(
+              width: 20,
+              height: 20,
+              child: CircularProgressIndicator(
+                strokeWidth: 2,
+                color: Colors.white,
+              ),
+            ),
+            const SizedBox(width: 12),
+            const Expanded(
+              child: Text(
+                'Importing playlist in background...',
+                style: TextStyle(fontSize: 14),
+              ),
+            ),
+          ],
+        ),
+        backgroundColor: const Color(0xFF1DB954),
+        duration: const Duration(minutes: 5), // Long duration
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+      ),
+    );
+
+    // ✅ Listen to import completion in background
+    _listenForBackgroundCompletion();
+  }
+
+  void _listenForBackgroundCompletion() {
+    // Get the current import state stream
+    final stateStream = ref.read(_spotifyImportProvider.notifier).stream;
+
+    // Listen for state changes
+    final subscription = stateStream.listen((state) async {
+      if (state.state == _ImportState.success && state.data != null) {
+        // Import succeeded - save the playlist
+        debugPrint('🎉 Background import completed successfully');
+
+        // Dismiss the loading snackbar
+        ScaffoldMessenger.of(context).clearSnackBars();
+
+        // Save the imported playlist
+        try {
+          await _saveImportedPlaylistBackground(state.data!);
+        } catch (e) {
+          debugPrint('❌ Background save failed: $e');
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text('Import failed: $e'),
+                backgroundColor: Colors.red,
+                behavior: SnackBarBehavior.floating,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(10),
+                ),
+              ),
+            );
+          }
+        }
+      } else if (state.state == _ImportState.error) {
+        // Import failed
+        debugPrint('❌ Background import failed: ${state.error}');
+
+        // Dismiss the loading snackbar
+        ScaffoldMessenger.of(context).clearSnackBars();
+
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Import failed: ${state.error ?? "Unknown error"}'),
+              backgroundColor: Colors.red,
+              behavior: SnackBarBehavior.floating,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(10),
+              ),
+            ),
+          );
+        }
+      }
+    });
+
+    // Clean up subscription after 5 minutes (timeout)
+    Future.delayed(const Duration(minutes: 5), () {
+      subscription.cancel();
+    });
+  }
+
+  Future<void> _saveImportedPlaylistBackground(SpotifyPlaylistData data) async {
+    try {
+      final repo = await ref.read(playlistRepositoryFutureProvider.future);
+
+      // ── Step 1: Download cover image to local storage ────────────────────
+      String? localCoverPath;
+      if (data.coverImageUrl != null) {
+        localCoverPath = await _downloadCoverImage(
+          url: data.coverImageUrl!,
+          playlistId: data.id,
+        );
+      }
+
+      // ── Step 2: Create the playlist row ──────────────────────────────────
+      final playlist = await repo.createPlaylist(
+        name: data.name,
+        description: (data.description?.isNotEmpty == true)
+            ? data.description
+            : null,
+        coverImagePath: localCoverPath,
+        coverType: localCoverPath != null ? 'custom' : 'mosaic',
+      );
+
+      debugPrint(
+        '🎵 Converting ${data.tracks.length} tracks to DbSong format...',
+      );
+
+      // ── Step 3: Convert Spotify tracks → DbSong ──────────────────────────
+      final dbSongs = <DbSong>[];
+      for (int i = 0; i < data.tracks.length; i++) {
+        final track = data.tracks[i];
+
+        // Validate video ID
+        if (track.id.startsWith('spotify:') ||
+            track.id.startsWith('spotify-') ||
+            track.id.contains('spotify')) {
+          debugPrint(
+            '⚠️ Skipping track ${i + 1}: ${track.title} - Invalid video ID: ${track.id}',
+          );
+          continue;
+        }
+
+        final dbSong = _spotifyTrackToDbSong(track);
+        debugPrint(
+          '✅ Song ${i + 1}: ${track.title} -> videoId: ${dbSong.videoId}',
+        );
+        dbSongs.add(dbSong);
+      }
+
+      if (dbSongs.isEmpty) {
+        throw Exception(
+          'No valid tracks to import. All video IDs were invalid.',
+        );
+      }
+
+      debugPrint('💾 Saving ${dbSongs.length} songs to playlist...');
+
+      // ── Step 4: Batch insert all songs ───────────────────────────────────
+      await repo.addSongsToPlaylistBatch(
+        playlistId: playlist.id!,
+        songs: dbSongs,
+      );
+
+      debugPrint('✅ Successfully saved ${dbSongs.length} songs');
+
+      // ── Step 5: Refresh playlist list ────────────────────────────────────
+      ref.invalidate(playlistsProvider);
+
+      // ── Step 6: Show success notification ────────────────────────────────
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Row(
+              children: [
+                const Icon(Icons.check_circle, color: Colors.white, size: 20),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    '"${data.name}" imported · ${dbSongs.length} songs',
+                    style: const TextStyle(fontSize: 14),
+                  ),
+                ),
+              ],
+            ),
+            backgroundColor: const Color(0xFF1DB954),
+            behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(10),
+            ),
+            action: SnackBarAction(
+              label: 'View',
+              textColor: Colors.white,
+              onPressed: () {
+                Navigator.pop(context); // Close any open sheets
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) =>
+                        PlaylistDetailScreen(playlistId: playlist.id!),
+                  ),
+                );
+              },
+            ),
+          ),
+        );
+      }
+    } catch (e, stackTrace) {
+      debugPrint('❌ Background import error: $e');
+      debugPrint('Stack trace: $stackTrace');
+      rethrow;
+    }
   }
 
   Future<void> _saveImportedPlaylist(SpotifyPlaylistData data) async {
@@ -863,16 +1125,47 @@ class _SpotifyImportSheetState extends ConsumerState<_SpotifyImportSheet> {
         coverType: localCoverPath != null ? 'custom' : 'mosaic',
       );
 
-      // ── Step 3: Convert Spotify tracks → DbSong ──────────────────────────
-      final dbSongs = data.tracks.map((t) => _spotifyTrackToDbSong(t)).toList();
+      debugPrint(
+        '🎵 Converting ${data.tracks.length} tracks to DbSong format...',
+      );
 
-      // ── Step 4: Batch insert all songs ───────────────────────────────────
-      if (dbSongs.isNotEmpty) {
-        await repo.addSongsToPlaylistBatch(
-          playlistId: playlist.id!,
-          songs: dbSongs,
+      // ── Step 3: Convert Spotify tracks → DbSong ──────────────────────────
+      final dbSongs = <DbSong>[];
+      for (int i = 0; i < data.tracks.length; i++) {
+        final track = data.tracks[i];
+
+        // ✅ CRITICAL VALIDATION: Ensure video ID is a valid YouTube ID
+        if (track.id.startsWith('spotify:') ||
+            track.id.startsWith('spotify-') ||
+            track.id.contains('spotify')) {
+          debugPrint(
+            '⚠️ Skipping track ${i + 1}: ${track.title} - Invalid video ID: ${track.id}',
+          );
+          continue;
+        }
+
+        final dbSong = _spotifyTrackToDbSong(track);
+        debugPrint(
+          '✅ Song ${i + 1}: ${track.title} -> videoId: ${dbSong.videoId}',
+        );
+        dbSongs.add(dbSong);
+      }
+
+      if (dbSongs.isEmpty) {
+        throw Exception(
+          'No valid tracks to import. All video IDs were invalid.',
         );
       }
+
+      debugPrint('💾 Saving ${dbSongs.length} songs to playlist...');
+
+      // ── Step 4: Batch insert all songs ───────────────────────────────────
+      await repo.addSongsToPlaylistBatch(
+        playlistId: playlist.id!,
+        songs: dbSongs,
+      );
+
+      debugPrint('✅ Successfully saved ${dbSongs.length} songs');
 
       // ── Step 5: Dismiss dialog & show success ─────────────────────────────
       if (mounted) {
@@ -881,9 +1174,7 @@ class _SpotifyImportSheetState extends ConsumerState<_SpotifyImportSheet> {
 
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text(
-              '"${data.name}" imported · ${data.totalTracks} songs',
-            ),
+            content: Text('"${data.name}" imported · ${dbSongs.length} songs'),
             backgroundColor: const Color(0xFF1DB954),
             behavior: SnackBarBehavior.floating,
             shape: RoundedRectangleBorder(
@@ -892,7 +1183,10 @@ class _SpotifyImportSheetState extends ConsumerState<_SpotifyImportSheet> {
           ),
         );
       }
-    } catch (e) {
+    } catch (e, stackTrace) {
+      debugPrint('❌ Import error: $e');
+      debugPrint('Stack trace: $stackTrace');
+
       if (mounted) {
         Navigator.pop(context); // close progress dialog on error too
 
@@ -915,13 +1209,16 @@ class _SpotifyImportSheetState extends ConsumerState<_SpotifyImportSheet> {
   // We store the Spotify track ID in the videoId field so the song is
   // persistable. When the user tries to PLAY it your app can search YouTube
   // for the title+artist the same way it does for regular songs.
+  // REPLACE the _spotifyTrackToDbSong method:
   DbSong _spotifyTrackToDbSong(SpotifyTrackData track) {
+    // track.id is already the YouTube video ID from the backend
+    debugPrint('   Converting: ${track.title} (videoId: ${track.id})');
+
     return DbSong(
-      videoId:
-          'spotify:${track.id}', // namespaced so it won't clash with YT IDs
+      videoId: track.id, // ✅ This is the YouTube video ID from backend
       title: track.title,
       artists: track.artists,
-      thumbnail: track.albumArtUrl ?? '', // HQ 640×640 URL from Spotify
+      thumbnail: track.albumArtUrl ?? '', // HQ album art from Spotify
       duration: _durationToString(track.duration),
       addedAt: track.addedAt ?? DateTime.now(),
       playCount: 0,

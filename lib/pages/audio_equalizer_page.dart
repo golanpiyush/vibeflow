@@ -3,6 +3,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:vibeflow/utils/audio_session_bridge.dart';
 import 'package:vibeflow/utils/theme_provider.dart';
 
@@ -61,14 +62,15 @@ class _AudioEqualizerPageState extends ConsumerState<AudioEqualizerPage> {
       print('🎛️ [EQ] Initialize result: $initialized');
 
       if (initialized == true) {
-        await _loadCurrentSettings();
+        // ✅ FIX: Load saved settings FIRST
+        await _loadSavedSettings();
 
         if (mounted) {
           setState(() {
             _isInitialized = true;
           });
         }
-        print('✅ [EQ] Audio effects initialized and loaded saved settings');
+        print('✅ [EQ] Audio effects initialized with saved settings');
       } else {
         throw Exception('Initialize returned false');
       }
@@ -79,6 +81,83 @@ class _AudioEqualizerPageState extends ConsumerState<AudioEqualizerPage> {
       if (mounted) {
         _showErrorSnackbar('Failed to initialize: ${e.toString()}');
       }
+    }
+  }
+
+  // ✅ NEW: Load settings from SharedPreferences
+  Future<void> _loadSavedSettings() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+
+      setState(() {
+        _bassBoost = prefs.getDouble('eq_bass_boost') ?? 0.0;
+        _loudnessEnhancer = prefs.getDouble('eq_loudness') ?? 0.0;
+        _reverbLevel = prefs.getDouble('eq_reverb') ?? 0.0;
+        _audioBalance = prefs.getDouble('eq_balance') ?? 0.5;
+        _selectedPreset = prefs.getString('eq_preset') ?? 'Normal';
+
+        // Load EQ bands
+        for (int i = 0; i < _eqBandCount; i++) {
+          _eqBands[i] = prefs.getDouble('eq_band_$i') ?? 0.0;
+        }
+      });
+
+      // ✅ FIX: Apply saved settings to native side immediately
+      await _applySavedSettingsToNative();
+
+      print('✅ [EQ] Loaded saved settings from storage');
+      print(
+        '   Bass: $_bassBoost, Loudness: $_loudnessEnhancer, Preset: $_selectedPreset',
+      );
+    } catch (e) {
+      debugPrint('❌ [EQ] Error loading saved settings: $e');
+    }
+  }
+
+  // ✅ NEW: Apply saved settings to native audio effects
+  Future<void> _applySavedSettingsToNative() async {
+    try {
+      // Apply bass boost
+      if (_bassBoost != 0.0) {
+        await _channel.invokeMethod('setBassBoost', {
+          'strength': _bassBoost.toInt(),
+        });
+      }
+
+      // Apply loudness enhancer
+      if (_loudnessEnhancer != 0.0) {
+        await _channel.invokeMethod('setLoudnessEnhancer', {
+          'gain': _loudnessEnhancer.toInt(),
+        });
+      }
+
+      // Apply reverb
+      if (_reverbLevel != 0.0) {
+        await _channel.invokeMethod('setEnvironmentalReverbLevel', {
+          'level': _reverbLevel.toInt(),
+        });
+      }
+
+      // Apply audio balance
+      if (_audioBalance != 0.5) {
+        await _channel.invokeMethod('setAudioBalance', {
+          'balance': _audioBalance,
+        });
+      }
+
+      // Apply EQ bands
+      for (int i = 0; i < _eqBandCount; i++) {
+        if (_eqBands[i] != 0.0) {
+          await _channel.invokeMethod('setEqualizerBand', {
+            'band': i,
+            'level': _eqBands[i].toInt(),
+          });
+        }
+      }
+
+      print('✅ [EQ] Applied all saved settings to native');
+    } catch (e) {
+      debugPrint('❌ [EQ] Error applying saved settings: $e');
     }
   }
 
@@ -122,11 +201,25 @@ class _AudioEqualizerPageState extends ConsumerState<AudioEqualizerPage> {
         setState(() {
           _selectedPreset = presetName;
         });
+
+        // ✅ FIX: Save preset to storage
+        await _savePresetToStorage(presetName);
+
         _showSuccessSnackbar('Applied $presetName preset');
       }
     } catch (e) {
       debugPrint('Error applying preset: $e');
       _showErrorSnackbar('Failed to apply preset');
+    }
+  }
+
+  // ✅ NEW: Save preset to storage
+  Future<void> _savePresetToStorage(String presetName) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('eq_preset', presetName);
+    } catch (e) {
+      debugPrint('❌ [EQ] Error saving preset: $e');
     }
   }
 
@@ -137,6 +230,10 @@ class _AudioEqualizerPageState extends ConsumerState<AudioEqualizerPage> {
         _bassBoost = value;
         _selectedPreset = 'Custom';
       });
+
+      // ✅ FIX: Save to storage
+      await _saveSettingToStorage('eq_bass_boost', value);
+      await _savePresetToStorage('Custom');
     } catch (e) {
       debugPrint('Error setting bass boost: $e');
     }
@@ -151,6 +248,10 @@ class _AudioEqualizerPageState extends ConsumerState<AudioEqualizerPage> {
         _loudnessEnhancer = value;
         _selectedPreset = 'Custom';
       });
+
+      // ✅ FIX: Save to storage
+      await _saveSettingToStorage('eq_loudness', value);
+      await _savePresetToStorage('Custom');
     } catch (e) {
       debugPrint('Error setting loudness enhancer: $e');
     }
@@ -165,6 +266,10 @@ class _AudioEqualizerPageState extends ConsumerState<AudioEqualizerPage> {
         _reverbLevel = value;
         _selectedPreset = 'Custom';
       });
+
+      // ✅ FIX: Save to storage
+      await _saveSettingToStorage('eq_reverb', value);
+      await _savePresetToStorage('Custom');
     } catch (e) {
       debugPrint('Error setting reverb: $e');
     }
@@ -176,6 +281,9 @@ class _AudioEqualizerPageState extends ConsumerState<AudioEqualizerPage> {
       setState(() {
         _audioBalance = value;
       });
+
+      // ✅ FIX: Save to storage
+      await _saveSettingToStorage('eq_balance', value);
     } catch (e) {
       debugPrint('Error setting audio balance: $e');
     }
@@ -191,8 +299,22 @@ class _AudioEqualizerPageState extends ConsumerState<AudioEqualizerPage> {
         _eqBands[band] = value;
         _selectedPreset = 'Custom';
       });
+
+      // ✅ FIX: Save to storage
+      await _saveSettingToStorage('eq_band_$band', value);
+      await _savePresetToStorage('Custom');
     } catch (e) {
       debugPrint('Error setting EQ band: $e');
+    }
+  }
+
+  // ✅ NEW: Helper to save individual settings
+  Future<void> _saveSettingToStorage(String key, double value) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setDouble(key, value);
+    } catch (e) {
+      debugPrint('❌ [EQ] Error saving $key: $e');
     }
   }
 
@@ -203,10 +325,34 @@ class _AudioEqualizerPageState extends ConsumerState<AudioEqualizerPage> {
       setState(() {
         _selectedPreset = 'Normal';
       });
+
+      // ✅ FIX: Clear storage
+      await _clearStoredSettings();
+
       _showSuccessSnackbar('All effects reset');
     } catch (e) {
       debugPrint('Error resetting effects: $e');
       _showErrorSnackbar('Failed to reset effects');
+    }
+  }
+
+  // ✅ NEW: Clear all stored EQ settings
+  Future<void> _clearStoredSettings() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove('eq_bass_boost');
+      await prefs.remove('eq_loudness');
+      await prefs.remove('eq_reverb');
+      await prefs.remove('eq_balance');
+      await prefs.remove('eq_preset');
+
+      for (int i = 0; i < _eqBandCount; i++) {
+        await prefs.remove('eq_band_$i');
+      }
+
+      print('✅ [EQ] Cleared all stored settings');
+    } catch (e) {
+      debugPrint('❌ [EQ] Error clearing storage: $e');
     }
   }
 

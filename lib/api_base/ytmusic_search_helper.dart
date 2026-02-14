@@ -124,23 +124,16 @@ class YTMusicSearchHelper {
 
       // Extract video ID
       String? videoId;
-
-      // Method 1: From playlistItemData
       videoId = renderer['playlistItemData']?['videoId'] as String?;
-
-      // Method 2: From overlay
       videoId ??=
           renderer['overlay']?['musicItemThumbnailOverlayRenderer']?['content']?['musicPlayButtonRenderer']?['playNavigationEndpoint']?['watchEndpoint']?['videoId']
               as String?;
-
-      // Method 3: From navigation endpoint
       videoId ??=
           renderer['navigationEndpoint']?['watchEndpoint']?['videoId']
               as String?;
 
       if (videoId == null) return null;
 
-      // Extract title and artists
       final flexColumns = renderer['flexColumns'] as List?;
       if (flexColumns == null || flexColumns.isEmpty) return null;
 
@@ -157,26 +150,35 @@ class YTMusicSearchHelper {
             flexColumns[1]?['musicResponsiveListItemFlexColumnRenderer']?['text']?['runs']
                 as List?;
         if (subtitleRuns != null && subtitleRuns.isNotEmpty) {
-          // First run is typically the artist
           artist = subtitleRuns[0]?['text'] as String? ?? 'Unknown Artist';
         }
       }
 
-      // Extract duration (if available)
+      // ✅ IMPROVED: Extract duration from ANY column, not just if length > 2
       String? durationText;
-      if (flexColumns.length > 2) {
-        final durationRuns =
-            flexColumns
-                    .last?['musicResponsiveListItemFlexColumnRenderer']?['text']?['runs']
+      int? duration;
+
+      // Try to find duration in flex columns (usually last column)
+      for (var column in flexColumns) {
+        final runs =
+            column?['musicResponsiveListItemFlexColumnRenderer']?['text']?['runs']
                 as List?;
-        durationText = durationRuns?[0]?['text'] as String?;
+        if (runs != null && runs.isNotEmpty) {
+          final text = runs[0]?['text'] as String?;
+          // Check if it looks like a duration (contains colon)
+          if (text != null && text.contains(':')) {
+            durationText = text;
+            duration = _parseDuration(text);
+            break; // Found it!
+          }
+        }
       }
 
-      // Parse duration to seconds
-      int? duration;
-      if (durationText != null) {
-        duration = _parseDuration(durationText);
-      }
+      // ✅ ADD: Debug log
+      print('🕐 [YTMusicSearch] Parsed: $title');
+      print('   Duration text: $durationText');
+      print('   Duration seconds: $duration');
+      print('   Formatted: ${formatDuration(duration)}');
 
       // Extract thumbnail
       String thumbnail = '';
@@ -188,7 +190,6 @@ class YTMusicSearchHelper {
         thumbnail = _extractBestThumbnail(thumbnails);
       }
 
-      // Fallback thumbnail
       if (thumbnail.isEmpty) {
         thumbnail = 'https://i.ytimg.com/vi/$videoId/maxresdefault.jpg';
       }

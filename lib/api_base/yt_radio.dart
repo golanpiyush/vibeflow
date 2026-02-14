@@ -29,27 +29,35 @@ class RadioService {
         return _radioCache[videoId]!;
       }
 
-      print('🔍 [RadioService] Fetching radio for: $title by $artist');
+      // ✅ FIX: Clean the artist name (remove metadata like "• 2.2B plays")
+      final cleanArtist = _cleanArtistName(artist);
+
+      print('🔍 [RadioService] Fetching radio for: $title by $cleanArtist');
+      print('   Original artist: $artist');
+      print('   Cleaned artist: $cleanArtist');
 
       // Search for similar songs by artist
       final searchResults = await _searchHelper.searchSongs(
-        artist,
+        cleanArtist, // ✅ Use cleaned artist name
         limit: limit + 5, // Get extra to filter current song
       );
 
       // Convert to QuickPick and filter out current song
       final radioSongs = searchResults
-          .where((song) => song.videoId != videoId) // Exclude current song
+          .where((song) => song.videoId != videoId)
           .take(limit)
-          .map(
-            (song) => QuickPick(
+          .map((song) {
+            print('🎵 [RadioService] Converting: ${song.title}');
+            print('   Duration: ${song.duration}'); // ✅ ADD THIS
+
+            return QuickPick(
               videoId: song.videoId,
               title: song.title,
               artists: song.artists.join(', '),
               thumbnail: song.thumbnail,
               duration: song.duration,
-            ),
-          )
+            );
+          })
           .toList();
 
       // Cache the results
@@ -62,6 +70,29 @@ class RadioService {
       print('Stack: ${stack.toString().split('\n').take(3).join('\n')}');
       return [];
     }
+  }
+
+  // ✅ ADD: Helper method to clean artist name
+  String _cleanArtistName(String artist) {
+    // Remove everything after bullet point (•)
+    if (artist.contains('•')) {
+      artist = artist.split('•').first.trim();
+    }
+
+    // Remove everything after dash followed by number (like "- 2.2B")
+    if (artist.contains(RegExp(r'\s+-\s+[\d.]+[KMB]'))) {
+      artist = artist.replaceAll(RegExp(r'\s+-\s+[\d.]+[KMB].*'), '').trim();
+    }
+
+    // Remove common metadata patterns
+    artist = artist.replaceAll(RegExp(r'\s+plays?$', caseSensitive: false), '');
+    artist = artist.replaceAll(RegExp(r'\s+views?$', caseSensitive: false), '');
+    artist = artist.replaceAll(
+      RegExp(r'\d+[KMB]?\s*(plays?|views?)$', caseSensitive: false),
+      '',
+    );
+
+    return artist.trim();
   }
 
   /// Cache radio results

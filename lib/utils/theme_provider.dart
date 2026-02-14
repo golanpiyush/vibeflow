@@ -254,33 +254,55 @@ final lightThemeProvider = Provider<ThemeData>((ref) {
   final themeState = ref.watch(themeProvider);
   final fontFamily = themeState.fontFamily;
 
-  switch (themeState.themeType) {
-    case ThemeType.light:
-      return _buildCustomLightTheme(fontFamily);
+  // For Material theme, always generate light Material theme
+  if (themeState.themeType == ThemeType.material) {
+    final baseTheme = themeState.seedColor != null
+        ? ThemeData(
+            useMaterial3: true,
+            colorScheme: ColorScheme.fromSeed(
+              seedColor: themeState.seedColor!,
+              brightness: Brightness.light,
+            ),
+          )
+        : ThemeData(
+            useMaterial3: true,
+            colorScheme: ColorScheme.fromSeed(
+              seedColor: const Color(0xFF6B4CE8),
+              brightness: Brightness.light,
+            ),
+          );
 
-    case ThemeType.material:
-      final baseTheme = themeState.seedColor != null
-          ? ThemeData(
-              useMaterial3: true,
-              colorScheme: ColorScheme.fromSeed(
-                seedColor: themeState.seedColor!,
-                brightness: Brightness.light,
-              ),
-            )
-          : ThemeData(
-              useMaterial3: true,
-              colorScheme: ColorScheme.fromSeed(
-                seedColor: const Color(0xFF6B4CE8),
-                brightness: Brightness.light,
-              ),
-            );
-
-      return baseTheme.copyWith(textTheme: _getTextTheme(fontFamily));
-
-    case ThemeType.pureBlack:
-      return _buildPureBlackTheme(fontFamily);
+    return baseTheme.copyWith(textTheme: _getTextTheme(fontFamily));
   }
+
+  // For other themes, return custom light theme
+  return _buildCustomLightTheme(fontFamily);
 });
+
+ThemeData _buildCustomDarkTheme(AppFontFamily fontFamily) {
+  return ThemeData(
+    useMaterial3: true,
+    brightness: Brightness.dark,
+    scaffoldBackgroundColor: const Color(0xFF121212),
+    primaryColor: const Color(0xFF6B4CE8),
+    colorScheme: const ColorScheme.dark(
+      primary: Color(0xFF6B4CE8),
+      secondary: Color(0xFF00D9FF),
+      surface: Color(0xFF1E1E1E),
+      background: Color(0xFF121212),
+      error: Color(0xFFFF3B30),
+    ),
+    textTheme: _getTextTheme(fontFamily),
+    appBarTheme: const AppBarTheme(
+      backgroundColor: Color(0xFF121212),
+      foregroundColor: Colors.white,
+      elevation: 0,
+    ),
+    bottomNavigationBarTheme: const BottomNavigationBarThemeData(
+      backgroundColor: Color(0xFF121212),
+    ),
+  );
+}
 
 final darkThemeProvider = Provider<ThemeData>((ref) {
   final themeState = ref.watch(themeProvider);
@@ -288,7 +310,7 @@ final darkThemeProvider = Provider<ThemeData>((ref) {
 
   switch (themeState.themeType) {
     case ThemeType.light:
-      return _buildCustomLightTheme(fontFamily);
+      return _buildCustomDarkTheme(fontFamily); // Regular dark, not pure black
 
     case ThemeType.material:
       final baseTheme = themeState.seedColor != null
@@ -310,10 +332,11 @@ final darkThemeProvider = Provider<ThemeData>((ref) {
       return baseTheme.copyWith(textTheme: _getTextTheme(fontFamily));
 
     case ThemeType.pureBlack:
-      return _buildPureBlackTheme(fontFamily);
+      return _buildPureBlackTheme(
+        fontFamily,
+      ); // Only pure black returns pure black
   }
 });
-
 final thumbnailRadiusProvider = Provider<double>((ref) {
   final roundness = ref.watch(themeProvider).thumbnailRoundness;
 

@@ -35,7 +35,7 @@ class SongShareButton extends ConsumerWidget {
   Future<void> _shareSong(WidgetRef ref, BuildContext context) async {
     try {
       final sharingService = ref.read(songSharingServiceProvider);
-      await sharingService.shareSong(song);
+      await sharingService.shareSong();
     } catch (e) {
       if (context.mounted) {
         ScaffoldMessenger.of(
@@ -82,7 +82,7 @@ class PublicSongShareButton extends ConsumerWidget {
       onPressed: () async {
         try {
           final sharingService = ref.read(songSharingServiceProvider);
-          await sharingService.shareSongPublic(song);
+          await sharingService.shareSongPublic();
         } catch (e) {
           if (context.mounted) {
             ScaffoldMessenger.of(

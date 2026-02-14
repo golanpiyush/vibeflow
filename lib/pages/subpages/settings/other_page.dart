@@ -1,5 +1,8 @@
+import 'dart:io' show Platform;
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:permission_handler/permission_handler.dart';
 import 'package:vibeflow/constants/theme_colors.dart';
 import 'package:vibeflow/constants/app_spacing.dart';
 import 'package:vibeflow/constants/app_typography.dart';
@@ -8,16 +11,399 @@ import 'package:vibeflow/pages/subpages/settings/cache_page.dart';
 import 'package:vibeflow/pages/subpages/settings/database_page.dart';
 import 'package:vibeflow/pages/subpages/settings/player_settings_page.dart';
 import 'package:vibeflow/utils/page_transitions.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:vibeflow/api_base/yt_music_search_suggestor.dart';
+import 'package:vibeflow/widgets/coming_soon_item.dart';
 
-// lib/pages/settings/other_page.dart
-class OtherPage extends ConsumerWidget {
+class OtherPage extends ConsumerStatefulWidget {
   const OtherPage({Key? key}) : super(key: key);
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final textSecondaryColor = ref.watch(themeTextSecondaryColorProvider);
-    final textPrimaryColor = ref.watch(themeTextPrimaryColorProvider);
-    final warningColor = Color(0xFFE57373); // Red color for warnings
+  ConsumerState<OtherPage> createState() => _OtherPageState();
+}
+
+class _OtherPageState extends ConsumerState<OtherPage> {
+  bool _isSearchHistoryPaused = false;
+  bool _isInvincibleServiceEnabled = false;
+  bool _isLoadingHistory = false;
+  bool _isBatteryOptimizationIgnored = false;
+  int _historyCount = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadSettings();
+    _loadHistoryCount();
+    _checkBatteryOptimizationStatus();
+  }
+
+  Future<void> _loadSettings() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      if (!mounted) return;
+
+      setState(() {
+        _isSearchHistoryPaused =
+            prefs.getBool('search_history_paused') ?? false;
+        _isInvincibleServiceEnabled =
+            prefs.getBool('invincible_service_enabled') ?? false;
+      });
+    } catch (e) {
+      print('❌ Error loading settings: $e');
+    }
+  }
+
+  Future<void> _loadHistoryCount() async {
+    try {
+      final helper = YTMusicSuggestionsHelper();
+      final history = await helper.getSearchHistory();
+      helper.dispose();
+
+      if (!mounted) return;
+
+      setState(() {
+        _historyCount = history.length;
+      });
+    } catch (e) {
+      print('❌ Error loading history count: $e');
+    }
+  }
+
+  Future<void> _checkBatteryOptimizationStatus() async {
+    if (!Platform.isAndroid) return;
+
+    try {
+      // Check if battery optimization is ignored
+      final status = await Permission.ignoreBatteryOptimizations.status;
+
+      if (!mounted) return;
+
+      setState(() {
+        _isBatteryOptimizationIgnored = status.isGranted;
+      });
+
+      print(
+        '🔋 Battery optimization status: ${status.isGranted ? "Ignored" : "Not ignored"}',
+      );
+    } catch (e) {
+      print('❌ Error checking battery optimization: $e');
+    }
+  }
+
+  Future<void> _requestBatteryOptimizationExemption() async {
+    if (!Platform.isAndroid) {
+      _showPlatformNotSupportedDialog();
+      return;
+    }
+
+    try {
+      // Check current status
+      final status = await Permission.ignoreBatteryOptimizations.status;
+
+      if (status.isGranted) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Battery optimization already disabled'),
+            backgroundColor: Colors.green,
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+        return;
+      }
+
+      // Show explanation dialog
+      final shouldProceed = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('Disable Battery Optimization'),
+          content: const Text(
+            'This will allow VibeFlow to run in the background without being killed by the system.\n\n'
+            'Required for:\n'
+            '• Uninterrupted playback\n'
+            '• Persistent notifications\n'
+            '• Invincible service\n\n'
+            'You will be taken to Android settings to grant this permission.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('Continue'),
+            ),
+          ],
+        ),
+      );
+
+      if (shouldProceed != true || !mounted) return;
+
+      // Request permission
+      final result = await Permission.ignoreBatteryOptimizations.request();
+
+      if (!mounted) return;
+
+      if (result.isGranted) {
+        setState(() {
+          _isBatteryOptimizationIgnored = true;
+        });
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Battery optimization disabled successfully'),
+            backgroundColor: Colors.green,
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      } else if (result.isPermanentlyDenied) {
+        // Open app settings if permanently denied
+        _showOpenSettingsDialog();
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Permission denied. Some features may not work properly.',
+            ),
+            backgroundColor: Colors.orange,
+            behavior: SnackBarBehavior.floating,
+            duration: Duration(seconds: 3),
+          ),
+        );
+      }
+    } catch (e) {
+      print('❌ Error requesting battery optimization: $e');
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Error: ${e.toString()}'),
+          backgroundColor: Colors.red,
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    }
+  }
+
+  void _showOpenSettingsDialog() {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Open Settings'),
+        content: const Text(
+          'Battery optimization permission was denied. '
+          'Please enable it manually in app settings for best performance.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              Navigator.pop(context);
+              openAppSettings();
+            },
+            child: const Text('Open Settings'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showPlatformNotSupportedDialog() {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Not Available'),
+        content: const Text(
+          'Battery optimization settings are only available on Android.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('OK'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _toggleSearchHistoryPause(bool value) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool('search_history_paused', value);
+
+      if (!mounted) return;
+
+      setState(() {
+        _isSearchHistoryPaused = value;
+      });
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            value
+                ? 'Search history paused - new searches won\'t be saved'
+                : 'Search history resumed - searches will be saved',
+          ),
+          backgroundColor: value ? Colors.orange : Colors.green,
+          behavior: SnackBarBehavior.floating,
+          duration: const Duration(seconds: 2),
+        ),
+      );
+    } catch (e) {
+      print('❌ Error toggling search history: $e');
+    }
+  }
+
+  Future<void> _clearSearchHistory() async {
+    final colorScheme = Theme.of(context).colorScheme;
+
+    if (_historyCount == 0) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: const Text('History is already empty'),
+          backgroundColor: colorScheme.secondary,
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+      return;
+    }
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Clear Search History'),
+        content: Text('Delete all $_historyCount search entries?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: TextButton.styleFrom(foregroundColor: Colors.red),
+            child: const Text('Clear'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true || !mounted) return;
+
+    setState(() => _isLoadingHistory = true);
+
+    try {
+      final helper = YTMusicSuggestionsHelper();
+      await helper.clearHistory();
+      helper.dispose();
+
+      if (!mounted) return;
+
+      setState(() {
+        _historyCount = 0;
+        _isLoadingHistory = false;
+      });
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Search history cleared'),
+          backgroundColor: Colors.green,
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    } catch (e) {
+      print('❌ Error clearing history: $e');
+      if (!mounted) return;
+
+      setState(() => _isLoadingHistory = false);
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Failed to clear history'),
+          backgroundColor: Colors.red,
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    }
+  }
+
+  Future<void> _toggleInvincibleService(bool value) async {
+    // Check if battery optimization is disabled first
+    if (value && !_isBatteryOptimizationIgnored) {
+      final shouldRequest = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('Battery Optimization Required'),
+          content: const Text(
+            'Invincible service requires battery optimization to be disabled.\n\n'
+            'Would you like to disable it now?',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('Continue'),
+            ),
+          ],
+        ),
+      );
+
+      if (shouldRequest == true) {
+        await _requestBatteryOptimizationExemption();
+
+        // Recheck status
+        await _checkBatteryOptimizationStatus();
+
+        if (!_isBatteryOptimizationIgnored) {
+          // Still not granted, don't enable invincible service
+          return;
+        }
+      } else {
+        return;
+      }
+    }
+
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool('invincible_service_enabled', value);
+
+      if (!mounted) return;
+
+      setState(() {
+        _isInvincibleServiceEnabled = value;
+      });
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            value
+                ? 'Invincible service enabled - playback will persist'
+                : 'Invincible service disabled',
+          ),
+          backgroundColor: value ? Colors.green : Colors.orange,
+          behavior: SnackBarBehavior.floating,
+          duration: const Duration(seconds: 2),
+        ),
+      );
+    } catch (e) {
+      print('❌ Error toggling invincible service: $e');
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    // Use Theme.of(context).colorScheme for proper theme support
+    final colorScheme = Theme.of(context).colorScheme;
+    final textPrimaryColor = colorScheme.onSurface;
+    final textSecondaryColor = colorScheme.onSurface.withOpacity(0.6);
+    final iconActiveColor = colorScheme.primary;
+    final warningColor = Color(0xFFE57373);
 
     return _SettingsPageTemplate(
       title: 'Other',
@@ -29,7 +415,7 @@ class OtherPage extends ConsumerWidget {
           Text(
             'ANDROID AUTO',
             style: AppTypography.caption(context).copyWith(
-              color: ref.watch(themeIconActiveColorProvider),
+              color: iconActiveColor,
               fontWeight: FontWeight.w600,
               letterSpacing: 1.2,
             ),
@@ -42,49 +428,59 @@ class OtherPage extends ConsumerWidget {
             ).copyWith(color: textSecondaryColor, height: 1.5),
           ),
           const SizedBox(height: AppSpacing.lg),
-          _buildToggleItem(
-            context,
-            ref,
-            'Android Auto',
-            'Enable Android Auto support',
-            false,
-            () {},
+
+          ComingSoonToggleItem(
+            title: 'Android Auto',
+            subtitle: 'Enable Android Auto support',
+            value: false,
           ),
+
           const SizedBox(height: AppSpacing.xl),
 
           // SEARCH HISTORY SECTION
           Text(
             'SEARCH HISTORY',
             style: AppTypography.caption(context).copyWith(
-              color: ref.watch(themeIconActiveColorProvider),
+              color: iconActiveColor,
               fontWeight: FontWeight.w600,
               letterSpacing: 1.2,
             ),
           ),
           const SizedBox(height: AppSpacing.lg),
+
           _buildToggleItem(
             context,
-            ref,
             'Pause search history',
             'Neither save new searched queries nor show history',
-            false,
-            () {},
+            _isSearchHistoryPaused,
+            _toggleSearchHistoryPause,
+            textPrimaryColor: textPrimaryColor,
+            textSecondaryColor: textSecondaryColor,
+            iconActiveColor: iconActiveColor,
           ),
+
           const SizedBox(height: AppSpacing.lg),
+
           _buildActionItem(
-            ref,
             context,
             'Clear search history',
-            'History is empty',
-            () {},
+            _historyCount == 0
+                ? 'History is empty'
+                : '$_historyCount ${_historyCount == 1 ? "entry" : "entries"}',
+            _isLoadingHistory ? null : _clearSearchHistory,
+            isLoading: _isLoadingHistory,
+            textPrimaryColor: textPrimaryColor,
+            textSecondaryColor: textSecondaryColor,
+            iconActiveColor: iconActiveColor,
           ),
+
           const SizedBox(height: AppSpacing.xl),
 
           // SERVICE LIFETIME SECTION
           Text(
             'SERVICE LIFETIME',
             style: AppTypography.caption(context).copyWith(
-              color: ref.watch(themeIconActiveColorProvider),
+              color: iconActiveColor,
               fontWeight: FontWeight.w600,
               letterSpacing: 1.2,
             ),
@@ -104,21 +500,32 @@ class OtherPage extends ConsumerWidget {
             ).copyWith(color: textSecondaryColor, height: 1.5),
           ),
           const SizedBox(height: AppSpacing.lg),
+
+          // Battery optimization action
           _buildActionItem(
-            ref,
             context,
             'Ignore battery optimizations',
-            'Disable background restrictions',
-            () {},
+            _isBatteryOptimizationIgnored
+                ? '✓ Battery optimization disabled'
+                : 'Tap to disable background restrictions',
+            _requestBatteryOptimizationExemption,
+            isSuccess: _isBatteryOptimizationIgnored,
+            textPrimaryColor: textPrimaryColor,
+            textSecondaryColor: textSecondaryColor,
+            iconActiveColor: iconActiveColor,
           ),
+
           const SizedBox(height: AppSpacing.lg),
+
           _buildToggleItem(
             context,
-            ref,
             'Invincible service',
             'When turning off battery optimizations is not enough',
-            false,
-            () {},
+            _isInvincibleServiceEnabled,
+            _toggleInvincibleService,
+            textPrimaryColor: textPrimaryColor,
+            textSecondaryColor: textSecondaryColor,
+            iconActiveColor: iconActiveColor,
           ),
         ],
       ),
@@ -126,17 +533,15 @@ class OtherPage extends ConsumerWidget {
   }
 
   Widget _buildToggleItem(
-    BuildContext context, // ✅ ADD THIS
-    WidgetRef ref,
+    BuildContext context,
     String title,
     String subtitle,
     bool value,
-    VoidCallback onChanged,
-  ) {
-    final textPrimaryColor = ref.watch(themeTextPrimaryColorProvider);
-    final textSecondaryColor = ref.watch(themeTextSecondaryColorProvider);
-    final iconActiveColor = ref.watch(themeIconActiveColorProvider);
-
+    Function(bool) onChanged, {
+    required Color textPrimaryColor,
+    required Color textSecondaryColor,
+    required Color iconActiveColor,
+  }) {
     return Row(
       children: [
         Expanded(
@@ -162,7 +567,7 @@ class OtherPage extends ConsumerWidget {
         ),
         Switch(
           value: value,
-          onChanged: (_) => onChanged(),
+          onChanged: onChanged,
           activeColor: iconActiveColor,
         ),
       ],
@@ -170,34 +575,61 @@ class OtherPage extends ConsumerWidget {
   }
 
   Widget _buildActionItem(
-    WidgetRef ref,
     BuildContext context,
     String title,
     String subtitle,
-    VoidCallback onTap,
-  ) {
-    final textPrimaryColor = ref.watch(themeTextPrimaryColorProvider);
-    final textSecondaryColor = ref.watch(themeTextSecondaryColorProvider);
+    VoidCallback? onTap, {
+    bool isLoading = false,
+    bool isSuccess = false,
+    required Color textPrimaryColor,
+    required Color textSecondaryColor,
+    required Color iconActiveColor,
+  }) {
+    final successColor = Colors.green;
 
     return GestureDetector(
       onTap: onTap,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            title,
-            style: AppTypography.subtitle(
-              context,
-            ).copyWith(fontWeight: FontWeight.w500, color: textPrimaryColor),
-          ),
-          const SizedBox(height: 4),
-          Text(
-            subtitle,
-            style: AppTypography.caption(
-              context,
-            ).copyWith(color: textSecondaryColor),
-          ),
-        ],
+      child: Opacity(
+        opacity: onTap == null ? 0.5 : 1.0,
+        child: Row(
+          children: [
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title,
+                    style: AppTypography.subtitle(context).copyWith(
+                      fontWeight: FontWeight.w500,
+                      color: textPrimaryColor,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    subtitle,
+                    style: AppTypography.caption(context).copyWith(
+                      color: isSuccess ? successColor : textSecondaryColor,
+                      fontWeight: isSuccess
+                          ? FontWeight.w600
+                          : FontWeight.normal,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            if (isLoading)
+              SizedBox(
+                width: 20,
+                height: 20,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  valueColor: AlwaysStoppedAnimation<Color>(iconActiveColor),
+                ),
+              )
+            else if (isSuccess)
+              Icon(Icons.check_circle, color: successColor, size: 24),
+          ],
+        ),
       ),
     );
   }
@@ -217,18 +649,19 @@ class _SettingsPageTemplate extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final backgroundColor = ref.watch(themeBackgroundColorProvider);
+    final colorScheme = Theme.of(context).colorScheme;
+    final backgroundColor = colorScheme.background;
 
     return Scaffold(
       backgroundColor: backgroundColor,
       body: SafeArea(
         child: Column(
           children: [
-            _buildTopBar(context, ref),
+            _buildTopBar(context, colorScheme),
             Expanded(
               child: Row(
                 children: [
-                  _buildSidebar(context, ref),
+                  _buildSidebar(context, colorScheme),
                   Expanded(
                     child: SingleChildScrollView(
                       padding: const EdgeInsets.all(AppSpacing.lg),
@@ -247,8 +680,8 @@ class _SettingsPageTemplate extends ConsumerWidget {
     );
   }
 
-  Widget _buildTopBar(BuildContext context, WidgetRef ref) {
-    final textPrimaryColor = ref.watch(themeTextPrimaryColorProvider);
+  Widget _buildTopBar(BuildContext context, ColorScheme colorScheme) {
+    final textPrimaryColor = colorScheme.onSurface;
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
@@ -274,12 +707,12 @@ class _SettingsPageTemplate extends ConsumerWidget {
     );
   }
 
-  Widget _buildSidebar(BuildContext context, WidgetRef ref) {
+  Widget _buildSidebar(BuildContext context, ColorScheme colorScheme) {
     final double availableHeight = MediaQuery.of(context).size.height;
-    final iconActiveColor = ref.watch(themeIconActiveColorProvider);
-    final iconInactiveColor = ref.watch(themeTextSecondaryColorProvider);
-    final sidebarLabelColor = ref.watch(themeTextPrimaryColorProvider);
-    final sidebarLabelActiveColor = ref.watch(themeIconActiveColorProvider);
+    final iconActiveColor = colorScheme.primary;
+    final iconInactiveColor = colorScheme.onSurface.withOpacity(0.6);
+    final sidebarLabelColor = colorScheme.onSurface;
+    final sidebarLabelActiveColor = colorScheme.primary;
 
     final sidebarLabelStyle = AppTypography.sidebarLabel(
       context,

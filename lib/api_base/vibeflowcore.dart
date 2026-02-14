@@ -1,11 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:vibeflow/main.dart';
 import 'package:vibeflow/models/quick_picks_model.dart';
+import 'package:vibeflow/managers/vibeflow_engine_logger.dart';
 import 'package:vibeflow/services/cacheManager.dart';
 import 'package:yt_flutter_musicapi/yt_flutter_musicapi.dart';
 import 'package:vibeflow/models/song_model.dart';
 
-/// Core service for VibeFlow using yt_flutter_musicapi
+/// Core service for VibeFlow using yt_flutter_musicapi with integrated logging
 class VibeFlowCore {
   static final VibeFlowCore _instance = VibeFlowCore._internal();
   factory VibeFlowCore() => _instance;
@@ -13,6 +14,7 @@ class VibeFlowCore {
 
   YtFlutterMusicapi _ytApi = YtFlutterMusicapi();
   bool _isInitialized = false;
+  final _logger = VibeFlowEngineLogger();
 
   // Cache expiry duration (YouTube URLs typically last 6 hours)
   static const Duration _cacheExpiryDuration = Duration(hours: 5);
@@ -25,9 +27,11 @@ class VibeFlowCore {
       print('🎵 [VibeFlowCore] Initializing YtFlutterMusicapi...');
       await _ytApi.initialize();
       _isInitialized = true;
+      _logger.logInitialization(success: true);
       print('✅ [VibeFlowCore] Initialization complete');
     } catch (e) {
       print('❌ [VibeFlowCore] Initialization failed: $e');
+      _logger.logInitialization(success: false);
       rethrow;
     }
   }
@@ -47,12 +51,15 @@ class VibeFlowCore {
     final Map<String, String> audioUrls = {};
 
     print('🎵 [VibeFlowCore] Batch fetching ${songs.length} audio URLs...');
+    _logger.logBatchStart(songs.length, 'audio_url_fetch');
 
+    int successCount = 0;
     for (final song in songs) {
       try {
         final url = await getAudioUrl(song.videoId);
         if (url != null) {
           audioUrls[song.videoId] = url;
+          successCount++;
         }
       } catch (e) {
         print('⚠️ [VibeFlowCore] Failed to get URL for ${song.videoId}: $e');
@@ -63,20 +70,24 @@ class VibeFlowCore {
     print(
       '✅ [VibeFlowCore] Successfully fetched ${audioUrls.length}/${songs.length} URLs',
     );
+    _logger.logBatchComplete(successCount, songs.length, 'audio_url_fetch');
     return audioUrls;
   }
 
   /// Enrich a Song object with its audio URL
   /// Returns a new Song object with audioUrl populated
   Future<Song> enrichSongWithAudioUrl(Song song) async {
+    _logger.logEnrichmentStart(song.videoId, songTitle: song.title);
+
     if (song.audioUrl != null && song.audioUrl!.isNotEmpty) {
       // Already has audio URL
+      _logger.logEnrichmentSuccess(song.videoId, songTitle: song.title);
       return song;
     }
 
     final audioUrl = await getAudioUrl(song.videoId);
 
-    return Song(
+    final enrichedSong = Song(
       videoId: song.videoId,
       title: song.title,
       artists: song.artists,
@@ -84,17 +95,24 @@ class VibeFlowCore {
       duration: song.duration,
       audioUrl: audioUrl,
     );
+
+    _logger.logEnrichmentSuccess(song.videoId, songTitle: song.title);
+    return enrichedSong;
   }
 
   /// Enrich multiple songs with audio URLs
   /// Returns list of songs with audioUrl populated
   Future<List<Song>> enrichSongsWithAudioUrls(List<Song> songs) async {
+    _logger.logBatchStart(songs.length, 'song_enrichment');
+
     final enrichedSongs = <Song>[];
+    int successCount = 0;
 
     for (final song in songs) {
       try {
         final enrichedSong = await enrichSongWithAudioUrl(song);
         enrichedSongs.add(enrichedSong);
+        successCount++;
       } catch (e) {
         print('⚠️ [VibeFlowCore] Failed to enrich ${song.title}: $e');
         // Add original song even if enrichment fails
@@ -102,6 +120,7 @@ class VibeFlowCore {
       }
     }
 
+    _logger.logBatchComplete(successCount, songs.length, 'song_enrichment');
     return enrichedSongs;
   }
 
@@ -110,6 +129,9 @@ class VibeFlowCore {
   /// Automatically handles cache expiry and refreshes URLs
   Future<String?> getAudioUrl(String videoId, {QuickPick? song}) async {
     _ensureInitialized();
+
+    final songTitle = song?.title;
+    _logger.logFetchStart(videoId, songTitle: songTitle);
 
     try {
       print('🎵 [VibeFlowCore] Fetching audio URL for: $videoId');
@@ -126,20 +148,34 @@ class VibeFlowCore {
             print(
               '⚡ [Cache] Using cached URL for $videoId (age: ${age.inMinutes}m)',
             );
+            _logger.logCacheHit(videoId, songTitle: songTitle, age: age);
+            _logger.logFetchSuccess(
+              videoId,
+              songTitle: songTitle,
+              source: 'cache',
+            );
             return cachedUrl;
           } else {
             print(
               '⏰ [Cache] URL expired for $videoId (age: ${age.inHours}h), fetching fresh...',
             );
+            _logger.logCacheExpiry(videoId, songTitle: songTitle, age: age);
             await audioCache.remove(videoId);
           }
         } else {
           print('⚡ [Cache] Using cached URL for $videoId');
+          _logger.logCacheHit(videoId, songTitle: songTitle);
+          _logger.logFetchSuccess(
+            videoId,
+            songTitle: songTitle,
+            source: 'cache',
+          );
           return cachedUrl;
         }
       }
 
       print('🔄 [VibeFlowCore] Cache miss, fetching fresh URL...');
+      _logger.logCacheMiss(videoId, songTitle: songTitle);
 
       // Use the fast method from yt_flutter_musicapi
       final response = await _ytApi.getAudioUrlFast(videoId: videoId);
@@ -159,11 +195,23 @@ class VibeFlowCore {
           print('💾 [Cache] Cached URL for videoId: $videoId');
         }
 
+        _logger.logFetchSuccess(
+          videoId,
+          songTitle: songTitle,
+          source: 'YTMusicAPI',
+        );
         return response.data;
       } else {
         print('⚠️ [VibeFlowCore] No URL returned for $videoId');
         if (response.error != null) {
           print('⚠️ [VibeFlowCore] Error: ${response.error}');
+          _logger.logFetchFailure(
+            videoId,
+            songTitle: songTitle,
+            error: response.error,
+          );
+        } else {
+          _logger.logFetchFailure(videoId, songTitle: songTitle);
         }
 
         // Clear bad cache entry
@@ -173,6 +221,12 @@ class VibeFlowCore {
     } catch (e, stack) {
       print('❌ [VibeFlowCore] Error getting audio URL: $e');
       print('Stack trace: ${stack.toString().split('\n').take(3).join('\n')}');
+
+      _logger.logFetchFailure(
+        videoId,
+        songTitle: songTitle,
+        error: e.toString(),
+      );
 
       // Clear cache on error
       final audioCache = AudioUrlCache();
@@ -192,6 +246,15 @@ class VibeFlowCore {
     for (int attempt = 1; attempt <= maxRetries; attempt++) {
       try {
         print('🔄 [VibeFlowCore] Attempt $attempt/$maxRetries for $videoId');
+
+        if (attempt > 1) {
+          _logger.logRetry(
+            videoId,
+            attempt,
+            maxRetries,
+            songTitle: song?.title,
+          );
+        }
 
         final url = await getAudioUrl(videoId, song: song);
         if (url != null && url.isNotEmpty) {
@@ -222,6 +285,8 @@ class VibeFlowCore {
   }) async {
     _ensureInitialized();
 
+    _logger.logForceRefresh(videoId, songTitle: song?.title);
+
     try {
       print('🔄 [VibeFlowCore] Force refreshing audio URL for: $videoId');
 
@@ -244,13 +309,24 @@ class VibeFlowCore {
           await audioCache.cacheByVideoId(videoId, response.data!);
         }
 
+        _logger.logFetchSuccess(
+          videoId,
+          songTitle: song?.title,
+          source: 'force_refresh',
+        );
         return response.data;
       }
 
       print('⚠️ [VibeFlowCore] Failed to get fresh URL');
+      _logger.logFetchFailure(videoId, songTitle: song?.title);
       return null;
     } catch (e) {
       print('❌ [VibeFlowCore] Error force refreshing: $e');
+      _logger.logFetchFailure(
+        videoId,
+        songTitle: song?.title,
+        error: e.toString(),
+      );
       return null;
     }
   }

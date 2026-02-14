@@ -35,27 +35,24 @@ class AudioEffectsPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
 
                 // GET AUDIO SESSION ID
                 "getAudioSessionId" -> {
-                    val manager = audioEffectsManager ?: run {
-                        result.error("NOT_READY", "AudioEffectsManager not initialized", null)
-                        return
-                    }
                     // Return 0 for default audio output session
                     Log.d("AudioEffectsPlugin", "Returning audio session ID: 0")
                     result.success(0)
                 }
 
                 // ---------- INIT ----------
-               "initializeEffects" -> {
+                "initializeEffects" -> {
                     val sessionId = call.argument<Int>("sessionId") ?: 0
-                    val managera = audioEffectsManager ?: run {
-                        result.error("NOT_READY", "AudioEffectsManager not initialized", null)
-                        return
-                    }
-                    Log.d("AudioEffectsPlugin", "Initializing with session ID: $sessionId")
-                    result.success(managera.initialize(sessionId))
+                    Log.d("AudioEffectsPlugin", "🎛️ Initializing with session ID: $sessionId")
+                    result.success(manager.initialize(sessionId))
                 }
 
-                 
+                // ✅ NEW: Re-attach effects to new audio session
+                "reattachEffects" -> {
+                    val sessionId = call.argument<Int>("sessionId") ?: 0
+                    Log.d("AudioEffectsPlugin", "🔄 Re-attaching effects to session ID: $sessionId")
+                    result.success(manager.reattach(sessionId))
+                }
 
                 // ---------- BASS ----------
                 "setBassBoost" -> {

@@ -12,8 +12,11 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:vibeflow/api_base/vibeflowcore.dart';
 import 'package:vibeflow/managers/download_manager.dart';
+import 'package:vibeflow/models/DBSong.dart';
 import 'package:vibeflow/models/quick_picks_model.dart';
+import 'package:vibeflow/pages/audio_equalizer_page.dart';
 import 'package:vibeflow/pages/thoughtsScreen.dart';
+import 'package:vibeflow/services/audioGoverner.dart';
 import 'package:vibeflow/services/audio_service.dart';
 import 'package:vibeflow/services/bg_audio_handler.dart';
 import 'package:vibeflow/utils/album_color_generator.dart';
@@ -21,6 +24,7 @@ import 'package:vibeflow/pages/player_page.dart';
 import 'package:vibeflow/utils/material_transitions.dart';
 import 'package:vibeflow/utils/page_transitions.dart';
 import 'package:vibeflow/widgets/lyrics_widget.dart';
+import 'package:vibeflow/widgets/playlist_bottomSheet.dart';
 import 'package:vibeflow/widgets/radio_sheet.dart';
 import 'package:vibeflow/widgets/shareSong.dart';
 
@@ -772,8 +776,6 @@ class _NewPlayerPageState extends ConsumerState<NewPlayerPage>
   Widget _buildTopBar() {
     return Row(
       children: [
-        // Option 1: With access code check
-        // SongShareButton(song: widget.song),
         IconButton(
           icon: const Icon(
             Icons.keyboard_arrow_down,
@@ -785,21 +787,232 @@ class _NewPlayerPageState extends ConsumerState<NewPlayerPage>
             Navigator.pop(context);
           },
         ),
-
-        // Option 2: Public sharing (no access code needed)
-        // PublicSongShareButton(song: widget.song),
         const Spacer(),
-
         IconButton(
           icon: const Icon(Icons.more_vert, color: Colors.white70, size: 24),
           padding: EdgeInsets.zero,
-          onPressed: () {
-            Navigator.of(
-              context,
-            ).pushMaterialVertical(const AudioThoughtsScreen(), slideUp: true);
-          },
+          onPressed: _showMoreOptions,
         ),
       ],
+    );
+  }
+
+  void _showMoreOptions() {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (context) => Container(
+        decoration: BoxDecoration(
+          color: const Color(0xFF1A1A1A),
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+        ),
+        child: SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // Drag handle
+              const SizedBox(height: 12),
+              Container(
+                width: 40,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: Colors.white.withOpacity(0.3),
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+              const SizedBox(height: 20),
+
+              // EQ Option
+              ListTile(
+                leading: Container(
+                  width: 40,
+                  height: 40,
+                  decoration: BoxDecoration(
+                    color: Colors.white.withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: const Icon(
+                    Icons.equalizer_rounded,
+                    color: Colors.white,
+                    size: 22,
+                  ),
+                ),
+                title: Text(
+                  'Equalizer',
+                  style: GoogleFonts.inter(
+                    color: Colors.white,
+                    fontSize: 16,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+                subtitle: Text(
+                  'Adjust audio settings',
+                  style: GoogleFonts.inter(
+                    color: Colors.white.withOpacity(0.6),
+                    fontSize: 13,
+                  ),
+                ),
+                trailing: Icon(
+                  Icons.arrow_forward_ios,
+                  color: Colors.white.withOpacity(0.4),
+                  size: 16,
+                ),
+                onTap: () {
+                  Navigator.pop(context);
+                  _openEqualizer();
+                },
+              ),
+
+              Divider(
+                color: Colors.white.withOpacity(0.1),
+                height: 1,
+                indent: 20,
+                endIndent: 20,
+              ),
+
+              // Audio Governor Option
+              ListTile(
+                leading: Container(
+                  width: 40,
+                  height: 40,
+                  decoration: BoxDecoration(
+                    color: Colors.white.withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: const Icon(
+                    Icons.tune_rounded,
+                    color: Colors.white,
+                    size: 22,
+                  ),
+                ),
+                title: Text(
+                  'Audio Governor',
+                  style: GoogleFonts.inter(
+                    color: Colors.white,
+                    fontSize: 16,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+                subtitle: Text(
+                  'Advanced audio controls',
+                  style: GoogleFonts.inter(
+                    color: Colors.white.withOpacity(0.6),
+                    fontSize: 13,
+                  ),
+                ),
+                trailing: Icon(
+                  Icons.arrow_forward_ios,
+                  color: Colors.white.withOpacity(0.4),
+                  size: 16,
+                ),
+                onTap: () {
+                  Navigator.pop(context);
+                  _openAudioGovernor();
+                },
+              ),
+
+              Divider(
+                color: Colors.white.withOpacity(0.1),
+                height: 1,
+                indent: 20,
+                endIndent: 20,
+              ),
+
+              // Add to Playlist Option
+              ListTile(
+                leading: Container(
+                  width: 40,
+                  height: 40,
+                  decoration: BoxDecoration(
+                    color: Colors.white.withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: const Icon(
+                    Icons.playlist_add_rounded,
+                    color: Colors.white,
+                    size: 22,
+                  ),
+                ),
+                title: Text(
+                  'Add to Playlist',
+                  style: GoogleFonts.inter(
+                    color: Colors.white,
+                    fontSize: 16,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+                subtitle: Text(
+                  'Save to your collection',
+                  style: GoogleFonts.inter(
+                    color: Colors.white.withOpacity(0.6),
+                    fontSize: 13,
+                  ),
+                ),
+                trailing: Icon(
+                  Icons.arrow_forward_ios,
+                  color: Colors.white.withOpacity(0.4),
+                  size: 16,
+                ),
+                onTap: () {
+                  Navigator.pop(context);
+                  _addToPlaylist();
+                },
+              ),
+
+              const SizedBox(height: 12),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _openAudioGovernor() {
+    Navigator.push(
+      context,
+      PageTransitions.fade(page: const AudioThoughtsScreen()),
+    );
+  }
+
+  void _openEqualizer() {
+    Navigator.push(
+      context,
+      MaterialPageRoute(builder: (context) => const AudioEqualizerPage()),
+    );
+  }
+
+  void _addToPlaylist() {
+    final currentMedia = _audioService.currentMediaItem;
+
+    if (currentMedia == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'No song currently playing',
+            style: GoogleFonts.inter(),
+          ),
+          backgroundColor: Colors.red.shade700,
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+      return;
+    }
+
+    // ✅ FIXED: Convert MediaItem to DbSong with correct parameters
+    final dbSong = DbSong(
+      videoId: currentMedia.id,
+      title: currentMedia.title,
+      artists: [currentMedia.artist ?? 'Unknown Artist'], // List<String>
+      thumbnail: currentMedia.artUri?.toString() ?? '',
+      duration: currentMedia.duration?.inSeconds.toString() ?? '0',
+    );
+
+    // Show the playlist bottom sheet
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (context) => AddToPlaylistSheet(song: dbSong),
     );
   }
 
@@ -1372,7 +1585,6 @@ class _NewPlayerPageState extends ConsumerState<NewPlayerPage>
   }
   // UPDATED PARTS ONLY
 
-  // 1. Update the _buildRadioLyricsToggle method:
   Widget _buildRadioLyricsToggle() {
     return Column(
       mainAxisSize: MainAxisSize.min,
@@ -1387,10 +1599,36 @@ class _NewPlayerPageState extends ConsumerState<NewPlayerPage>
                 label: 'Radio',
                 isSelected: _viewMode == ViewMode.album,
                 onTap: () {
-                  // Always switch to album view first
                   setState(() => _viewMode = ViewMode.album);
 
-                  // Show the enhanced radio sheet
+                  // ✅ Ensure handler has radio loaded
+                  final handler = getAudioHandler();
+                  if (handler != null) {
+                    final customState =
+                        handler.customState.value as Map<String, dynamic>? ??
+                        {};
+                    final radioQueue =
+                        customState['radio_queue'] as List<dynamic>? ?? [];
+
+                    if (radioQueue.isEmpty) {
+                      // Get current song and trigger radio load
+                      final currentMedia = handler.mediaItem.value;
+                      if (currentMedia != null) {
+                        final currentSong = QuickPick(
+                          videoId: currentMedia.id,
+                          title: currentMedia.title,
+                          artists: currentMedia.artist ?? 'Unknown Artist',
+                          thumbnail: currentMedia.artUri?.toString() ?? '',
+                          duration: currentMedia.duration?.inSeconds.toString(),
+                        );
+
+                        // ✅ Trigger load using public method
+                        handler.loadRadioImmediately(currentSong);
+                      }
+                    }
+                  }
+
+                  // Open sheet
                   showModalBottomSheet(
                     context: context,
                     backgroundColor: Colors.transparent,

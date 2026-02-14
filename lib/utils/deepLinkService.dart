@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:vibeflow/models/quick_picks_model.dart';
 import 'package:vibeflow/pages/newPlayerPage.dart';
 import 'package:vibeflow/main.dart' show rootNavigatorKey;
+import 'package:vibeflow/services/audio_service.dart';
 
 // Provider for deep link service
 final deepLinkServiceProvider = Provider<DeepLinkService>((ref) {
@@ -13,7 +14,7 @@ final deepLinkServiceProvider = Provider<DeepLinkService>((ref) {
 class DeepLinkService {
   final Ref _ref;
   final AppLinks _appLinks = AppLinks();
-
+  bool _hasHandledInitialLink = false;
   DeepLinkService(this._ref);
 
   /// Initialize deep link listener — call once from VibeFlowApp.initState
@@ -35,6 +36,12 @@ class DeepLinkService {
 
   /// Handle initial deep link when app is launched from a link
   Future<void> _handleInitialLink() async {
+    // ✅ ADD: Prevent handling initial link more than once
+    if (_hasHandledInitialLink) {
+      debugPrint('⏭️ [DeepLink] Initial link already handled, skipping');
+      return;
+    }
+
     try {
       // Small delay so the navigator is ready
       await Future.delayed(const Duration(milliseconds: 500));
@@ -42,7 +49,10 @@ class DeepLinkService {
       final uri = await _appLinks.getInitialLink();
       if (uri != null) {
         debugPrint('🔗 [DeepLink] Initial link: $uri');
+        _hasHandledInitialLink = true; // ✅ Mark as handled
         _handleDeepLink(uri);
+      } else {
+        debugPrint('ℹ️ [DeepLink] No initial link found');
       }
     } catch (e) {
       debugPrint('❌ [DeepLink] Failed to get initial link: $e');
@@ -63,9 +73,18 @@ class DeepLinkService {
     if (uri.scheme == 'vibeflow' && uri.host == 'song') {
       songId = uri.path.replaceFirst('/', '');
     }
-    // Handle https://vibeflow.app/song/VIDEO_ID
+    // Handle https://golanpiyush.github.io/DeepLink-Handlers/song/VIDEO_ID
     else if (uri.scheme == 'https' && uri.host == 'golanpiyush.github.io') {
-      if (uri.pathSegments.length >= 3 && uri.pathSegments[1] == 'song') {
+      // Check for DeepLink-Handlers repo
+      if (uri.pathSegments.length >= 3 &&
+          uri.pathSegments[0] == 'DeepLink-Handlers' &&
+          uri.pathSegments[1] == 'song') {
+        songId = uri.pathSegments[2];
+      }
+      // Also support old vibeflow path for backward compatibility
+      else if (uri.pathSegments.length >= 3 &&
+          uri.pathSegments[0] == 'vibeflow' &&
+          uri.pathSegments[1] == 'song') {
         songId = uri.pathSegments[2];
       }
     }
@@ -113,6 +132,7 @@ class DeepLinkService {
   }
 
   /// Navigate directly to player — no Supabase, no loading dialog needed
+  /// Navigate directly to player — no Supabase, no loading dialog needed
   Future<void> _navigateToSong(QuickPick song) async {
     final navigatorContext = rootNavigatorKey.currentContext;
 
@@ -125,6 +145,30 @@ class DeepLinkService {
     try {
       debugPrint('🎵 [DeepLink] Navigating to: ${song.title}');
 
+      // ✅ FIX: Check if this song is already playing
+      final audioService = AudioServices.instance;
+      final currentMedia = audioService.currentMediaItem;
+
+      if (currentMedia != null && currentMedia.id == song.videoId) {
+        debugPrint('✅ [DeepLink] Song already loaded, just opening player');
+
+        // Just open the player page without playing
+        if (navigatorContext.mounted) {
+          await Navigator.push(
+            navigatorContext,
+            MaterialPageRoute(
+              builder: (context) => NewPlayerPage(
+                song: song,
+                heroTag: 'deeplink_${song.videoId}',
+              ),
+            ),
+          );
+        }
+        return;
+      }
+
+      // Different song - play it
+      debugPrint('🎵 [DeepLink] Playing new song: ${song.title}');
       if (navigatorContext.mounted) {
         await NewPlayerPage.open(
           navigatorContext,
@@ -168,6 +212,7 @@ class DeepLinkService {
         .map((e) => '${e.key}=${e.value}')
         .join('&');
 
-    return 'https://golanpiyush.github.io/vibeflow/song/$videoId?$queryString';
+    // ✅ Updated to use new DeepLink-Handlers repo
+    return 'https://golanpiyush.github.io/DeepLink-Handlers/song/$videoId?$queryString';
   }
 }

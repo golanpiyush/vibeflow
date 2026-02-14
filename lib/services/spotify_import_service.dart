@@ -1,14 +1,10 @@
 // lib/services/spotify_import_service.dart
-// Uses: Web scraping of open.spotify.com/embed/playlist/{id}
-// Searches YouTube for each Spotify track using youtube_explode_dart
-
-// ignore_for_file: depend_on_referenced_packages
+// Uses: Backend API (yt-dlp) for Spotify → YouTube conversion
 
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
-import 'package:html/parser.dart' as html_parser;
-import 'package:youtube_explode_dart/youtube_explode_dart.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Public data models
@@ -41,7 +37,7 @@ class SpotifyPlaylistData {
 }
 
 class SpotifyTrackData {
-  final String id;
+  final String id; // YouTube video ID
   final String title;
   final List<String> artists;
   final String album;
@@ -71,6 +67,7 @@ enum SpotifyImportError {
   authFailed,
   networkError,
   parseError,
+  serverUnavailable,
   unknown,
 }
 
@@ -88,31 +85,16 @@ class SpotifyImportException implements Exception {
 // ─────────────────────────────────────────────────────────────────────────────
 
 class SpotifyImportService {
-  static const _baseEmbedUrl = 'https://open.spotify.com/embed/playlist';
-  final YoutubeExplode _ytExplode = YoutubeExplode();
-
-  // ── URL Parsing & Validation ──────────────────────────────────────────────
-
-  String? extractPlaylistId(String input) {
-    input = input.trim();
-
-    // spotify:playlist:ID
-    final uriMatch = RegExp(
-      r'^spotify:playlist:([a-zA-Z0-9]+)$',
-    ).firstMatch(input);
-    if (uriMatch != null) return uriMatch.group(1);
-
-    // https://open.spotify.com/playlist/ID  (with optional intl prefix)
-    final urlMatch = RegExp(
-      r'open\.spotify\.com/(?:intl-[a-z-]+/)?playlist/([a-zA-Z0-9]+)',
-    ).firstMatch(input);
-    if (urlMatch != null) return urlMatch.group(1);
-
-    // Bare 22-char alphanumeric ID
-    if (RegExp(r'^[a-zA-Z0-9]{22}$').hasMatch(input)) return input;
-
-    return null;
+  // Get API URL from environment variable
+  static String get _apiBaseUrl {
+    final url = dotenv.env['VIBEFLOW_SONG_ID_CONVERTER_SERVER'];
+    if (url == null || url.isEmpty) {
+      throw Exception('VIBEFLOW_SONG_ID_CONVERTER_SERVER not set in .env file');
+    }
+    return url;
   }
+
+  // ── URL Validation ──────────────────────────────────────────────────────
 
   void _validateLink(String input) {
     if (input.contains('spotify.com/track/') ||
@@ -136,7 +118,8 @@ class SpotifyImportService {
         'That link is an artist page, not a playlist.',
       );
     }
-    if (extractPlaylistId(input) == null) {
+    if (!input.contains('spotify.com/playlist/') &&
+        !input.contains('spotify:playlist:')) {
       throw const SpotifyImportException(
         SpotifyImportError.invalidLink,
         'Invalid Spotify link. Paste a link like:\nhttps://open.spotify.com/playlist/...',
@@ -144,429 +127,209 @@ class SpotifyImportService {
     }
   }
 
-  // ── Main Import ───────────────────────────────────────────────────────────
-
   // ── Main Import ─────────────────────────────────────────────────────────
+
   Future<SpotifyPlaylistData> importPlaylist(
     String link, {
     Function(int current, int total, String trackName)? onProgress,
   }) async {
     _validateLink(link);
-    final playlistId = extractPlaylistId(link)!;
-    debugPrint('🎵 Importing playlist ID: $playlistId');
 
-    // Fetch the embed page and extract JSON data
-    final embedUrl = '$_baseEmbedUrl/$playlistId';
-    debugPrint('🌐 Fetching embed URL: $embedUrl');
-    final response = await _get(embedUrl);
-    final htmlContent = response.body;
+    debugPrint('🎵 Importing playlist via backend: $link');
+    debugPrint('🌐 Backend URL: $_apiBaseUrl');
 
-    // Parse the HTML to find the embedded JSON data
-    final playlistData = await _extractPlaylistData(htmlContent, onProgress);
-    debugPrint('✅ Successfully parsed playlist data');
+    try {
+      // Show initial progress
+      onProgress?.call(0, 100, 'Connecting to server...');
 
-    return playlistData;
-  }
+      // Send Spotify URL to backend
+      final response = await http
+          .post(
+            Uri.parse('$_apiBaseUrl/api/playlist'),
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode({'url': link}),
+          )
+          .timeout(
+            const Duration(seconds: 120), // 2 minute timeout
+            onTimeout: () {
+              throw const SpotifyImportException(
+                SpotifyImportError.serverUnavailable,
+                'Request timed out. The server may be waking up (Render free tier cold start). Please wait 30 seconds and try again.',
+              );
+            },
+          );
 
-  // ── NEW: Import with YouTube Video IDs ──────────────────────────────────
-  Future<Map<String, String?>> importPlaylistWithYouTube(
-    String link, {
-    Function(int current, int total, String trackName)? onProgress,
-  }) async {
-    // Step 1: Get Spotify playlist data
-    final playlist = await importPlaylist(link);
+      debugPrint('📡 Response status: ${response.statusCode}');
 
-    // Step 2: Batch-fetch YouTube video IDs
-    debugPrint(
-      '🔍 Fetching YouTube video IDs for ${playlist.tracks.length} tracks...',
-    );
-    final youtubeIds = await _batchFetchYouTubeIds(
-      playlist.tracks,
-      concurrency: 10, // Adjust based on your needs
-      onProgress: onProgress,
-    );
-
-    // Step 3: Create mapping: Spotify Track ID -> YouTube Video ID
-    final Map<String, String?> trackMapping = {};
-    for (int i = 0; i < playlist.tracks.length; i++) {
-      trackMapping[playlist.tracks[i].id] = youtubeIds[i];
-    }
-
-    debugPrint(
-      '✅ Found ${youtubeIds.where((id) => id != null).length}/${playlist.tracks.length} YouTube matches',
-    );
-    return trackMapping;
-  }
-
-  // ── Batch YouTube Search ────────────────────────────────────────────────
-  Future<List<String?>> _batchFetchYouTubeIds(
-    List<SpotifyTrackData> tracks, {
-    int concurrency = 10,
-    Function(int current, int total, String trackName)? onProgress,
-  }) async {
-    final results = <String?>[];
-
-    for (int i = 0; i < tracks.length; i += concurrency) {
-      final batch = tracks.skip(i).take(concurrency).toList();
-
-      // Fetch this batch in parallel
-      final batchResults = await Future.wait(
-        batch.map((track) => _searchYouTubeForTrack(track)),
-      );
-
-      results.addAll(batchResults);
-
-      // Report progress
-      if (onProgress != null && results.isNotEmpty) {
-        final lastTrack = batch.last;
-        onProgress(
-          results.length,
-          tracks.length,
-          '${lastTrack.title} - ${lastTrack.artists.join(", ")}',
+      // Handle different status codes
+      if (response.statusCode == 404) {
+        throw const SpotifyImportException(
+          SpotifyImportError.notFound,
+          'Playlist not found. Check the link and try again.',
         );
       }
-    }
 
-    return results;
-  }
-
-  // ── Search YouTube for Single Track ─────────────────────────────────────
-  Future<String?> _searchYouTubeForTrack(SpotifyTrackData track) async {
-    try {
-      // Build optimized search query
-      final query = '${track.artists.join(" ")} ${track.title} audio';
-      debugPrint('🔎 Searching: $query');
-
-      final searchResults = await _ytExplode.search.search(query);
-
-      if (searchResults.isEmpty) {
-        debugPrint('❌ No results for: ${track.title}');
-        return null;
+      if (response.statusCode == 403) {
+        throw const SpotifyImportException(
+          SpotifyImportError.privatePlaylist,
+          'This playlist is private or restricted.',
+        );
       }
 
-      final videoId = searchResults.first.id.value;
-      debugPrint('✅ Found: ${track.title} -> $videoId');
-      return videoId;
-    } catch (e) {
-      debugPrint('❌ Error searching for ${track.title}: $e');
-      return null;
-    }
-  }
-  // ── Parse embed page HTML ─────────────────────────────────────────────────
-
-  // ── Parse embed page HTML ─────────────────────────────────────────────────
-
-  Future<SpotifyPlaylistData> _extractPlaylistData(
-    String htmlContent,
-    Function(int current, int total, String trackName)? onProgress,
-  ) async {
-    try {
-      final document = html_parser.parse(htmlContent);
-      final scriptTag = document.getElementById('__NEXT_DATA__');
-
-      if (scriptTag == null) {
+      if (response.statusCode == 500) {
+        debugPrint('❌ Backend error: ${response.body}');
         throw const SpotifyImportException(
           SpotifyImportError.parseError,
-          'Unable to parse playlist data. The page structure may have changed.',
+          'Backend error while processing playlist. Please try again.',
         );
       }
 
-      final jsonText = scriptTag.text;
-      final jsonData = jsonDecode(jsonText) as Map<String, dynamic>;
+      if (response.statusCode != 200) {
+        debugPrint('❌ Unexpected status: ${response.statusCode}');
+        debugPrint('Response: ${response.body}');
+        throw SpotifyImportException(
+          SpotifyImportError.networkError,
+          'Backend error (${response.statusCode}). Please try again.',
+        );
+      }
 
-      final props = jsonData['props'] as Map<String, dynamic>?;
-      final pageProps = props?['pageProps'] as Map<String, dynamic>?;
-      final state = pageProps?['state'] as Map<String, dynamic>?;
-      final data = state?['data'] as Map<String, dynamic>?;
-      final entity = data?['entity'] as Map<String, dynamic>?;
+      final data = jsonDecode(response.body) as Map<String, dynamic>;
 
-      if (entity == null) {
+      // Check if there was an error
+      if (data.containsKey('error')) {
+        throw SpotifyImportException(
+          SpotifyImportError.parseError,
+          data['error'] as String,
+        );
+      }
+
+      // Extract playlist info
+      final playlistInfo = data['playlist'] as Map<String, dynamic>?;
+      if (playlistInfo == null) {
         throw const SpotifyImportException(
           SpotifyImportError.parseError,
-          'Unable to extract playlist information.',
+          'Invalid response from backend',
         );
       }
 
-      // ═══════════════════════════════════════════════════════════════════════
-      // DEBUG: Print the entire entity structure to find the correct paths
-      // ═══════════════════════════════════════════════════════════════════════
-      debugPrint('🔍 DEBUG: Entity keys: ${entity.keys.toList()}');
-
-      // Check owner fields
-      if (entity.containsKey('owner')) {
-        debugPrint('🔍 DEBUG: owner = ${entity['owner']}');
-      }
-      if (entity.containsKey('ownerV2')) {
-        debugPrint('🔍 DEBUG: ownerV2 = ${entity['ownerV2']}');
-      }
-      if (entity.containsKey('authors')) {
-        debugPrint('🔍 DEBUG: authors = ${entity['authors']}');
-      }
-
-      // Check first track structure
-      final trackList = entity['trackList'] as List<dynamic>? ?? [];
-      if (trackList.isNotEmpty) {
-        final firstTrack = trackList[0] as Map<String, dynamic>;
-        debugPrint('🔍 DEBUG: First track keys: ${firstTrack.keys.toList()}');
-        debugPrint('🔍 DEBUG: First track data: $firstTrack');
-      }
-      // ═══════════════════════════════════════════════════════════════════════
-
-      final playlistId = entity['uri']?.toString().split(':').last ?? '';
-      final playlistName = entity['name'] as String? ?? 'Untitled Playlist';
-      final description = entity['description'] as String?;
+      final playlistName =
+          playlistInfo['name'] as String? ?? 'Unknown Playlist';
+      final playlistId = playlistInfo['id'] as String? ?? '';
 
       debugPrint('📋 Playlist: $playlistName');
 
-      // Owner extraction with multiple fallbacks
-      String ownerName = 'Unknown';
-
-      // Try ownerV2.data.name
-      final ownerV2 = entity['ownerV2'] as Map<String, dynamic>?;
-      final ownerData = ownerV2?['data'] as Map<String, dynamic>?;
-      if (ownerData?['name'] != null) {
-        ownerName = ownerData!['name'] as String;
-        debugPrint('👤 Owner from ownerV2: $ownerName');
-      } else {
-        // Try owner.name
-        final owner = entity['owner'] as Map<String, dynamic>?;
-        if (owner?['name'] != null) {
-          ownerName = owner!['name'] as String;
-          debugPrint('👤 Owner from owner: $ownerName');
-        } else {
-          // Try authors[0].name
-          final authors = entity['authors'] as List<dynamic>?;
-          if (authors != null && authors.isNotEmpty) {
-            final firstAuthor = authors.first as Map<String, dynamic>?;
-            if (firstAuthor?['name'] != null) {
-              ownerName = firstAuthor!['name'] as String;
-              debugPrint('👤 Owner from authors: $ownerName');
-            }
-          }
-        }
-      }
-
-      // Playlist cover
-      final coverArt = entity['coverArt'] as Map<String, dynamic>?;
-      final coverSources = coverArt?['sources'] as List<dynamic>?;
-      String? coverImageUrl;
-      if (coverSources != null && coverSources.isNotEmpty) {
-        final largestCover = coverSources.last as Map<String, dynamic>?;
-        coverImageUrl = largestCover?['url'] as String?;
-      }
-
-      debugPrint('📝 Found ${trackList.length} tracks in playlist');
-
-      // Collect track metadata
-      final spotifyTracks = <Map<String, dynamic>>[];
-
-      for (int i = 0; i < trackList.length; i++) {
-        try {
-          final trackData = trackList[i] as Map<String, dynamic>;
-
-          final trackName = trackData['title'] as String? ?? 'Unknown Title';
-          final subtitle = trackData['subtitle'] as String? ?? '';
-          final artists = subtitle.isNotEmpty
-              ? subtitle.split(',').map((a) => a.trim()).toList()
-              : ['Unknown Artist'];
-          final durationMs = trackData['duration'] as int? ?? 0;
-
-          // Extract track's album art
-          String? trackAlbumArt;
-          final trackImage = trackData['image'] as Map<String, dynamic>?;
-
-          if (trackImage != null) {
-            debugPrint('🔍 DEBUG: Track $i image structure: $trackImage');
-          }
-
-          final trackImageSources = trackImage?['sources'] as List<dynamic>?;
-          if (trackImageSources != null && trackImageSources.isNotEmpty) {
-            final largestImage =
-                trackImageSources.last as Map<String, dynamic>?;
-            trackAlbumArt = largestImage?['url'] as String?;
-            debugPrint('🖼️ Track $i album art: $trackAlbumArt');
-          }
-
-          // Extract album name
-          String albumName = 'Unknown Album';
-          final metadata = trackData['metadata'] as Map<String, dynamic>?;
-
-          if (metadata != null) {
-            debugPrint('🔍 DEBUG: Track $i metadata: $metadata');
-          }
-
-          if (metadata?['album_title'] != null) {
-            albumName = metadata!['album_title'] as String;
-          } else if (metadata?['album'] != null) {
-            albumName = metadata!['album'] as String;
-          }
-
-          spotifyTracks.add({
-            'title': trackName,
-            'artists': artists,
-            'durationMs': durationMs,
-            'albumArt': trackAlbumArt,
-            'album': albumName,
-            'index': i,
-          });
-        } catch (e) {
-          debugPrint('⚠️ Skipped malformed track at index $i: $e');
-          continue;
-        }
-      }
-
-      // Search YouTube for tracks
+      // Extract tracks
+      final results = data['results'] as List<dynamic>? ?? [];
       final tracksList = <SpotifyTrackData>[];
-      int successCount = 0;
-      int failCount = 0;
+      int skippedCount = 0;
 
-      for (int i = 0; i < spotifyTracks.length; i++) {
-        try {
-          final track = spotifyTracks[i];
-          final trackName = track['title'] as String;
-          final artists = track['artists'] as List<String>;
-          final durationMs = track['durationMs'] as int;
-          final trackAlbumArt = track['albumArt'] as String?;
-          final albumName = track['album'] as String;
-          final index = track['index'] as int;
+      for (int i = 0; i < results.length; i++) {
+        final result = results[i] as Map<String, dynamic>;
 
-          onProgress?.call(i + 1, spotifyTracks.length, trackName);
+        final title = result['title'] as String? ?? 'Unknown';
+        final artists =
+            (result['artists'] as List?)?.cast<String>() ?? ['Unknown Artist'];
 
-          final searchQuery = '$trackName ${artists.join(' ')}';
-          debugPrint(
-            '🔍 [${i + 1}/${spotifyTracks.length}] Searching: $searchQuery',
-          );
+        // Extract YouTube video ID from backend response
+        // The backend should return 'videoId' or 'youtubeId'
+        String? youtubeId = result['videoId'] as String?;
+        youtubeId ??= result['youtubeId'] as String?;
 
-          String? youtubeVideoId;
-          try {
-            final searchResults = await _ytExplode.search.search(searchQuery);
+        final success = result['success'] as bool? ?? false;
 
-            if (searchResults.isNotEmpty) {
-              youtubeVideoId = searchResults.first.id.value;
-              debugPrint('   ✅ Found: ${searchResults.first.title}');
-              debugPrint('   📹 Video ID: $youtubeVideoId');
-              successCount++;
-            } else {
-              debugPrint('   ⚠️ No search results');
-              failCount++;
-            }
-          } catch (searchError) {
-            debugPrint('   ❌ Search failed: $searchError');
-            failCount++;
-          }
-
-          if (youtubeVideoId == null || youtubeVideoId.isEmpty) {
-            debugPrint('   ⏭️ Skipping - no YouTube match');
-            continue;
-          }
-
-          tracksList.add(
-            SpotifyTrackData(
-              id: youtubeVideoId,
-              title: trackName,
-              artists: artists,
-              album: albumName,
-              albumArtUrl:
-                  trackAlbumArt ?? coverImageUrl, // Fallback to playlist cover
-              duration: Duration(milliseconds: durationMs),
-              addedAt: null,
-              trackNumber: index + 1,
-            ),
-          );
-        } catch (e, st) {
-          debugPrint('❌ Error processing track: $e');
-          debugPrint('   $st');
-          failCount++;
+        // Skip failed tracks or invalid video IDs
+        if (!success || youtubeId == null || youtubeId.isEmpty) {
+          debugPrint('⏭️ Skipping: $title (${result['error'] ?? 'no match'})');
+          skippedCount++;
           continue;
         }
+
+        // ✅ CRITICAL: Validate that this is a real YouTube video ID, not a Spotify ID
+        if (youtubeId.startsWith('spotify:') ||
+            youtubeId.startsWith('spotify-') ||
+            youtubeId.contains('spotify')) {
+          debugPrint(
+            '⚠️ Skipping: $title - Invalid video ID (still a Spotify ID: $youtubeId)',
+          );
+          skippedCount++;
+          continue;
+        }
+
+        // YouTube video IDs are typically 11 characters (basic validation)
+        if (youtubeId.length < 10 || youtubeId.length > 15) {
+          debugPrint(
+            '⚠️ Skipping: $title - Suspicious video ID format: $youtubeId (length: ${youtubeId.length})',
+          );
+          skippedCount++;
+          continue;
+        }
+
+        debugPrint('✅ Track ${i + 1}: $title -> YT:$youtubeId');
+
+        tracksList.add(
+          SpotifyTrackData(
+            id: youtubeId, // ✅ VALIDATED YOUTUBE VIDEO ID
+            title: title,
+            artists: artists,
+            album:
+                result['album'] as String? ??
+                (artists.isNotEmpty ? artists.first : 'Unknown Album'),
+            albumArtUrl: result['albumArt'] as String?,
+            duration: Duration(
+              seconds: (result['duration'] as num?)?.toInt() ?? 0,
+            ),
+            addedAt: null,
+            trackNumber: i + 1,
+          ),
+        );
       }
+
+      if (tracksList.isEmpty) {
+        throw SpotifyImportException(
+          SpotifyImportError.parseError,
+          'No tracks could be converted to YouTube videos. Backend may not be returning valid video IDs. Total tracks: ${results.length}, Skipped: $skippedCount',
+        );
+      }
+
+      final summary = data['summary'] as Map<String, dynamic>?;
+      final successful = summary?['successful'] as int? ?? tracksList.length;
+      final total = summary?['total'] as int? ?? tracksList.length;
+
+      debugPrint(
+        '✅ Import complete: $successful/$total tracks (skipped: $skippedCount)',
+      );
 
       final totalDuration = tracksList.fold<Duration>(
         Duration.zero,
         (sum, t) => sum + t.duration,
       );
 
-      debugPrint('🎉 Import complete:');
-      debugPrint('   ✅ Success: $successCount tracks');
-      debugPrint('   ❌ Failed: $failCount tracks');
-      debugPrint('   📊 Total: ${tracksList.length} tracks imported');
-
       return SpotifyPlaylistData(
         id: playlistId,
         name: playlistName,
-        description: description?.isNotEmpty == true ? description : null,
-        coverImageUrl: coverImageUrl,
-        ownerName: ownerName,
+        description: playlistInfo['description'] as String?,
+        coverImageUrl:
+            playlistInfo['coverImageUrl'] as String? ??
+            (tracksList.isNotEmpty ? tracksList.first.albumArtUrl : null),
+        ownerName: playlistInfo['owner'] as String? ?? 'Spotify User',
         totalTracks: tracksList.length,
         totalDuration: totalDuration,
-        addedAt: null,
+        addedAt: DateTime.now(),
         isPublic: true,
         tracks: tracksList,
       );
+    } on SpotifyImportException {
+      rethrow;
     } catch (e, st) {
-      if (e is SpotifyImportException) rethrow;
-      debugPrint('❌ Parse error: $e');
-      debugPrint('   $st');
+      debugPrint('❌ Import failed: $e');
+      debugPrint('Stack trace: $st');
       throw SpotifyImportException(
-        SpotifyImportError.parseError,
-        'Failed to parse playlist data: ${e.toString()}',
-      );
-    }
-  }
-
-  // ── Shared HTTP helper ────────────────────────────────────────────────────
-
-  Future<http.Response> _get(String url) async {
-    try {
-      final headers = {
-        'User-Agent':
-            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-        'Accept':
-            'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-        'Accept-Language': 'en-US,en;q=0.5',
-      };
-
-      final response = await http.get(Uri.parse(url), headers: headers);
-      debugPrint('📡 ${response.statusCode} $url');
-
-      if (response.statusCode == 200) return response;
-
-      // Non-200 — throw a typed exception
-      debugPrint('❌ HTTP ${response.statusCode}');
-      switch (response.statusCode) {
-        case 403:
-          throw const SpotifyImportException(
-            SpotifyImportError.privatePlaylist,
-            'This playlist is private or restricted.',
-          );
-        case 404:
-          throw const SpotifyImportException(
-            SpotifyImportError.notFound,
-            'Playlist not found. Check the link and try again.',
-          );
-        case 429:
-          throw const SpotifyImportException(
-            SpotifyImportError.rateLimited,
-            'Too many requests. Please wait a moment and try again.',
-          );
-        default:
-          throw SpotifyImportException(
-            SpotifyImportError.unknown,
-            'Unexpected error (${response.statusCode}). Please try again.',
-          );
-      }
-    } catch (e) {
-      if (e is SpotifyImportException) rethrow;
-      debugPrint('❌ Network error: $e');
-      throw const SpotifyImportException(
         SpotifyImportError.networkError,
-        'Network error. Please check your internet connection.',
+        'Failed to import playlist: ${e.toString()}',
       );
     }
   }
 
-  // Cleanup
-  void dispose() {
-    _ytExplode.close();
-  }
+  // No cleanup needed (no YoutubeExplode instance)
+  void dispose() {}
 }

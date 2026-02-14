@@ -8,14 +8,15 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:vibeflow/api_base/vibeflowcore.dart';
-import 'package:vibeflow/constants/app_colors.dart';
 import 'package:auto_size_text/auto_size_text.dart';
 import 'package:vibeflow/constants/theme_colors.dart';
+import 'package:vibeflow/database/song_sharingService.dart';
 import 'package:vibeflow/managers/download_manager.dart';
 import 'package:vibeflow/models/DBSong.dart';
 import 'package:vibeflow/models/quick_picks_model.dart';
 import 'package:vibeflow/pages/audio_equalizer_page.dart';
 import 'package:vibeflow/services/audio_service.dart';
+import 'package:vibeflow/services/bg_audio_handler.dart';
 import 'package:vibeflow/services/haptic_feedback_service.dart';
 import 'package:vibeflow/utils/album_color_generator.dart';
 import 'package:vibeflow/utils/page_transitions.dart';
@@ -247,10 +248,15 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
     }
   }
 
+  // Simplified PlayerScreen - Remove all notification-related code
+
+  // In the _handleSaveToggle method, replace the entire implementation with:
+
   Future<void> _handleSaveToggle() async {
     if (_isDownloading) return;
 
     if (_isSaved) {
+      // Remove from saved songs
       final success = await DownloadService.instance.deleteDownload(
         widget.song.videoId,
       );
@@ -260,25 +266,20 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
           _isSaved = false;
         });
 
-        _showNotification(
-          title: 'Removed from Saved Songs',
-          body: widget.song.title,
-          notificationLayout: NotificationLayout.Default,
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Removed from Saved Songs'),
+            backgroundColor: Colors.green,
+            duration: const Duration(seconds: 2),
+          ),
         );
       }
     } else {
+      // Download song
       setState(() {
         _isDownloading = true;
         _isSaved = true;
       });
-
-      await _createNotificationChannel();
-
-      await _showDownloadNotification(
-        title: 'Downloading',
-        body: widget.song.title,
-        progress: 0,
-      );
 
       try {
         final audioUrl = await _getAudioUrl();
@@ -294,10 +295,8 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
           artist: widget.song.artists,
           thumbnailUrl: widget.song.thumbnail,
           onProgress: (progress) {
-            _updateDownloadNotification(
-              title: 'Downloading',
-              body: widget.song.title,
-              progress: progress.toInt(),
+            debugPrint(
+              'Download progress: ${(progress * 100).toStringAsFixed(1)}%',
             );
           },
         );
@@ -308,20 +307,24 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
           });
 
           if (result.success) {
-            _showNotification(
-              title: 'Download Complete',
-              body: '${widget.song.title} saved successfully',
-              notificationLayout: NotificationLayout.Default,
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text('${widget.song.title} saved successfully'),
+                backgroundColor: Colors.green,
+                duration: const Duration(seconds: 2),
+              ),
             );
           } else {
             setState(() {
               _isSaved = false;
             });
 
-            _showNotification(
-              title: 'Download Failed',
-              body: result.message,
-              notificationLayout: NotificationLayout.Default,
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text('Download failed: ${result.message}'),
+                backgroundColor: Colors.red,
+                duration: const Duration(seconds: 3),
+              ),
             );
           }
         }
@@ -332,10 +335,12 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
             _isSaved = false;
           });
 
-          _showNotification(
-            title: 'Download Failed',
-            body: 'Failed to save song: $e',
-            notificationLayout: NotificationLayout.Default,
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Failed to save song: $e'),
+              backgroundColor: Colors.red,
+              duration: const Duration(seconds: 3),
+            ),
           );
         }
       }
@@ -809,9 +814,6 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
                                   ),
                                   onPressed: () => Navigator.pop(context),
                                 ),
-                                const SizedBox(width: 8),
-                                // SongShareButton(song: widget.song),
-                                PublicSongShareButton(song: widget.song),
 
                                 // Option 2: Public sharing (no access code needed)
                                 const SizedBox(width: 8),
@@ -824,14 +826,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
                                       themeTextPrimaryColorProvider,
                                     ),
                                   ),
-                                  onPressed: () {
-                                    Navigator.push(
-                                      context,
-                                      PageTransitions.fade(
-                                        page: const AudioEqualizerPage(),
-                                      ),
-                                    );
-                                  },
+                                  onPressed: _showMoreOptions,
                                 ),
                               ],
                             ),
@@ -1081,8 +1076,217 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
     );
   }
 
+  void _showMoreOptions() {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (context) => Container(
+        decoration: BoxDecoration(
+          color: const Color(0xFF1A1A1A),
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+        ),
+        child: SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // Drag handle
+              const SizedBox(height: 12),
+              Container(
+                width: 40,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: Colors.white.withOpacity(0.3),
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+              const SizedBox(height: 20),
+
+              // EQ Option
+              ListTile(
+                leading: Container(
+                  width: 40,
+                  height: 40,
+                  decoration: BoxDecoration(
+                    color: Colors.white.withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: const Icon(
+                    Icons.equalizer_rounded,
+                    color: Colors.white,
+                    size: 22,
+                  ),
+                ),
+                title: Text(
+                  'Equalizer',
+                  style: GoogleFonts.inter(
+                    color: Colors.white,
+                    fontSize: 16,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+                subtitle: Text(
+                  'Adjust audio settings',
+                  style: GoogleFonts.inter(
+                    color: Colors.white.withOpacity(0.6),
+                    fontSize: 13,
+                  ),
+                ),
+                trailing: Icon(
+                  Icons.arrow_forward_ios,
+                  color: Colors.white.withOpacity(0.4),
+                  size: 16,
+                ),
+                onTap: () {
+                  Navigator.pop(context);
+                  _openEqualizer();
+                },
+              ),
+
+              Divider(
+                color: Colors.white.withOpacity(0.1),
+                height: 1,
+                indent: 20,
+                endIndent: 20,
+              ),
+
+              // Add to Playlist Option
+              ListTile(
+                leading: Container(
+                  width: 40,
+                  height: 40,
+                  decoration: BoxDecoration(
+                    color: Colors.white.withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: const Icon(
+                    Icons.playlist_add_rounded,
+                    color: Colors.white,
+                    size: 22,
+                  ),
+                ),
+                title: Text(
+                  'Add to Playlist',
+                  style: GoogleFonts.inter(
+                    color: Colors.white,
+                    fontSize: 16,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+                subtitle: Text(
+                  'Save to your collection',
+                  style: GoogleFonts.inter(
+                    color: Colors.white.withOpacity(0.6),
+                    fontSize: 13,
+                  ),
+                ),
+                trailing: Icon(
+                  Icons.arrow_forward_ios,
+                  color: Colors.white.withOpacity(0.4),
+                  size: 16,
+                ),
+                onTap: () {
+                  Navigator.pop(context);
+                  _showAddToPlaylistSheet();
+                },
+              ),
+              // Share Option
+              ListTile(
+                leading: Container(
+                  width: 40,
+                  height: 40,
+                  decoration: BoxDecoration(
+                    color: Colors.white.withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: const Icon(
+                    Icons.share_rounded,
+                    color: Colors.white,
+                    size: 22,
+                  ),
+                ),
+                title: Text(
+                  'Share',
+                  style: GoogleFonts.inter(
+                    color: Colors.white,
+                    fontSize: 16,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+                subtitle: Text(
+                  'Share this song',
+                  style: GoogleFonts.inter(
+                    color: Colors.white.withOpacity(0.6),
+                    fontSize: 13,
+                  ),
+                ),
+                trailing: Icon(
+                  Icons.arrow_forward_ios,
+                  color: Colors.white.withOpacity(0.4),
+                  size: 16,
+                ),
+                onTap: () async {
+                  Navigator.pop(context);
+                  try {
+                    final sharingService = ref.read(songSharingServiceProvider);
+                    await sharingService.shareSongPublic();
+                  } catch (e) {
+                    if (mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text(
+                            'Failed to share song: ${e.toString()}',
+                            style: GoogleFonts.inter(),
+                          ),
+                          backgroundColor: Colors.red.shade700,
+                          behavior: SnackBarBehavior.floating,
+                        ),
+                      );
+                    }
+                  }
+                },
+              ),
+              const SizedBox(height: 12),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _openEqualizer() {
+    Navigator.push(
+      context,
+      PageTransitions.fade(page: const AudioEqualizerPage()),
+    );
+  }
+
   Future<void> _showRadioBottomSheet() async {
     if (!mounted) return;
+
+    // ✅ Ensure handler has radio loaded before opening sheet
+    final handler = getAudioHandler();
+    if (handler != null) {
+      final customState =
+          handler.customState.value as Map<String, dynamic>? ?? {};
+      final radioQueue = customState['radio_queue'] as List<dynamic>? ?? [];
+
+      if (radioQueue.isEmpty) {
+        // Get current song and trigger radio load
+        final currentMedia = handler.mediaItem.value;
+        if (currentMedia != null) {
+          final currentSong = QuickPick(
+            videoId: currentMedia.id,
+            title: currentMedia.title,
+            artists: currentMedia.artist ?? 'Unknown Artist',
+            thumbnail: currentMedia.artUri?.toString() ?? '',
+            duration: currentMedia.duration?.inSeconds.toString(),
+          );
+
+          // ✅ Trigger load using public method
+          handler.loadRadioImmediately(currentSong);
+        }
+      }
+    }
 
     showModalBottomSheet(
       context: context,
@@ -1232,8 +1436,30 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
   }
 
   void _showAddToPlaylistSheet() {
-    // Convert QuickPick to DbSong
-    final dbSong = SongConverter.quickPickToDb(widget.song);
+    final currentMedia = _audioService.currentMediaItem;
+
+    if (currentMedia == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'No song currently playing',
+            style: GoogleFonts.inter(),
+          ),
+          backgroundColor: Colors.red.shade700,
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+      return;
+    }
+
+    // Convert current MediaItem to DbSong
+    final dbSong = DbSong(
+      videoId: currentMedia.id,
+      title: currentMedia.title,
+      artists: [currentMedia.artist ?? 'Unknown Artist'],
+      thumbnail: currentMedia.artUri?.toString() ?? '',
+      duration: currentMedia.duration?.inSeconds.toString() ?? '0',
+    );
 
     showModalBottomSheet(
       context: context,

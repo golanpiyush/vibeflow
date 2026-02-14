@@ -24,7 +24,7 @@ class UpdateManagerService {
       // Get current app info using package_info_plus
       final currentInfo = await PackageInfo.fromPlatform();
       final currentVersion = currentInfo.version;
-      final currentVersionCode = int.tryParse(currentInfo.buildNumber) ?? 1;
+      final currentVersionCode = _versionToCode(currentVersion);
 
       debugPrint(
         '📱 Current App Version: $currentVersion (build $currentVersionCode)',

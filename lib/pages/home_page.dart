@@ -6,9 +6,11 @@ import 'package:audio_service/audio_service.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:miniplayer/miniplayer.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:vibeflow/api_base/cache_manager.dart';
 import 'package:vibeflow/api_base/community_playlistScaper.dart';
+import 'package:vibeflow/api_base/vibeflowcore.dart';
 import 'package:vibeflow/api_base/yt_music_search_suggestor.dart';
 import 'package:vibeflow/api_base/ytmusic_albums_scraper.dart';
 import 'package:vibeflow/api_base/ytmusic_search_helper.dart';
@@ -16,6 +18,7 @@ import 'package:vibeflow/constants/ai_models_config.dart';
 import 'package:vibeflow/constants/theme_colors.dart';
 import 'package:vibeflow/database/listening_activity_service.dart';
 import 'package:vibeflow/installer_services/update_manager_service.dart';
+import 'package:vibeflow/managers/vibeflow_engine_logger.dart';
 import 'package:vibeflow/models/song_model.dart';
 import 'package:vibeflow/pages/access_code_management_screen.dart';
 import 'package:vibeflow/pages/album_view.dart';
@@ -24,6 +27,7 @@ import 'package:vibeflow/pages/artist_view.dart';
 import 'package:vibeflow/pages/authOnboard/Screens/social_feed_page.dart';
 import 'package:vibeflow/pages/authOnboard/access_code_screen.dart';
 import 'package:vibeflow/pages/newPlayerPage.dart';
+import 'package:vibeflow/pages/subpages/engine_status_screen.dart';
 import 'package:vibeflow/pages/subpages/songs/albums.dart';
 import 'package:vibeflow/pages/subpages/songs/albums_grid_page.dart';
 import 'package:vibeflow/pages/subpages/songs/artists.dart';
@@ -63,6 +67,8 @@ class _HomePageState extends ConsumerState<HomePage> {
   final YouTubeMusicScraper _scraper = YouTubeMusicScraper();
   final TextEditingController _searchController = TextEditingController();
   final FocusNode _searchFocusNode = FocusNode();
+  final _engineLogger = VibeFlowEngineLogger();
+  final _vibeFlowCore = VibeFlowCore();
 
   late final ValueNotifier<QuickPick?> _lastPlayedNotifier;
 
@@ -103,12 +109,15 @@ class _HomePageState extends ConsumerState<HomePage> {
   void initState() {
     super.initState();
     _albumsScraper = YTMusicAlbumsScraper();
-    _artistsScraper = YTMusicArtistsScraper(); // Initialize
+    _artistsScraper = YTMusicArtistsScraper();
     _searchHelper = YTMusicSearchHelper();
     _lastPlayedNotifier = ValueNotifier<QuickPick?>(null);
+
+    // Initialize VibeFlow Engine
+    _initializeVibeFlowEngine(); // ADD THIS LINE
+
     _initializeApp();
 
-    // 🔄 Check for updates after first frame
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _checkForUpdates();
       _checkAccessCodeAndLoadPlaylist();
@@ -132,6 +141,14 @@ class _HomePageState extends ConsumerState<HomePage> {
     }
   }
 
+  Future<void> _initializeVibeFlowEngine() async {
+    try {
+      await _vibeFlowCore.initialize();
+      print('✅ VibeFlow Engine initialized');
+    } catch (e) {
+      print('❌ VibeFlow Engine initialization failed: $e');
+    }
+  }
   // Replace these methods in your _HomePageState class:
 
   Future<void> _loadQuickPicks() async {
@@ -319,12 +336,12 @@ class _HomePageState extends ConsumerState<HomePage> {
     }
   }
 
+  // In home_page.dart, update _performSearch method:
   Future<void> _performSearch(String query) async {
-    // Cancel previous timer if it exists
     _debounceTimer?.cancel();
 
     if (query.trim().isEmpty) {
-      if (!mounted) return; // ✅ Check before setState
+      if (!mounted) return;
       setState(() {
         searchResults = [];
         isSearching = false;
@@ -332,31 +349,33 @@ class _HomePageState extends ConsumerState<HomePage> {
       return;
     }
 
-    // Show loading immediately
-    if (!mounted) return; // ✅ Check before setState
+    if (!mounted) return;
     setState(() => isSearching = true);
 
-    // Start new debounce timer
     _debounceTimer = Timer(_debounceDuration, () async {
       try {
         final results = await _searchHelper.searchSongs(query, limit: 50);
 
         if (mounted) {
-          // ✅ Check before setState
           setState(() {
             searchResults = results;
             isSearching = false;
           });
 
-          // Save to history after successful search
-          final suggestionsHelper = YTMusicSuggestionsHelper();
-          await suggestionsHelper.saveToHistory(query);
-          suggestionsHelper.dispose();
+          // ✅ CHECK IF HISTORY IS PAUSED BEFORE SAVING
+          final prefs = await SharedPreferences.getInstance();
+          final isHistoryPaused =
+              prefs.getBool('search_history_paused') ?? false;
+
+          if (!isHistoryPaused) {
+            final suggestionsHelper = YTMusicSuggestionsHelper();
+            await suggestionsHelper.saveToHistory(query);
+            suggestionsHelper.dispose();
+          }
         }
       } catch (e) {
         print('Error searching: $e');
         if (mounted) {
-          // ✅ Check before setState in catch
           setState(() => isSearching = false);
         }
       }
@@ -593,22 +612,34 @@ class _HomePageState extends ConsumerState<HomePage> {
         ],
       ),
       // FLOATING ACTION BUTTONS - Stack for multiple FABs
-      floatingActionButton: Stack(
-        children: [
-          // Recent Listening Speed Dial - Center position
-          // Positioned(
-          //   bottom: 40,
-          //   left:
-          //       MediaQuery.of(context).size.width / 2 -
-          //       28, // Center it (28 = half of FAB width)
-          //   child: const RecentListeningSpeedDial(),
-          // ),
-
-          // Search FAB - Right position
-          Positioned(
-            bottom: 40,
-            right: 16,
-            child: FloatingActionButton(
+      // REPLACE the floatingActionButton section (around line 580-620):
+      floatingActionButton: _lastPlayedSong != null
+          ? Padding(
+              padding: const EdgeInsets.only(
+                bottom: 80,
+              ), // Add padding to avoid miniplayer
+              child: FloatingActionButton(
+                heroTag: 'search_fab',
+                onPressed: () {
+                  setState(() {
+                    isSearchMode = !isSearchMode;
+                    if (isSearchMode) {
+                      _searchFocusNode.requestFocus();
+                    } else {
+                      _searchController.clear();
+                      _searchFocusNode.unfocus();
+                      searchResults = [];
+                    }
+                  });
+                },
+                backgroundColor: iconActiveColor,
+                child: Icon(
+                  isSearchMode ? Icons.close : Icons.search,
+                  color: backgroundColor,
+                ),
+              ),
+            )
+          : FloatingActionButton(
               heroTag: 'search_fab',
               onPressed: () {
                 setState(() {
@@ -628,9 +659,6 @@ class _HomePageState extends ConsumerState<HomePage> {
                 color: backgroundColor,
               ),
             ),
-          ),
-        ],
-      ),
     );
   }
 
@@ -2326,7 +2354,7 @@ class _HomePageState extends ConsumerState<HomePage> {
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          // Left side - Back button in search mode, Access Code icon in normal mode
+          // Left side - Back button in search mode, icons in normal mode
           if (isSearchMode)
             IconButton(
               onPressed: () {
@@ -2340,102 +2368,191 @@ class _HomePageState extends ConsumerState<HomePage> {
               icon: Icon(Icons.arrow_back, color: iconActiveColor, size: 28),
             )
           else
-            Consumer(
-              builder: (context, ref, child) {
-                final hasAccessCodeAsync = ref.watch(hasAccessCodeProvider);
+            Row(
+              children: [
+                // ENGINE STATUS INDICATOR - NEW
+                ListenableBuilder(
+                  listenable: _engineLogger,
+                  builder: (context, _) {
+                    final isEngineRunning = _engineLogger.isEngineInitialized;
+                    final hasActiveOps =
+                        _engineLogger.activeOperations.isNotEmpty;
 
-                return hasAccessCodeAsync.when(
-                  data: (hasAccessCode) {
                     return GestureDetector(
-                      onTap: hasAccessCode
-                          ? () {
-                              Navigator.of(
-                                context,
-                              ).pushFade(const AccessCodeManagementScreen());
-                            }
-                          : () {
-                              // If no access code, show info or redirect to enter code
-                              _showNoAccessCodeDialog(context);
-                            },
+                      onTap: () {
+                        Navigator.of(context).push(
+                          MaterialPageRoute(
+                            builder: (context) => const EngineStatusScreen(),
+                          ),
+                        );
+                      },
                       child: Stack(
                         children: [
                           Container(
                             padding: const EdgeInsets.all(8),
                             decoration: BoxDecoration(
-                              color: hasAccessCode
-                                  ? Colors.deepPurple.withOpacity(0.1)
+                              color: isEngineRunning
+                                  ? Colors.green.withOpacity(0.1)
                                   : Colors.grey.withOpacity(0.1),
                               borderRadius: BorderRadius.circular(12),
                             ),
                             child: Icon(
-                              hasAccessCode ? Icons.security : Icons.lock_open,
-                              color: hasAccessCode
-                                  ? Colors.deepPurple
-                                  : iconActiveColor,
+                              Icons.settings_input_component,
+                              color: isEngineRunning
+                                  ? Colors.green
+                                  : Colors.grey,
                               size: 24,
                             ),
                           ),
-                          // Badge for access code status
-                          if (hasAccessCode)
+                          // Active operations indicator
+                          if (hasActiveOps)
                             Positioned(
                               top: 0,
                               right: 0,
                               child: Container(
-                                padding: const EdgeInsets.all(2),
-                                decoration: const BoxDecoration(
-                                  color: Colors.green,
+                                padding: const EdgeInsets.all(3),
+                                decoration: BoxDecoration(
+                                  color: Colors.blue,
                                   shape: BoxShape.circle,
                                 ),
-                                child: const Icon(
-                                  Icons.check,
-                                  size: 10,
-                                  color: Colors.white,
+                                child: SizedBox(
+                                  width: 8,
+                                  height: 8,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 1.5,
+                                    valueColor: AlwaysStoppedAnimation<Color>(
+                                      Colors.white,
+                                    ),
+                                  ),
                                 ),
                               ),
                             ),
+                          // Status badge
+                          Positioned(
+                            bottom: 0,
+                            right: 0,
+                            child: Container(
+                              padding: const EdgeInsets.all(2),
+                              decoration: BoxDecoration(
+                                color: isEngineRunning
+                                    ? Colors.green
+                                    : Colors.red,
+                                shape: BoxShape.circle,
+                              ),
+                              child: Icon(
+                                isEngineRunning ? Icons.check : Icons.close,
+                                size: 10,
+                                color: Colors.white,
+                              ),
+                            ),
+                          ),
                         ],
                       ),
                     );
                   },
-                  loading: () => Container(
-                    padding: const EdgeInsets.all(8),
-                    decoration: BoxDecoration(
-                      color: Colors.grey.withOpacity(0.1),
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: const SizedBox(
-                      width: 24,
-                      height: 24,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    ),
-                  ),
-                  error: (error, stackTrace) => GestureDetector(
-                    onTap: () {
-                      // Show error message
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(
-                          content: const Text(
-                            'Error checking access code status',
+                ),
+
+                const SizedBox(
+                  width: 12,
+                ), // Space between engine and access code
+                // ACCESS CODE INDICATOR - EXISTING (moved to the right)
+                Consumer(
+                  builder: (context, ref, child) {
+                    final hasAccessCodeAsync = ref.watch(hasAccessCodeProvider);
+
+                    return hasAccessCodeAsync.when(
+                      data: (hasAccessCode) {
+                        return GestureDetector(
+                          onTap: hasAccessCode
+                              ? () {
+                                  Navigator.of(context).pushFade(
+                                    const AccessCodeManagementScreen(),
+                                  );
+                                }
+                              : () {
+                                  _showNoAccessCodeDialog(context);
+                                },
+                          child: Stack(
+                            children: [
+                              Container(
+                                padding: const EdgeInsets.all(8),
+                                decoration: BoxDecoration(
+                                  color: hasAccessCode
+                                      ? Colors.deepPurple.withOpacity(0.1)
+                                      : Colors.grey.withOpacity(0.1),
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                                child: Icon(
+                                  hasAccessCode
+                                      ? Icons.security
+                                      : Icons.lock_open,
+                                  color: hasAccessCode
+                                      ? Colors.deepPurple
+                                      : iconActiveColor,
+                                  size: 24,
+                                ),
+                              ),
+                              if (hasAccessCode)
+                                Positioned(
+                                  top: 0,
+                                  right: 0,
+                                  child: Container(
+                                    padding: const EdgeInsets.all(2),
+                                    decoration: const BoxDecoration(
+                                      color: Colors.green,
+                                      shape: BoxShape.circle,
+                                    ),
+                                    child: const Icon(
+                                      Icons.check,
+                                      size: 10,
+                                      color: Colors.white,
+                                    ),
+                                  ),
+                                ),
+                            ],
                           ),
-                          backgroundColor: Colors.red,
+                        );
+                      },
+                      loading: () => Container(
+                        padding: const EdgeInsets.all(8),
+                        decoration: BoxDecoration(
+                          color: Colors.grey.withOpacity(0.1),
+                          borderRadius: BorderRadius.circular(12),
                         ),
-                      );
-                    },
-                    child: Container(
-                      padding: const EdgeInsets.all(8),
-                      decoration: BoxDecoration(
-                        color: Colors.red.withOpacity(0.1),
-                        borderRadius: BorderRadius.circular(12),
+                        child: const SizedBox(
+                          width: 24,
+                          height: 24,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        ),
                       ),
-                      child: Icon(
-                        Icons.error_outline,
-                        color: Colors.red,
-                        size: 24,
+                      error: (error, stackTrace) => GestureDetector(
+                        onTap: () {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                              content: Text(
+                                'Error checking access code status',
+                              ),
+                              backgroundColor: Colors.red,
+                            ),
+                          );
+                        },
+                        child: Container(
+                          padding: const EdgeInsets.all(8),
+                          decoration: BoxDecoration(
+                            color: Colors.red.withOpacity(0.1),
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: const Icon(
+                            Icons.error_outline,
+                            color: Colors.red,
+                            size: 24,
+                          ),
+                        ),
                       ),
-                    ),
-                  ),
-                );
-              },
+                    );
+                  },
+                ),
+              ],
             ),
 
           // Middle content - takes available space

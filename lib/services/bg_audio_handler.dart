@@ -3,9 +3,11 @@ import 'dart:math';
 import 'package:audio_service/audio_service.dart';
 import 'package:audio_session/audio_session.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
+import 'package:flutter/services.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:vibeflow/api_base/cache_manager.dart';
+import 'package:vibeflow/api_base/scrapper.dart';
 import 'package:vibeflow/api_base/vibeflowcore.dart';
 import 'package:vibeflow/api_base/yt_radio.dart';
 import 'package:vibeflow/models/quick_picks_model.dart';
@@ -45,6 +47,7 @@ class BackgroundAudioHandler extends BaseAudioHandler
   final RealtimeListeningTracker _tracker = RealtimeListeningTracker();
   final UserPreferenceTracker _userPreferences = UserPreferenceTracker();
   final SmartRadioService _smartRadioService = SmartRadioService();
+  final YouTubeMusicScraper _scraper = YouTubeMusicScraper();
 
   final RadioService _radioService = RadioService();
   final Map<String, String> _urlCache = {};
@@ -386,8 +389,41 @@ class BackgroundAudioHandler extends BaseAudioHandler
       // Get audio session ID
       _audioSessionId = await AudioSessionBridge.getAudioSessionId();
       print('🎛️ [AudioEffects] Initialized with session ID: $_audioSessionId');
+
+      // ✅ NEW: Notify the effects channel about the session ID
+      if (_audioSessionId != null) {
+        await _reattachAudioEffects();
+      }
     } catch (e) {
       print('❌ [AudioEffects] Failed to initialize: $e');
+    }
+  }
+
+  // ✅ NEW: Re-attach audio effects to current session
+  Future<void> _reattachAudioEffects() async {
+    try {
+      if (_audioSessionId == null) {
+        print('⚠️ [AudioEffects] No audio session ID available');
+        return;
+      }
+
+      const channel = MethodChannel('audio_effects');
+
+      print(
+        '🔄 [AudioEffects] Re-attaching effects to session $_audioSessionId',
+      );
+
+      final result = await channel.invokeMethod<bool>('reattachEffects', {
+        'sessionId': _audioSessionId,
+      });
+
+      if (result == true) {
+        print('✅ [AudioEffects] Successfully re-attached effects');
+      } else {
+        print('⚠️ [AudioEffects] Re-attach returned false');
+      }
+    } catch (e) {
+      print('❌ [AudioEffects] Error re-attaching: $e');
     }
   }
 
@@ -981,6 +1017,9 @@ class BackgroundAudioHandler extends BaseAudioHandler
 
   // ==================== PUBLIC API ====================
 
+  // FULL UPDATED playSong() METHOD WITH HQ ALBUM ART
+  // Replace your existing playSong() method with this complete version
+
   Future<void> playSong(
     QuickPick song, {
     RadioSourceType sourceType = RadioSourceType.quickPick,
@@ -1127,7 +1166,7 @@ class BackgroundAudioHandler extends BaseAudioHandler
           shouldLoadNewRadio = false;
         }
       } else if (sourceType == RadioSourceType.savedSongs) {
-        // 🔥 NEW: Saved songs handling
+        // Saved songs handling
         final isDifferentSavedSong = _lastPlayedFromSavedSongs != song.videoId;
 
         if (isDifferentSavedSong) {
@@ -1165,21 +1204,35 @@ class BackgroundAudioHandler extends BaseAudioHandler
       // Update current source type
       _currentSourceType = sourceType;
 
-      // Create new media item
-      final newMediaItem = MediaItem(
-        id: song.videoId,
-        title: song.title,
-        artist: song.artists,
-        artUri:
-            song.thumbnail.isNotEmpty &&
-                (song.thumbnail.startsWith('http://') ||
-                    song.thumbnail.startsWith('https://'))
-            ? Uri.parse(song.thumbnail)
-            : null,
-        duration: song.duration != null
-            ? _parseDurationString(song.duration!)
-            : null,
+      // ============================================================================
+      // 🖼️ HQ ALBUM ART IMPLEMENTATION
+      // ============================================================================
+
+      // Determine if we should use HQ art (for playlists and community playlists)
+      final useHqArt =
+          sourceType == RadioSourceType.playlist ||
+          sourceType == RadioSourceType.communityPlaylist ||
+          _isPlayingPlaylist;
+
+      print(
+        '🖼️ [HANDLER] Creating MediaItem with ${useHqArt ? "HQ" : "standard"} album art...',
       );
+
+      // Create new media item with optional HQ art
+      final newMediaItem = await _createMediaItemWithHqArt(
+        song,
+        useHqArt: useHqArt,
+      );
+
+      print('✅ [HANDLER] MediaItem created:');
+      print('   Has album art: ${newMediaItem.artUri != null}');
+      // WITH THIS:
+      if (newMediaItem.artUri != null) {
+        final artUriStr = newMediaItem.artUri.toString();
+        print(
+          '   Art URI: ${artUriStr.length > 80 ? artUriStr.substring(0, 80) + '...' : artUriStr}',
+        );
+      }
 
       // Update queue and media item
       _queue.clear();
@@ -1216,6 +1269,9 @@ class BackgroundAudioHandler extends BaseAudioHandler
 
       try {
         await _audioPlayer.setUrl(audioUrl);
+        // ✅ NEW: Re-attach audio effects after setting new audio source
+        await Future.delayed(const Duration(milliseconds: 150));
+        await _reattachAudioEffects();
       } catch (e) {
         print('❌ [HANDLER] setUrl failed: $e');
         throw Exception('Failed to set audio source: $e');
@@ -1243,6 +1299,10 @@ class BackgroundAudioHandler extends BaseAudioHandler
       await _tracker.startTracking(song);
 
       print('✅ [HANDLER] ========== PLAYBACK STARTED ==========');
+      print('   Song: ${song.title}');
+      print('   HQ Art: ${useHqArt ? "YES" : "NO"}');
+      print('   Source: $sourceType');
+      print('=====================================================');
 
       // Cache URL
       AudioUrlCache().cache(song, audioUrl);
@@ -1252,16 +1312,23 @@ class BackgroundAudioHandler extends BaseAudioHandler
         print('📻 [HANDLER] Loading new radio for: ${song.title}');
         _currentRadioSourceId = song.videoId;
 
-        // 🔥 NEW: Check if this song is from a playlist
         if (sourceType == RadioSourceType.communityPlaylist &&
             _currentPlaylistId != null) {
           print('📋 [HANDLER] Using playlist continuation for radio');
           await _loadRadioFromPlaylistContinuation(_currentPlaylistId!);
+        } else {
+          loadRadioImmediately(song);
+          // ✅ ADD: Force broadcast after triggering load
+          await Future.delayed(const Duration(milliseconds: 150));
+          _broadcastRadioState();
         }
       } else if (!shouldClearRadio && _radioQueue.isEmpty) {
         print('📻 [HANDLER] Radio empty, loading...');
         _currentRadioSourceId = song.videoId;
-        _loadRadioImmediately(song);
+        loadRadioImmediately(song);
+        // ✅ ADD: Force broadcast
+        await Future.delayed(const Duration(milliseconds: 150));
+        _broadcastRadioState();
       } else {
         print('📻 [HANDLER] Radio decision: no action needed');
       }
@@ -1514,6 +1581,9 @@ class BackgroundAudioHandler extends BaseAudioHandler
 
       try {
         await _audioPlayer.setUrl(audioUrl);
+        // ✅ NEW: Re-attach audio effects
+        await Future.delayed(const Duration(milliseconds: 150));
+        await _reattachAudioEffects();
       } catch (e) {
         print('❌ [HANDLER] setUrl failed: $e');
         throw Exception('Failed to set audio source: $e');
@@ -1846,7 +1916,7 @@ class BackgroundAudioHandler extends BaseAudioHandler
   // Replace your existing _loadRadioImmediately() with this
   // ============================================================================
 
-  Future<void> _loadRadioImmediately(QuickPick song) async {
+  Future<void> loadRadioImmediately(QuickPick song) async {
     print('📻 [Radio] _loadRadioImmediately called for: ${song.title}');
     print('   VideoId: ${song.videoId}');
     print('   Current _isLoadingRadio: $_isLoadingRadio');
@@ -1931,6 +2001,20 @@ class BackgroundAudioHandler extends BaseAudioHandler
 
       for (final song in radioSongs) {
         try {
+          // ✅ ADD: Debug the duration parsing
+          Duration? parsedDuration;
+          if (song.duration != null && song.duration!.isNotEmpty) {
+            print(
+              '🕐 [Radio] Parsing duration for ${song.title}: "${song.duration}"',
+            );
+            parsedDuration = _parseDurationString(song.duration!);
+            print('   Parsed to: $parsedDuration');
+          } else {
+            print(
+              '⚠️ [Radio] Song ${song.title} has no duration: ${song.duration}',
+            );
+          }
+
           final mediaItem = MediaItem(
             id: song.videoId,
             title: song.title,
@@ -2033,6 +2117,10 @@ class BackgroundAudioHandler extends BaseAudioHandler
       print('   Radio source: $_currentRadioSourceId');
       print('   Published to UI: ${radioQueueData.length} songs');
       print('=========================================================');
+      // ✅ ADD THIS: Force immediate broadcast
+      await Future.delayed(const Duration(milliseconds: 100));
+      _broadcastRadioState();
+      print('📡 [Radio] Force broadcasted state after loading');
     } catch (e, stackTrace) {
       print('❌ [Radio] Load failed with exception: $e');
       print('   Stack trace:');
@@ -2106,7 +2194,7 @@ class BackgroundAudioHandler extends BaseAudioHandler
         );
 
         final quickPick = _quickPickFromMediaItem(currentSong);
-        await _loadRadioImmediately(quickPick);
+        await loadRadioImmediately(quickPick);
 
         return;
       }
@@ -2282,7 +2370,7 @@ class BackgroundAudioHandler extends BaseAudioHandler
         final currentMedia = mediaItem.value;
         if (currentMedia != null) {
           final quickPick = _quickPickFromMediaItem(currentMedia);
-          await _loadRadioImmediately(quickPick);
+          await loadRadioImmediately(quickPick);
         }
         return;
       }
@@ -2312,7 +2400,7 @@ class BackgroundAudioHandler extends BaseAudioHandler
       if (remainingSongs.isEmpty) {
         print('📻 [Playlist Radio] No more playlist songs, using normal radio');
         final quickPick = _quickPickFromMediaItem(currentMedia);
-        await _loadRadioImmediately(quickPick);
+        await loadRadioImmediately(quickPick);
         return;
       }
 
@@ -2483,6 +2571,9 @@ class BackgroundAudioHandler extends BaseAudioHandler
 
       // Play audio
       await _audioPlayer.setUrl(audioUrl);
+      // ✅ NEW: Re-attach audio effects
+      await Future.delayed(const Duration(milliseconds: 100));
+      await _reattachAudioEffects();
       await _audioPlayer.play();
 
       // Wait for playback to start, then track
@@ -2579,6 +2670,7 @@ class BackgroundAudioHandler extends BaseAudioHandler
     await _audioInterruptionSubscription?.cancel();
     await _audioPlayer.stop();
     await _audioPlayer.dispose();
+    _scraper.dispose();
     await super.stop();
   }
 
@@ -2648,9 +2740,12 @@ class BackgroundAudioHandler extends BaseAudioHandler
         _currentIndex++;
         _playlistCurrentIndex++;
         nextMedia = _queue[_currentIndex];
+
+        // 🖼️ UPDATE: MediaItem already has HQ art from when queue was created
         print(
           '📋 [SKIP] Next playlist song [${_currentIndex + 1}/${_queue.length}]: ${nextMedia.title}',
         );
+        print('   HQ Album Art: ${nextMedia.artUri != null ? "YES" : "NO"}');
 
         _updateCustomState({'playlist_current_index': _playlistCurrentIndex});
       } else {
@@ -2674,9 +2769,8 @@ class BackgroundAudioHandler extends BaseAudioHandler
           );
           final lastSong = _quickPickFromMediaItem(currentMedia);
           _currentRadioSourceId = currentMedia.id;
-          await _loadRadioImmediately(lastSong);
+          await loadRadioImmediately(lastSong);
 
-          // Wait for radio to load
           await _waitForRadioToLoad();
 
           if (_radioQueue.isNotEmpty) {
@@ -2789,6 +2883,9 @@ class BackgroundAudioHandler extends BaseAudioHandler
 
         try {
           await _audioPlayer.setUrl(audioUrl);
+          // ✅ NEW: Re-attach audio effects
+          await Future.delayed(const Duration(milliseconds: 100));
+          await _reattachAudioEffects();
         } catch (e) {
           throw Exception('Failed to set audio source: $e');
         }
@@ -2881,6 +2978,9 @@ class BackgroundAudioHandler extends BaseAudioHandler
       final audioUrl = await _getAudioUrl(prevMedia.id, song: prevSong);
       if (audioUrl != null) {
         await _audioPlayer.setUrl(audioUrl);
+        // ✅ NEW: Re-attach audio effects
+        await Future.delayed(const Duration(milliseconds: 100));
+        await _reattachAudioEffects();
         await _audioPlayer.play();
 
         // Wait for playback to start, then track
@@ -2896,7 +2996,7 @@ class BackgroundAudioHandler extends BaseAudioHandler
   Future<void> playPlaylistQueue(
     List<QuickPick> songs, {
     int startIndex = 0,
-    String? playlistId, // ADD THIS PARAMETER
+    String? playlistId,
   }) async {
     if (songs.isEmpty) return;
 
@@ -2905,12 +3005,12 @@ class BackgroundAudioHandler extends BaseAudioHandler
       print('   Songs: ${songs.length}');
       print('   Start index: $startIndex');
       print('   Playlist ID: $playlistId');
+      print('   Will fetch HQ album art for all songs');
 
-      // 🔥 NEW: Store playlist ID and cache songs
+      // Store playlist ID and cache songs
       if (playlistId != null) {
         _currentPlaylistId = playlistId;
 
-        // Convert QuickPick to Song for caching
         final songsToCache = songs
             .map(
               (qp) => Song(
@@ -2925,8 +3025,6 @@ class BackgroundAudioHandler extends BaseAudioHandler
             .toList();
 
         _playlistCache[playlistId] = songsToCache;
-
-        // Cache to disk asynchronously
         CacheManager.instance.cachePlaylistSongs(playlistId, songsToCache);
 
         print('💾 [PLAYLIST] Cached ${songs.length} songs for continuation');
@@ -2943,7 +3041,7 @@ class BackgroundAudioHandler extends BaseAudioHandler
       await _audioPlayer.stop();
       await Future.delayed(const Duration(milliseconds: 100));
 
-      // 🔥 CRITICAL: Clear radio and mark playlist mode
+      // Clear radio and mark playlist mode
       print('🗑️ [PLAYLIST] Clearing radio (entering playlist mode)');
       _radioQueue.clear();
       _radioQueueIndex = -1;
@@ -2953,7 +3051,6 @@ class BackgroundAudioHandler extends BaseAudioHandler
       _currentSourceType = RadioSourceType.playlist;
       _isPlayingPlaylist = true;
 
-      // Store playlist order
       _playlistQueue = songs.map((s) => s.videoId).toList();
       _playlistCurrentIndex = startIndex;
 
@@ -2965,25 +3062,23 @@ class BackgroundAudioHandler extends BaseAudioHandler
         'playlist_current_index': startIndex,
       });
 
-      // Convert songs to MediaItems
+      // 🖼️ CREATE MEDIAITEM QUEUE WITH HQ ALBUM ART
+      print(
+        '🖼️ [PLAYLIST] Fetching HQ album art for ${songs.length} songs...',
+      );
       _queue.clear();
-      _queue.addAll(
-        songs.map(
-          (song) => MediaItem(
-            id: song.videoId,
-            title: song.title,
-            artist: song.artists,
-            artUri:
-                song.thumbnail.isNotEmpty &&
-                    (song.thumbnail.startsWith('http://') ||
-                        song.thumbnail.startsWith('https://'))
-                ? Uri.parse(song.thumbnail)
-                : null,
-            duration: song.duration != null
-                ? _parseDurationString(song.duration!)
-                : null,
-          ),
-        ),
+
+      // Fetch HQ art for all songs in parallel (faster than sequential)
+      final mediaItemFutures = songs.map((song) async {
+        return await _createMediaItemWithHqArt(song, useHqArt: true);
+      }).toList();
+
+      // Wait for all MediaItems to be created with HQ art
+      final mediaItems = await Future.wait(mediaItemFutures);
+      _queue.addAll(mediaItems);
+
+      print(
+        '✅ [PLAYLIST] Created ${_queue.length} MediaItems with HQ album art',
       );
 
       _currentIndex = startIndex.clamp(0, _queue.length - 1);
@@ -2992,7 +3087,12 @@ class BackgroundAudioHandler extends BaseAudioHandler
       final currentSong = songs[_currentIndex];
       final currentMedia = _queue[_currentIndex];
 
+      // Set current media item (now with HQ art for notification)
       mediaItem.add(currentMedia);
+
+      print('🖼️ [PLAYLIST] Current song HQ art: ${currentMedia.artUri}');
+      print('   Title: ${currentMedia.title}');
+      print('   Artist: ${currentMedia.artist}');
 
       print(
         '🔍 [PLAYLIST] Getting audio URL for song ${_currentIndex + 1}/${songs.length}...',
@@ -3007,8 +3107,12 @@ class BackgroundAudioHandler extends BaseAudioHandler
       }
 
       await _audioPlayer.setUrl(audioUrl);
+      // ✅ NEW: Re-attach audio effects
+      await Future.delayed(const Duration(milliseconds: 100));
+      await _reattachAudioEffects();
       await _audioPlayer.play();
 
+      // Wait for duration
       int attempts = 0;
       while (_audioPlayer.duration == null && attempts < 30) {
         await Future.delayed(const Duration(milliseconds: 100));
@@ -3022,11 +3126,13 @@ class BackgroundAudioHandler extends BaseAudioHandler
       await Future.delayed(const Duration(milliseconds: 300));
       await _tracker.startTracking(currentSong);
 
+      print('✅ [PLAYLIST] ========== PLAYBACK STARTED ==========');
       print(
-        '✅ [PLAYLIST] Playing song ${_currentIndex + 1}/${_queue.length}: ${currentSong.title}',
+        '   Song ${_currentIndex + 1}/${_queue.length}: ${currentSong.title}',
       );
+      print('   HQ Album Art: ${currentMedia.artUri != null ? "YES" : "NO"}');
       print('   Playlist mode active - no radio until playlist ends');
-      print('===================================================');
+      print('=====================================================');
     } catch (e, stackTrace) {
       print('❌ [PLAYLIST] Error: $e');
       print('   Stack: $stackTrace');
@@ -3062,6 +3168,9 @@ class BackgroundAudioHandler extends BaseAudioHandler
       final audioUrl = await _getAudioUrl(selectedMedia.id, song: quickPick);
       if (audioUrl != null) {
         await _audioPlayer.setUrl(audioUrl);
+        // ✅ NEW: Re-attach audio effects
+        await Future.delayed(const Duration(milliseconds: 100));
+        await _reattachAudioEffects();
         await _audioPlayer.play();
 
         // Wait for playback to start, then track
@@ -3071,6 +3180,65 @@ class BackgroundAudioHandler extends BaseAudioHandler
     } else {
       print('⚠️ Invalid queue index: $index (queue length: ${_queue.length})');
     }
+  }
+
+  /// Fetch high-quality album art for a song using the scraper
+  Future<Uri?> _fetchHqAlbumArt(String videoId) async {
+    try {
+      print('🖼️ [HQ Art] Fetching for videoId: $videoId');
+
+      // Use the scraper's getThumbnailUrl method which validates quality levels
+      // This method checks maxresdefault -> sddefault -> hqdefault -> mqdefault
+      final hqUrl = await _scraper.getThumbnailUrl(videoId);
+
+      if (hqUrl.isNotEmpty) {
+        print('✅ [HQ Art] Got HQ URL: ${hqUrl.substring(0, 60)}...');
+        return Uri.parse(hqUrl);
+      }
+
+      print('⚠️ [HQ Art] Failed to get HQ URL, will use fallback');
+      return null;
+    } catch (e) {
+      print('❌ [HQ Art] Error fetching: $e');
+      return null;
+    }
+  }
+
+  /// Create MediaItem with optional HQ album art fetching
+  Future<MediaItem> _createMediaItemWithHqArt(
+    QuickPick song, {
+    bool useHqArt = false,
+  }) async {
+    Uri? artUri;
+
+    // Fetch HQ album art if requested (for playlists)
+    if (useHqArt) {
+      print('🔍 [HQ Art] Fetching for: ${song.title}');
+      artUri = await _fetchHqAlbumArt(song.videoId);
+
+      if (artUri != null) {
+        print('✅ [HQ Art] Using HQ art for: ${song.title}');
+      }
+    }
+
+    // Fallback to provided thumbnail if HQ fetch failed or not requested
+    if (artUri == null && song.thumbnail.isNotEmpty) {
+      if (song.thumbnail.startsWith('http://') ||
+          song.thumbnail.startsWith('https://')) {
+        artUri = Uri.parse(song.thumbnail);
+        print('📷 [HQ Art] Using provided thumbnail for: ${song.title}');
+      }
+    }
+
+    return MediaItem(
+      id: song.videoId,
+      title: song.title,
+      artist: song.artists,
+      artUri: artUri,
+      duration: song.duration != null
+          ? _parseDurationString(song.duration!)
+          : null,
+    );
   }
 
   /// Check if user has been skipping too much and refetch radio with different artists
@@ -3280,11 +3448,28 @@ class BackgroundAudioHandler extends BaseAudioHandler
 
   // Helper method
   Duration? _parseDurationString(String durationStr) {
-    final parts = durationStr.split(':');
-    if (parts.length != 2) return null;
-    final minutes = int.tryParse(parts[0]) ?? 0;
-    final seconds = int.tryParse(parts[1]) ?? 0;
-    return Duration(minutes: minutes, seconds: seconds);
+    try {
+      print('🕐 [_parseDurationString] Input: "$durationStr"');
+
+      final parts = durationStr.split(':');
+      print('   Parts: $parts');
+
+      if (parts.length != 2) {
+        print('   ⚠️ Invalid format (expected mm:ss)');
+        return null;
+      }
+
+      final minutes = int.tryParse(parts[0]) ?? 0;
+      final seconds = int.tryParse(parts[1]) ?? 0;
+
+      final duration = Duration(minutes: minutes, seconds: seconds);
+      print('   ✅ Parsed: $duration');
+
+      return duration;
+    } catch (e) {
+      print('   ❌ Parse error: $e');
+      return null;
+    }
   }
 
   // Add this helper method at the end of the class (before getters):

@@ -43,51 +43,65 @@ class _EnhancedRadioSheetState extends State<EnhancedRadioSheet>
   void initState() {
     super.initState();
     _tabController = TabController(length: 2, vsync: this);
-    _loadRadio();
+    // ❌ DELETE: _loadRadio();
     _loadQueue();
 
-    // ✅ ADD: Listen to tab changes to rebuild edit button
     _tabController.addListener(() {
       if (mounted) setState(() {});
     });
   }
 
-  Future<void> _loadRadio() async {
+  Future<void> _loadQueue() async {
+    final handler = getAudioHandler();
+    if (handler == null) {
+      setState(() {
+        queueSongs = [];
+      });
+      return;
+    }
+
+    // ✅ Get queue from handler
+    final queue = handler.queue.value;
+
     setState(() {
-      isLoading = true;
-      errorMessage = null;
+      queueSongs = queue.map((mediaItem) {
+        return QuickPick(
+          videoId: mediaItem.id,
+          title: mediaItem.title,
+          artists: mediaItem.artist ?? 'Unknown Artist',
+          thumbnail: mediaItem.artUri?.toString() ?? '',
+          duration: mediaItem.duration != null
+              ? _formatDuration(mediaItem.duration!)
+              : null,
+        );
+      }).toList();
     });
 
-    try {
-      final songs = await _radioService.getRadioForSong(
-        videoId: widget.currentVideoId,
-        title: widget.currentTitle,
-        artist: widget.currentArtist,
-        limit: 25,
-      );
-
-      if (mounted) {
-        setState(() {
-          radioSongs = songs;
-          isLoading = false;
-        });
-      }
-    } catch (e) {
-      print('Error loading radio: $e');
-      if (mounted) {
-        setState(() {
-          errorMessage = 'Failed to load similar songs';
-          isLoading = false;
-        });
-      }
-    }
+    print('✅ [RadioSheet] Loaded ${queueSongs.length} songs from queue');
   }
 
-  Future<void> _loadQueue() async {
-    // TODO: Load actual queue from audio manager
-    setState(() {
-      queueSongs = [];
-    });
+  Future<void> _forceRefreshRadio() async {
+    print('🔄 [RadioSheet] Force refreshing radio...');
+
+    final handler = getAudioHandler();
+    if (handler == null) return;
+
+    final currentMedia = handler.mediaItem.value;
+    if (currentMedia == null) return;
+
+    final currentSong = QuickPick(
+      videoId: currentMedia.id,
+      title: currentMedia.title,
+      artists: currentMedia.artist ?? 'Unknown Artist',
+      thumbnail: currentMedia.artUri?.toString() ?? '',
+      duration: currentMedia.duration?.inSeconds.toString(),
+    );
+
+    // Manually trigger radio load
+    await handler.playSong(currentSong, sourceType: RadioSourceType.quickPick);
+
+    // Wait for load
+    await Future.delayed(const Duration(milliseconds: 500));
   }
 
   String _calculateTotalDuration(List<QuickPick> songs) {
@@ -97,19 +111,35 @@ class _EnhancedRadioSheetState extends State<EnhancedRadioSheet>
       final duration = song.duration;
       if (duration == null || duration.isEmpty) continue;
 
-      final parts = duration
-          .split(':')
-          .map((e) => int.tryParse(e) ?? 0)
-          .toList();
+      // ✅ FIX: Handle different duration formats
+      try {
+        final parts = duration
+            .split(':')
+            .map((e) => int.tryParse(e.trim()) ?? 0)
+            .toList();
 
-      if (parts.length == 3) {
-        // hh:mm:ss
-        totalSeconds += parts[0] * 3600 + parts[1] * 60 + parts[2];
-      } else if (parts.length == 2) {
-        // mm:ss
-        totalSeconds += parts[0] * 60 + parts[1];
+        if (parts.length == 3) {
+          // hh:mm:ss format
+          totalSeconds += parts[0] * 3600 + parts[1] * 60 + parts[2];
+        } else if (parts.length == 2) {
+          // mm:ss format
+          totalSeconds += parts[0] * 60 + parts[1];
+        } else if (parts.length == 1) {
+          // Just seconds
+          totalSeconds += parts[0];
+        }
+
+        print(
+          '   Duration parsed: $duration -> ${parts} -> $totalSeconds total seconds',
+        );
+      } catch (e) {
+        print('⚠️ Failed to parse duration: $duration - $e');
       }
     }
+
+    print(
+      '📊 Total duration: $totalSeconds seconds from ${songs.length} songs',
+    );
 
     if (totalSeconds == 0) return '0 min';
 
@@ -171,10 +201,11 @@ class _EnhancedRadioSheetState extends State<EnhancedRadioSheet>
 
   Future<void> _addToQueue(QuickPick song) async {
     try {
+      // ✅ Add to audio handler instead of local list
       await widget.audioService.addToQueue(song);
-      setState(() {
-        queueSongs.add(song);
-      });
+
+      // ✅ Reload queue from handler
+      await _loadQueue();
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -318,6 +349,11 @@ class _EnhancedRadioSheetState extends State<EnhancedRadioSheet>
   }
 
   Widget _buildTabBar() {
+    final handler = getAudioHandler();
+    final customState =
+        handler?.customState.value as Map<String, dynamic>? ?? {};
+    final radioQueueData = customState['radio_queue'] as List<dynamic>? ?? [];
+
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
       decoration: BoxDecoration(
@@ -342,7 +378,9 @@ class _EnhancedRadioSheetState extends State<EnhancedRadioSheet>
               children: [
                 const Icon(Icons.radio, size: 18),
                 const SizedBox(width: 8),
-                Text('Radio (${radioSongs.length})'),
+                Text(
+                  'Radio (${radioQueueData.length})',
+                ), // ✅ Use handler's queue count
               ],
             ),
           ),
@@ -428,6 +466,17 @@ class _EnhancedRadioSheetState extends State<EnhancedRadioSheet>
                     fontSize: 14,
                   ),
                 ),
+                // ✅ ADD: Refresh button after 3 seconds
+                const SizedBox(height: 24),
+                ElevatedButton.icon(
+                  onPressed: _forceRefreshRadio,
+                  icon: const Icon(Icons.refresh),
+                  label: const Text('Tap to load radio'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppColors.iconActive,
+                    foregroundColor: Colors.black,
+                  ),
+                ),
               ],
             ),
           );
@@ -448,7 +497,13 @@ class _EnhancedRadioSheetState extends State<EnhancedRadioSheet>
                 : null,
           );
         }).toList();
-
+        // ✅ ADD THIS DEBUG:
+        print('🔍 [RadioSheet] Duration debug:');
+        for (var i = 0; i < songs.take(3).length; i++) {
+          print('   Song $i: ${songs[i].title}');
+          print('     Duration: ${songs[i].duration}');
+          print('     Raw ms: ${radioQueueData[i]['duration']}');
+        }
         print('✅ [RadioSheet] Displaying ${songs.length} radio songs');
 
         return Column(
@@ -555,144 +610,162 @@ class _EnhancedRadioSheetState extends State<EnhancedRadioSheet>
   }
 
   Widget _buildQueueTab() {
-    if (queueSongs.isEmpty) {
+    final handler = getAudioHandler();
+
+    if (handler == null) {
       return Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(
-              Icons.queue_music,
-              size: 64,
-              color: Colors.white.withOpacity(0.3),
-            ),
-            const SizedBox(height: 16),
-            Text(
-              'No songs in queue',
-              style: TextStyle(
-                color: Colors.white.withOpacity(0.6),
-                fontSize: 18,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              'Add songs from radio to build your queue',
-              style: TextStyle(
-                color: Colors.white.withOpacity(0.4),
-                fontSize: 14,
-              ),
-            ),
-          ],
+        child: Text(
+          'Audio handler not available',
+          style: TextStyle(color: Colors.white54, fontSize: 16),
         ),
       );
     }
 
-    return Column(
-      children: [
-        // Stats and edit bar
-        Container(
-          margin: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
-          padding: const EdgeInsets.all(16),
-          decoration: BoxDecoration(
-            color: _isEditMode
-                ? AppColors.iconActive.withOpacity(0.1)
-                : Colors.white.withOpacity(0.05),
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(
-              color: _isEditMode
-                  ? AppColors.iconActive
-                  : Colors.white.withOpacity(0.1),
-            ),
-          ),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Row(
-                children: [
-                  Icon(
-                    _isEditMode ? Icons.edit : Icons.queue_music,
-                    color: _isEditMode ? AppColors.iconActive : Colors.white,
-                    size: 20,
-                  ),
-                  const SizedBox(width: 8),
-                  Text(
-                    _isEditMode
-                        ? 'Drag to reorder'
-                        : '${queueSongs.length} songs in queue',
-                    style: TextStyle(
-                      color: _isEditMode ? AppColors.iconActive : Colors.white,
-                      fontSize: 14,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ],
-              ),
-              if (!_isEditMode)
+    // ✅ Use StreamBuilder to watch queue changes
+    return StreamBuilder<List<MediaItem>>(
+      stream: handler.queue.stream,
+      builder: (context, snapshot) {
+        final queue = snapshot.data ?? [];
+
+        final queueSongs = queue.map((mediaItem) {
+          return QuickPick(
+            videoId: mediaItem.id,
+            title: mediaItem.title,
+            artists: mediaItem.artist ?? 'Unknown Artist',
+            thumbnail: mediaItem.artUri?.toString() ?? '',
+            duration: mediaItem.duration != null
+                ? _formatDuration(mediaItem.duration!)
+                : null,
+          );
+        }).toList();
+
+        if (queueSongs.isEmpty) {
+          return Center(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(
+                  Icons.queue_music,
+                  size: 64,
+                  color: Colors.white.withOpacity(0.3),
+                ),
+                const SizedBox(height: 16),
                 Text(
-                  _calculateTotalDuration(queueSongs),
+                  'No songs in queue',
                   style: TextStyle(
                     color: Colors.white.withOpacity(0.6),
+                    fontSize: 18,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  'Add songs from radio to build your queue',
+                  style: TextStyle(
+                    color: Colors.white.withOpacity(0.4),
                     fontSize: 14,
                   ),
                 ),
-            ],
-          ),
-        ),
+              ],
+            ),
+          );
+        }
 
-        // Queue list
-        Expanded(
-          child: _isEditMode
-              ? ReorderableListView.builder(
-                  itemCount: queueSongs.length,
-                  onReorder: _reorderQueue,
-                  padding: const EdgeInsets.only(bottom: 20),
-                  itemBuilder: (context, index) {
-                    final song = queueSongs[index];
-                    return _buildSongItem(
-                      key: ValueKey(song.videoId),
-                      song: song,
-                      isCurrentSong: false,
-                      isPlaying: false,
-                      index: index + 1,
-                      showDragHandle: true,
-                      isEditMode: true,
-                    );
-                  },
-                )
-              : StreamBuilder<MediaItem?>(
-                  stream: widget.audioService.mediaItemStream,
-                  builder: (context, mediaSnapshot) {
-                    final currentMedia = mediaSnapshot.data;
-
-                    return StreamBuilder<PlaybackState>(
-                      stream: widget.audioService.playbackStateStream,
-                      builder: (context, playbackSnapshot) {
-                        final playbackState = playbackSnapshot.data;
-                        final isPlaying = playbackState?.playing ?? false;
-
-                        return ListView.builder(
-                          itemCount: queueSongs.length,
-                          padding: const EdgeInsets.only(bottom: 20),
-                          itemBuilder: (context, index) {
-                            final song = queueSongs[index];
-                            final isCurrentSong =
-                                currentMedia?.id == song.videoId;
-
-                            return _buildSongItem(
-                              song: song,
-                              isCurrentSong: isCurrentSong,
-                              isPlaying: isPlaying,
-                              index: index + 1,
-                              showDragHandle: false,
-                            );
-                          },
-                        );
-                      },
-                    );
-                  },
+        // Rest of your queue UI code...
+        return Column(
+          children: [
+            // Stats bar
+            Container(
+              margin: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: _isEditMode
+                    ? AppColors.iconActive.withOpacity(0.1)
+                    : Colors.white.withOpacity(0.05),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(
+                  color: _isEditMode
+                      ? AppColors.iconActive
+                      : Colors.white.withOpacity(0.1),
                 ),
-        ),
-      ],
+              ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Row(
+                    children: [
+                      Icon(
+                        _isEditMode ? Icons.edit : Icons.queue_music,
+                        color: _isEditMode
+                            ? AppColors.iconActive
+                            : Colors.white,
+                        size: 20,
+                      ),
+                      const SizedBox(width: 8),
+                      Text(
+                        _isEditMode
+                            ? 'Drag to reorder'
+                            : '${queueSongs.length} songs in queue',
+                        style: TextStyle(
+                          color: _isEditMode
+                              ? AppColors.iconActive
+                              : Colors.white,
+                          fontSize: 14,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
+                  ),
+                  if (!_isEditMode)
+                    Text(
+                      _calculateTotalDuration(queueSongs),
+                      style: TextStyle(
+                        color: Colors.white.withOpacity(0.6),
+                        fontSize: 14,
+                      ),
+                    ),
+                ],
+              ),
+            ),
+
+            // Queue list with current media awareness
+            Expanded(
+              child: StreamBuilder<MediaItem?>(
+                stream: widget.audioService.mediaItemStream,
+                builder: (context, mediaSnapshot) {
+                  final currentMedia = mediaSnapshot.data;
+
+                  return StreamBuilder<PlaybackState>(
+                    stream: widget.audioService.playbackStateStream,
+                    builder: (context, playbackSnapshot) {
+                      final playbackState = playbackSnapshot.data;
+                      final isPlaying = playbackState?.playing ?? false;
+
+                      return ListView.builder(
+                        itemCount: queueSongs.length,
+                        padding: const EdgeInsets.only(bottom: 20),
+                        itemBuilder: (context, index) {
+                          final song = queueSongs[index];
+                          final isCurrentSong =
+                              currentMedia?.id == song.videoId;
+
+                          return _buildSongItem(
+                            song: song,
+                            isCurrentSong: isCurrentSong,
+                            isPlaying: isPlaying,
+                            index: index + 1,
+                            showDragHandle: false,
+                          );
+                        },
+                      );
+                    },
+                  );
+                },
+              ),
+            ),
+          ],
+        );
+      },
     );
   }
 
