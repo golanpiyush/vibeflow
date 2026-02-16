@@ -356,82 +356,35 @@ class _AudioEqualizerPageState extends ConsumerState<AudioEqualizerPage> {
     }
   }
 
-  void _showSuccessSnackbar(String message) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Row(
-          children: [
-            const Icon(
-              Icons.check_circle_outline,
-              color: Colors.white,
-              size: 20,
-            ),
-            const SizedBox(width: 12),
-            Expanded(child: Text(message)),
-          ],
-        ),
-        backgroundColor: const Color(0xFF4CAF50),
-        behavior: SnackBarBehavior.floating,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-        margin: const EdgeInsets.all(16),
-        duration: const Duration(seconds: 2),
-      ),
-    );
-  }
-
-  void _showErrorSnackbar(String message) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Row(
-          children: [
-            const Icon(Icons.error_outline, color: Colors.white, size: 20),
-            const SizedBox(width: 12),
-            Expanded(child: Text(message)),
-          ],
-        ),
-        backgroundColor: const Color(0xFFFF4458),
-        behavior: SnackBarBehavior.floating,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-        margin: const EdgeInsets.all(16),
-      ),
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
-    final themeState = ref.watch(themeProvider);
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final bgColor = Theme.of(context).scaffoldBackgroundColor;
-    final surfaceColor = Theme.of(context).colorScheme.surface;
-    final textColor = Theme.of(context).colorScheme.onSurface;
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final textTheme = theme.textTheme;
 
     if (!_isInitialized) {
       return Scaffold(
-        backgroundColor: bgColor,
+        backgroundColor: theme.scaffoldBackgroundColor,
         appBar: AppBar(
-          title: Text('Audio Equalizer', style: TextStyle(color: textColor)),
+          title: Text('Audio Equalizer', style: textTheme.titleLarge),
           centerTitle: true,
-          backgroundColor: bgColor,
-          iconTheme: IconThemeData(color: textColor),
+          backgroundColor: colorScheme.surface,
         ),
         body: Center(
-          child: CircularProgressIndicator(
-            color: Theme.of(context).colorScheme.primary,
-          ),
+          child: CircularProgressIndicator(color: colorScheme.primary),
         ),
       );
     }
 
     return Scaffold(
-      backgroundColor: bgColor,
+      backgroundColor: theme.scaffoldBackgroundColor,
       appBar: AppBar(
-        title: Text('Audio Equalizer', style: TextStyle(color: textColor)),
+        title: Text('Audio Equalizer', style: textTheme.titleLarge),
         centerTitle: true,
-        backgroundColor: bgColor,
-        iconTheme: IconThemeData(color: textColor),
+        backgroundColor: colorScheme.surface,
         actions: [
           IconButton(
-            icon: Icon(Icons.refresh_rounded, color: textColor),
+            icon: Icon(Icons.refresh_rounded, color: colorScheme.onSurface),
             onPressed: _resetAllEffects,
             tooltip: 'Reset All',
           ),
@@ -440,22 +393,12 @@ class _AudioEqualizerPageState extends ConsumerState<AudioEqualizerPage> {
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
-          // Presets
-          _buildPresetsSection(surfaceColor, textColor),
-
+          _buildPresetsSection(),
           const SizedBox(height: 24),
-
-          // Bass and Reverb Knobs
-          _buildKnobsSection(surfaceColor, textColor),
-
+          _buildKnobsSection(),
           const SizedBox(height: 24),
-
-          // Equalizer Bands
-          _buildEqualizerSection(surfaceColor, textColor),
-
+          _buildEqualizerSection(),
           const SizedBox(height: 24),
-
-          // Loudness Enhancer
           _buildEffectCard(
             title: 'Loudness',
             icon: Icons.volume_up_rounded,
@@ -463,32 +406,30 @@ class _AudioEqualizerPageState extends ConsumerState<AudioEqualizerPage> {
             max: 1000,
             onChanged: _setLoudnessEnhancer,
             color: Colors.orange,
-            surfaceColor: surfaceColor,
-            textColor: textColor,
           ),
-
           const SizedBox(height: 16),
-
-          // Audio Balance
-          _buildBalanceCard(surfaceColor, textColor),
-
+          _buildBalanceCard(),
           const SizedBox(height: 32),
         ],
       ),
     );
   }
 
-  Widget _buildPresetsSection(Color surfaceColor, Color textColor) {
+  Widget _buildPresetsSection() {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final textTheme = theme.textTheme;
+
     return Container(
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
         gradient: LinearGradient(
-          colors: [Colors.blue.shade400, Colors.blue.shade600],
+          colors: [colorScheme.primary.withOpacity(0.8), colorScheme.primary],
         ),
         borderRadius: BorderRadius.circular(20),
         boxShadow: [
           BoxShadow(
-            color: Colors.blue.withOpacity(0.3),
+            color: colorScheme.primary.withOpacity(0.3),
             blurRadius: 12,
             offset: const Offset(0, 4),
           ),
@@ -502,18 +443,17 @@ class _AudioEqualizerPageState extends ConsumerState<AudioEqualizerPage> {
               Container(
                 padding: const EdgeInsets.all(8),
                 decoration: BoxDecoration(
-                  color: Colors.white.withOpacity(0.2),
+                  color: colorScheme.onPrimary.withOpacity(0.2),
                   borderRadius: BorderRadius.circular(8),
                 ),
-                child: const Icon(Icons.tune_rounded, color: Colors.white),
+                child: Icon(Icons.tune_rounded, color: colorScheme.onPrimary),
               ),
               const SizedBox(width: 12),
-              const Text(
+              Text(
                 'Presets',
-                style: TextStyle(
-                  fontSize: 18,
+                style: textTheme.titleMedium?.copyWith(
                   fontWeight: FontWeight.bold,
-                  color: Colors.white,
+                  color: colorScheme.onPrimary,
                 ),
               ),
             ],
@@ -534,23 +474,24 @@ class _AudioEqualizerPageState extends ConsumerState<AudioEqualizerPage> {
                   ),
                   decoration: BoxDecoration(
                     color: isSelected
-                        ? Colors.white
-                        : Colors.white.withOpacity(0.2),
+                        ? colorScheme.onPrimary
+                        : colorScheme.onPrimary.withOpacity(0.2),
                     borderRadius: BorderRadius.circular(20),
                     border: Border.all(
                       color: isSelected
                           ? Colors.transparent
-                          : Colors.white.withOpacity(0.3),
+                          : colorScheme.onPrimary.withOpacity(0.3),
                     ),
                   ),
                   child: Text(
                     preset,
-                    style: TextStyle(
-                      color: isSelected ? Colors.blue.shade700 : Colors.white,
+                    style: textTheme.bodyMedium?.copyWith(
+                      color: isSelected
+                          ? colorScheme.primary
+                          : colorScheme.onPrimary,
                       fontWeight: isSelected
                           ? FontWeight.bold
                           : FontWeight.w500,
-                      fontSize: 14,
                     ),
                   ),
                 ),
@@ -562,13 +503,16 @@ class _AudioEqualizerPageState extends ConsumerState<AudioEqualizerPage> {
     );
   }
 
-  Widget _buildKnobsSection(Color surfaceColor, Color textColor) {
+  Widget _buildKnobsSection() {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+
     return Container(
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
-        color: surfaceColor,
+        color: colorScheme.surfaceContainerHighest,
         borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: textColor.withOpacity(0.1)),
+        border: Border.all(color: colorScheme.outline.withOpacity(0.2)),
       ),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceEvenly,
@@ -581,7 +525,6 @@ class _AudioEqualizerPageState extends ConsumerState<AudioEqualizerPage> {
               onChanged: _setBassBoost,
               color: Colors.deepPurple,
               icon: Icons.graphic_eq_rounded,
-              textColor: textColor,
             ),
           ),
           const SizedBox(width: 20),
@@ -593,7 +536,6 @@ class _AudioEqualizerPageState extends ConsumerState<AudioEqualizerPage> {
               onChanged: _setReverbLevel,
               color: Colors.teal,
               icon: Icons.surround_sound_rounded,
-              textColor: textColor,
             ),
           ),
         ],
@@ -608,19 +550,17 @@ class _AudioEqualizerPageState extends ConsumerState<AudioEqualizerPage> {
     required ValueChanged<double> onChanged,
     required Color color,
     required IconData icon,
-    required Color textColor,
   }) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final textTheme = theme.textTheme;
     final percentage = (value / max * 100).toInt();
 
     return Column(
       children: [
         Text(
           title,
-          style: TextStyle(
-            fontSize: 16,
-            fontWeight: FontWeight.bold,
-            color: textColor,
-          ),
+          style: textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
         ),
         const SizedBox(height: 16),
         GestureDetector(
@@ -632,13 +572,11 @@ class _AudioEqualizerPageState extends ConsumerState<AudioEqualizerPage> {
               details.localPosition.dx - center.dx,
             );
 
-            // Convert angle to value (0 to max)
             var normalizedAngle = (angle + math.pi / 2) % (2 * math.pi);
             if (normalizedAngle < 0) normalizedAngle += 2 * math.pi;
 
-            // Map to 0-1 range (270 degrees of rotation)
-            final range = (3 * math.pi / 2); // 270 degrees
-            final offset = math.pi / 8; // 22.5 degrees offset
+            final range = (3 * math.pi / 2);
+            final offset = math.pi / 8;
 
             var adjustedAngle = normalizedAngle - offset;
             if (adjustedAngle < 0) adjustedAngle += 2 * math.pi;
@@ -654,7 +592,8 @@ class _AudioEqualizerPageState extends ConsumerState<AudioEqualizerPage> {
                 value: value,
                 max: max,
                 color: color,
-                textColor: textColor,
+                backgroundColor: colorScheme.surfaceContainerHighest,
+                trackColor: colorScheme.outline.withOpacity(0.2),
               ),
               child: Center(
                 child: Column(
@@ -664,10 +603,8 @@ class _AudioEqualizerPageState extends ConsumerState<AudioEqualizerPage> {
                     const SizedBox(height: 8),
                     Text(
                       '$percentage%',
-                      style: TextStyle(
-                        fontSize: 18,
+                      style: textTheme.titleMedium?.copyWith(
                         fontWeight: FontWeight.bold,
-                        color: textColor,
                       ),
                     ),
                   ],
@@ -680,15 +617,18 @@ class _AudioEqualizerPageState extends ConsumerState<AudioEqualizerPage> {
     );
   }
 
-  Widget _buildEqualizerSection(Color surfaceColor, Color textColor) {
+  Widget _buildEqualizerSection() {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final textTheme = theme.textTheme;
     final bandLabels = ['60Hz', '230Hz', '910Hz', '3.6kHz', '14kHz'];
 
     return Container(
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
-        color: surfaceColor,
+        color: colorScheme.surfaceContainerHighest,
         borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: textColor.withOpacity(0.1)),
+        border: Border.all(color: colorScheme.outline.withOpacity(0.2)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -701,18 +641,13 @@ class _AudioEqualizerPageState extends ConsumerState<AudioEqualizerPage> {
                   color: Colors.green.withOpacity(0.1),
                   borderRadius: BorderRadius.circular(8),
                 ),
-                child: Icon(
-                  Icons.equalizer_rounded,
-                  color: Colors.green.shade700,
-                ),
+                child: const Icon(Icons.equalizer_rounded, color: Colors.green),
               ),
               const SizedBox(width: 12),
               Text(
                 '5-Band Equalizer',
-                style: TextStyle(
-                  fontSize: 18,
+                style: textTheme.titleMedium?.copyWith(
                   fontWeight: FontWeight.bold,
-                  color: textColor,
                 ),
               ),
             ],
@@ -736,12 +671,17 @@ class _AudioEqualizerPageState extends ConsumerState<AudioEqualizerPage> {
                             child: SliderTheme(
                               data: SliderThemeData(
                                 trackHeight: 32,
+                                activeTrackColor: Colors.green,
+                                inactiveTrackColor: colorScheme.outline
+                                    .withOpacity(0.2),
+                                thumbColor: Colors.green,
                                 thumbShape: const RoundSliderThumbShape(
                                   enabledThumbRadius: 8,
                                 ),
                                 overlayShape: const RoundSliderOverlayShape(
                                   overlayRadius: 16,
                                 ),
+                                overlayColor: Colors.green.withOpacity(0.2),
                               ),
                               child: Slider(
                                 value: _eqBands[index],
@@ -749,8 +689,6 @@ class _AudioEqualizerPageState extends ConsumerState<AudioEqualizerPage> {
                                 max: 1500,
                                 onChanged: (value) =>
                                     _setEqualizerBand(index, value),
-                                activeColor: Colors.green,
-                                inactiveColor: Colors.grey.withOpacity(0.3),
                               ),
                             ),
                           ),
@@ -758,17 +696,15 @@ class _AudioEqualizerPageState extends ConsumerState<AudioEqualizerPage> {
                         const SizedBox(height: 8),
                         Text(
                           bandLabels[index],
-                          style: TextStyle(
-                            fontSize: 11,
+                          style: textTheme.bodySmall?.copyWith(
                             fontWeight: FontWeight.w600,
-                            color: textColor.withOpacity(0.6),
                           ),
                         ),
                         Text(
                           '${(_eqBands[index] / 100).toStringAsFixed(1)}dB',
-                          style: TextStyle(
+                          style: textTheme.bodySmall?.copyWith(
                             fontSize: 10,
-                            color: textColor.withOpacity(0.4),
+                            color: colorScheme.onSurface.withOpacity(0.6),
                           ),
                         ),
                       ],
@@ -790,15 +726,17 @@ class _AudioEqualizerPageState extends ConsumerState<AudioEqualizerPage> {
     required double max,
     required ValueChanged<double> onChanged,
     required Color color,
-    required Color surfaceColor,
-    required Color textColor,
   }) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final textTheme = theme.textTheme;
+
     return Container(
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
-        color: surfaceColor,
+        color: colorScheme.surfaceContainerHighest,
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: textColor.withOpacity(0.1)),
+        border: Border.all(color: colorScheme.outline.withOpacity(0.2)),
       ),
       child: Column(
         children: [
@@ -815,17 +753,14 @@ class _AudioEqualizerPageState extends ConsumerState<AudioEqualizerPage> {
               const SizedBox(width: 12),
               Text(
                 title,
-                style: TextStyle(
-                  fontSize: 16,
+                style: textTheme.titleMedium?.copyWith(
                   fontWeight: FontWeight.bold,
-                  color: textColor,
                 ),
               ),
               const Spacer(),
               Text(
                 '${(value / max * 100).toStringAsFixed(0)}%',
-                style: TextStyle(
-                  fontSize: 14,
+                style: textTheme.titleSmall?.copyWith(
                   fontWeight: FontWeight.w600,
                   color: color,
                 ),
@@ -847,13 +782,17 @@ class _AudioEqualizerPageState extends ConsumerState<AudioEqualizerPage> {
     );
   }
 
-  Widget _buildBalanceCard(Color surfaceColor, Color textColor) {
+  Widget _buildBalanceCard() {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final textTheme = theme.textTheme;
+
     return Container(
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
-        color: surfaceColor,
+        color: colorScheme.surfaceContainerHighest,
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: textColor.withOpacity(0.1)),
+        border: Border.all(color: colorScheme.outline.withOpacity(0.2)),
       ),
       child: Column(
         children: [
@@ -870,10 +809,8 @@ class _AudioEqualizerPageState extends ConsumerState<AudioEqualizerPage> {
               const SizedBox(width: 12),
               Text(
                 'Audio Balance',
-                style: TextStyle(
-                  fontSize: 16,
+                style: textTheme.titleMedium?.copyWith(
                   fontWeight: FontWeight.bold,
-                  color: textColor,
                 ),
               ),
               const Spacer(),
@@ -883,8 +820,7 @@ class _AudioEqualizerPageState extends ConsumerState<AudioEqualizerPage> {
                     : _audioBalance < 0.5
                     ? 'Left ${((0.5 - _audioBalance) * 200).toStringAsFixed(0)}%'
                     : 'Right ${((_audioBalance - 0.5) * 200).toStringAsFixed(0)}%',
-                style: const TextStyle(
-                  fontSize: 14,
+                style: textTheme.titleSmall?.copyWith(
                   fontWeight: FontWeight.w600,
                   color: Colors.indigo,
                 ),
@@ -898,7 +834,9 @@ class _AudioEqualizerPageState extends ConsumerState<AudioEqualizerPage> {
               const SizedBox(width: 8),
               Text(
                 'L',
-                style: TextStyle(fontWeight: FontWeight.bold, color: textColor),
+                style: textTheme.titleSmall?.copyWith(
+                  fontWeight: FontWeight.bold,
+                ),
               ),
               Expanded(
                 child: SliderTheme(
@@ -918,13 +856,59 @@ class _AudioEqualizerPageState extends ConsumerState<AudioEqualizerPage> {
               ),
               Text(
                 'R',
-                style: TextStyle(fontWeight: FontWeight.bold, color: textColor),
+                style: textTheme.titleSmall?.copyWith(
+                  fontWeight: FontWeight.bold,
+                ),
               ),
               const SizedBox(width: 8),
               const Icon(Icons.volume_up, size: 20, color: Colors.indigo),
             ],
           ),
         ],
+      ),
+    );
+  }
+
+  void _showSuccessSnackbar(String message) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Row(
+          children: [
+            const Icon(
+              Icons.check_circle_outline,
+              color: Colors.white,
+              size: 20,
+            ),
+            const SizedBox(width: 12),
+            Expanded(child: Text(message)),
+          ],
+        ),
+        backgroundColor: Colors.green,
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        margin: const EdgeInsets.all(16),
+        duration: const Duration(seconds: 2),
+      ),
+    );
+  }
+
+  void _showErrorSnackbar(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Row(
+          children: [
+            const Icon(Icons.error_outline, color: Colors.white, size: 20),
+            const SizedBox(width: 12),
+            Expanded(child: Text(message)),
+          ],
+        ),
+        backgroundColor: Colors.red,
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        margin: const EdgeInsets.all(16),
       ),
     );
   }
@@ -935,13 +919,15 @@ class KnobPainter extends CustomPainter {
   final double value;
   final double max;
   final Color color;
-  final Color textColor;
+  final Color backgroundColor;
+  final Color trackColor;
 
   KnobPainter({
     required this.value,
     required this.max,
     required this.color,
-    required this.textColor,
+    required this.backgroundColor,
+    required this.trackColor,
   });
 
   @override
@@ -951,21 +937,21 @@ class KnobPainter extends CustomPainter {
 
     // Background circle
     final bgPaint = Paint()
-      ..color = textColor.withOpacity(0.05)
+      ..color = backgroundColor
       ..style = PaintingStyle.fill;
     canvas.drawCircle(center, radius, bgPaint);
 
     // Track (full circle)
     final trackPaint = Paint()
-      ..color = textColor.withOpacity(0.1)
+      ..color = trackColor
       ..style = PaintingStyle.stroke
       ..strokeWidth = 8
       ..strokeCap = StrokeCap.round;
 
     canvas.drawArc(
       Rect.fromCircle(center: center, radius: radius),
-      -math.pi * 5 / 8, // Start at 225 degrees
-      math.pi * 3 / 2, // 270 degrees
+      -math.pi * 5 / 8,
+      math.pi * 3 / 2,
       false,
       trackPaint,
     );

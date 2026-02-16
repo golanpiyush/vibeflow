@@ -108,85 +108,48 @@ class _AudioThoughtsScreenState extends State<AudioThoughtsScreen>
     super.dispose();
   }
 
-  Future<void> _confirmClearThoughts() async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        backgroundColor: const Color(0xFF1a1a1a),
-        title: const Text(
-          'Clear All Thoughts?',
-          style: TextStyle(color: Colors.white),
-        ),
-        content: const Text(
-          'This will permanently delete all audio player thoughts from the last 24 hours. This action cannot be undone.',
-          style: TextStyle(color: Colors.white70),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancel'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(context, true),
-            style: TextButton.styleFrom(foregroundColor: Colors.red),
-            child: const Text('Clear All'),
-          ),
-        ],
-      ),
-    );
-
-    if (confirmed == true) {
-      await _governor.clearAllThoughts();
-      if (mounted) {
-        setState(() {
-          _thoughts = _governor.allThoughts;
-        });
-
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('All thoughts cleared'),
-            backgroundColor: Colors.green,
-          ),
-        );
-      }
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final textTheme = theme.textTheme;
+
     return Scaffold(
-      backgroundColor: const Color(0xFF0a0a0a),
+      backgroundColor: theme.scaffoldBackgroundColor,
       appBar: AppBar(
-        backgroundColor: const Color(0xFF1a1a1a),
+        backgroundColor: colorScheme.surface,
         elevation: 0,
         title: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text(
-              'Engine Oberservations',
-              style: TextStyle(
-                color: Colors.white,
-                fontSize: 20,
+            Text(
+              'Engine Observations',
+              style: textTheme.titleLarge?.copyWith(
                 fontWeight: FontWeight.bold,
               ),
             ),
             Text(
               '${_thoughts.length} thoughts • Auto-clears after 24hrs',
-              style: const TextStyle(color: Colors.white54, fontSize: 12),
+              style: textTheme.bodySmall?.copyWith(
+                color: colorScheme.onSurface.withOpacity(0.6),
+              ),
             ),
           ],
         ),
         actions: [
           if (_thoughts.isNotEmpty)
             IconButton(
-              icon: const Icon(Icons.delete_outline, color: Colors.red),
+              icon: const Icon(Icons.delete_outline),
+              color: colorScheme.error,
               tooltip: 'Clear all thoughts',
               onPressed: _confirmClearThoughts,
             ),
           IconButton(
             icon: Icon(
               _autoScroll ? Icons.arrow_downward : Icons.arrow_upward,
-              color: _autoScroll ? Colors.green : Colors.white54,
+              color: _autoScroll
+                  ? Colors.green
+                  : colorScheme.onSurface.withOpacity(0.6),
             ),
             tooltip: _autoScroll ? 'Auto-scroll ON' : 'Auto-scroll OFF',
             onPressed: () {
@@ -204,63 +167,32 @@ class _AudioThoughtsScreenState extends State<AudioThoughtsScreen>
       ),
       body: Stack(
         children: [
-          // Main content
           _thoughts.isEmpty
               ? _buildEmptyState()
               : Column(
                   children: [
                     _buildCurrentThought(),
-                    const Divider(color: Colors.white12, height: 1),
+                    Divider(
+                      color: colorScheme.outline.withOpacity(0.2),
+                      height: 1,
+                    ),
                     Expanded(child: _buildThoughtsList()),
                   ],
                 ),
-
-          // Lottie animation overlay when audio is playing but has thoughts
-          // if (_isAudioPlaying && _thoughts.isNotEmpty)
-          //   Positioned(
-          //     top: 30,
-          //     right: 140,
-          //     child: Container(
-          //       width: 150,
-          //       height: 150,
-          //       decoration: BoxDecoration(
-          //         color: Colors.black.withOpacity(0.7),
-          //         borderRadius: BorderRadius.circular(50),
-          //         border: Border.all(
-          //           color: Colors.green.withOpacity(0.6),
-          //           width: 3,
-          //         ),
-          //         boxShadow: [
-          //           BoxShadow(
-          //             color: Colors.green.withOpacity(0.4),
-          //             blurRadius: 15,
-          //             spreadRadius: 3,
-          //           ),
-          //         ],
-          //       ),
-          //       child: ClipRRect(
-          //         borderRadius: BorderRadius.circular(50),
-          //         child: Lottie.asset(
-          //           'assets/animations/pepe_listen.json',
-          //           width: 100,
-          //           height: 100,
-          //           fit: BoxFit.cover,
-          //           repeat: true,
-          //         ),
-          //       ),
-          //     ),
-          //   ),
         ],
       ),
     );
   }
 
   Widget _buildEmptyState() {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final textTheme = theme.textTheme;
+
     return Center(
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          // Lottie animation when audio is playing, static icon when not
           _isAudioPlaying
               ? Lottie.asset(
                   'assets/animations/pepe_listen.json',
@@ -272,21 +204,19 @@ class _AudioThoughtsScreenState extends State<AudioThoughtsScreen>
               : Container(
                   padding: const EdgeInsets.all(32),
                   decoration: BoxDecoration(
-                    color: Colors.white.withOpacity(0.05),
+                    color: colorScheme.surfaceContainerHighest,
                     shape: BoxShape.circle,
                   ),
-                  child: const Icon(
+                  child: Icon(
                     Icons.psychology_rounded,
                     size: 80,
-                    color: Colors.white24,
+                    color: colorScheme.onSurface.withOpacity(0.3),
                   ),
                 ),
           const SizedBox(height: 24),
           Text(
             _isAudioPlaying ? 'Vibing...' : 'No Thoughts Yet',
-            style: const TextStyle(
-              color: Colors.white,
-              fontSize: 24,
+            style: textTheme.headlineSmall?.copyWith(
               fontWeight: FontWeight.bold,
             ),
           ),
@@ -296,7 +226,9 @@ class _AudioThoughtsScreenState extends State<AudioThoughtsScreen>
                 ? 'Music is playing but no new thoughts\nKeep listening! 🎵'
                 : 'Start playing music to see what\nthe audio player is thinking',
             textAlign: TextAlign.center,
-            style: const TextStyle(color: Colors.white54, fontSize: 14),
+            style: textTheme.bodyMedium?.copyWith(
+              color: colorScheme.onSurface.withOpacity(0.6),
+            ),
           ),
         ],
       ),
@@ -307,6 +239,9 @@ class _AudioThoughtsScreenState extends State<AudioThoughtsScreen>
     if (_thoughts.isEmpty) return const SizedBox.shrink();
 
     final current = _thoughts.first;
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final textTheme = theme.textTheme;
 
     return FadeTransition(
       opacity: _fadeAnimation,
@@ -320,12 +255,15 @@ class _AudioThoughtsScreenState extends State<AudioThoughtsScreen>
               begin: Alignment.topLeft,
               end: Alignment.bottomRight,
               colors: [
-                Colors.blue.withOpacity(0.15),
-                Colors.purple.withOpacity(0.15),
+                colorScheme.primaryContainer.withOpacity(0.3),
+                colorScheme.secondaryContainer.withOpacity(0.3),
               ],
             ),
             border: Border(
-              bottom: BorderSide(color: Colors.blue.withOpacity(0.3), width: 2),
+              bottom: BorderSide(
+                color: colorScheme.primary.withOpacity(0.3),
+                width: 2,
+              ),
             ),
           ),
           child: Column(
@@ -379,9 +317,8 @@ class _AudioThoughtsScreenState extends State<AudioThoughtsScreen>
                         const SizedBox(height: 4),
                         Text(
                           '${current.formattedTime} • ${current.timeAgo}',
-                          style: TextStyle(
-                            color: Colors.white.withOpacity(0.5),
-                            fontSize: 11,
+                          style: textTheme.bodySmall?.copyWith(
+                            color: colorScheme.onSurface.withOpacity(0.5),
                           ),
                         ),
                       ],
@@ -394,15 +331,15 @@ class _AudioThoughtsScreenState extends State<AudioThoughtsScreen>
               Container(
                 padding: const EdgeInsets.all(16),
                 decoration: BoxDecoration(
-                  color: Colors.black.withOpacity(0.3),
+                  color: colorScheme.surface.withOpacity(0.5),
                   borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: Colors.white.withOpacity(0.1)),
+                  border: Border.all(
+                    color: colorScheme.outline.withOpacity(0.2),
+                  ),
                 ),
                 child: Text(
                   current.message,
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 16,
+                  style: textTheme.bodyLarge?.copyWith(
                     fontStyle: FontStyle.italic,
                     height: 1.5,
                   ),
@@ -415,34 +352,24 @@ class _AudioThoughtsScreenState extends State<AudioThoughtsScreen>
     );
   }
 
-  Widget _buildThoughtsList() {
-    return ListView.builder(
-      controller: _scrollController,
-      padding: const EdgeInsets.all(8),
-      itemCount: _thoughts.length,
-      itemBuilder: (context, index) {
-        final thought = _thoughts[index];
-        final isRecent = index == 0;
-
-        return _buildThoughtCard(thought, isRecent, index);
-      },
-    );
-  }
-
   Widget _buildThoughtCard(AudioThought thought, bool isRecent, int index) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final textTheme = theme.textTheme;
+
     return Opacity(
       opacity: isRecent ? 1.0 : 0.85,
       child: Container(
         margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
         decoration: BoxDecoration(
           color: isRecent
-              ? Colors.blue.withOpacity(0.1)
-              : Colors.white.withOpacity(0.03),
+              ? colorScheme.primaryContainer.withOpacity(0.3)
+              : colorScheme.surfaceContainerHighest,
           borderRadius: BorderRadius.circular(16),
           border: Border.all(
             color: isRecent
-                ? Colors.blue.withOpacity(0.3)
-                : Colors.white.withOpacity(0.08),
+                ? colorScheme.primary.withOpacity(0.3)
+                : colorScheme.outline.withOpacity(0.2),
             width: 1,
           ),
         ),
@@ -477,25 +404,22 @@ class _AudioThoughtsScreenState extends State<AudioThoughtsScreen>
                           children: [
                             Text(
                               thought.formattedTime,
-                              style: TextStyle(
-                                color: Colors.white.withOpacity(0.6),
-                                fontSize: 12,
+                              style: textTheme.bodySmall?.copyWith(
                                 fontWeight: FontWeight.w600,
                               ),
                             ),
                             const SizedBox(width: 8),
                             Text(
                               '•',
-                              style: TextStyle(
-                                color: Colors.white.withOpacity(0.3),
+                              style: textTheme.bodySmall?.copyWith(
+                                color: colorScheme.onSurface.withOpacity(0.3),
                               ),
                             ),
                             const SizedBox(width: 8),
                             Text(
                               thought.timeAgo,
-                              style: TextStyle(
-                                color: Colors.white.withOpacity(0.4),
-                                fontSize: 11,
+                              style: textTheme.bodySmall?.copyWith(
+                                color: colorScheme.onSurface.withOpacity(0.5),
                               ),
                             ),
                             const Spacer(),
@@ -505,13 +429,12 @@ class _AudioThoughtsScreenState extends State<AudioThoughtsScreen>
                         const SizedBox(height: 8),
                         Text(
                           thought.message,
-                          style: TextStyle(
-                            color: isRecent
-                                ? Colors.white
-                                : Colors.white.withOpacity(0.9),
-                            fontSize: 14,
+                          style: textTheme.bodyMedium?.copyWith(
                             fontStyle: FontStyle.italic,
                             height: 1.4,
+                            color: isRecent
+                                ? null
+                                : colorScheme.onSurface.withOpacity(0.9),
                           ),
                           maxLines: 3,
                           overflow: TextOverflow.ellipsis,
@@ -522,7 +445,7 @@ class _AudioThoughtsScreenState extends State<AudioThoughtsScreen>
                   const SizedBox(width: 8),
                   Icon(
                     Icons.chevron_right,
-                    color: Colors.white.withOpacity(0.3),
+                    color: colorScheme.onSurface.withOpacity(0.3),
                     size: 20,
                   ),
                 ],
@@ -531,6 +454,188 @@ class _AudioThoughtsScreenState extends State<AudioThoughtsScreen>
           ),
         ),
       ),
+    );
+  }
+
+  Future<void> _confirmClearThoughts() async {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: colorScheme.surface,
+        title: Text(
+          'Clear All Thoughts?',
+          style: TextStyle(color: colorScheme.onSurface),
+        ),
+        content: Text(
+          'This will permanently delete all audio player thoughts from the last 24 hours. This action cannot be undone.',
+          style: TextStyle(color: colorScheme.onSurface.withOpacity(0.7)),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: TextButton.styleFrom(foregroundColor: colorScheme.error),
+            child: const Text('Clear All'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed == true) {
+      await _governor.clearAllThoughts();
+      if (mounted) {
+        setState(() {
+          _thoughts = _governor.allThoughts;
+        });
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text('All thoughts cleared'),
+            backgroundColor: Colors.green,
+          ),
+        );
+      }
+    }
+  }
+
+  void _showThoughtDetails(AudioThought thought) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final textTheme = theme.textTheme;
+
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: colorScheme.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (context) => Container(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: _getColorForType(thought.type).withOpacity(0.2),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Icon(
+                    _getIconForType(thought.type),
+                    color: _getColorForType(thought.type),
+                    size: 28,
+                  ),
+                ),
+                const SizedBox(width: 16),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        _formatTypeLabel(thought.type),
+                        style: textTheme.titleMedium?.copyWith(
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      Text(
+                        '${thought.formattedTime} • ${thought.timeAgo}',
+                        style: textTheme.bodySmall?.copyWith(
+                          color: colorScheme.onSurface.withOpacity(0.5),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 20),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: colorScheme.surfaceContainerHighest,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: colorScheme.outline.withOpacity(0.2)),
+              ),
+              child: Text(
+                thought.message,
+                style: textTheme.bodyMedium?.copyWith(
+                  fontStyle: FontStyle.italic,
+                  height: 1.5,
+                ),
+              ),
+            ),
+            if (thought.context.isNotEmpty) ...[
+              const SizedBox(height: 16),
+              Text(
+                'Context Data:',
+                style: textTheme.bodySmall?.copyWith(
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: colorScheme.surfaceContainerHighest,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Text(
+                  thought.context.entries
+                      .map((e) => '${e.key}: ${e.value}')
+                      .join('\n'),
+                  style: textTheme.bodySmall?.copyWith(fontFamily: 'monospace'),
+                ),
+              ),
+            ],
+            const SizedBox(height: 20),
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton(
+                onPressed: () => Navigator.pop(context),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: colorScheme.primary,
+                  foregroundColor: colorScheme.onPrimary,
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
+                child: Text(
+                  'Close',
+                  style: textTheme.titleSmall?.copyWith(
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildThoughtsList() {
+    return ListView.builder(
+      controller: _scrollController,
+      padding: const EdgeInsets.all(8),
+      itemCount: _thoughts.length,
+      itemBuilder: (context, index) {
+        final thought = _thoughts[index];
+        final isRecent = index == 0;
+
+        return _buildThoughtCard(thought, isRecent, index);
+      },
     );
   }
 
@@ -602,130 +707,5 @@ class _AudioThoughtsScreenState extends State<AudioThoughtsScreen>
     if (type.contains('volume')) return Icons.volume_up;
     if (type.contains('error')) return Icons.error_outline;
     return Icons.music_note;
-  }
-
-  void _showThoughtDetails(AudioThought thought) {
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: const Color(0xFF1a1a1a),
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      builder: (context) => Container(
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Container(
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: _getColorForType(thought.type).withOpacity(0.2),
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: Icon(
-                    _getIconForType(thought.type),
-                    color: _getColorForType(thought.type),
-                    size: 28,
-                  ),
-                ),
-                const SizedBox(width: 16),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        _formatTypeLabel(thought.type),
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 18,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                      Text(
-                        '${thought.formattedTime} • ${thought.timeAgo}',
-                        style: TextStyle(
-                          color: Colors.white.withOpacity(0.5),
-                          fontSize: 12,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 20),
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: Colors.black.withOpacity(0.3),
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: Colors.white.withOpacity(0.1)),
-              ),
-              child: Text(
-                thought.message,
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 15,
-                  fontStyle: FontStyle.italic,
-                  height: 1.5,
-                ),
-              ),
-            ),
-            if (thought.context.isNotEmpty) ...[
-              const SizedBox(height: 16),
-              Text(
-                'Context Data:',
-                style: TextStyle(
-                  color: Colors.white.withOpacity(0.7),
-                  fontSize: 12,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-              const SizedBox(height: 8),
-              Container(
-                width: double.infinity,
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: Colors.black.withOpacity(0.2),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Text(
-                  thought.context.entries
-                      .map((e) => '${e.key}: ${e.value}')
-                      .join('\n'),
-                  style: TextStyle(
-                    color: Colors.white.withOpacity(0.6),
-                    fontSize: 12,
-                    fontFamily: 'monospace',
-                  ),
-                ),
-              ),
-            ],
-            const SizedBox(height: 20),
-            SizedBox(
-              width: double.infinity,
-              child: ElevatedButton(
-                onPressed: () => Navigator.pop(context),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.blue,
-                  padding: const EdgeInsets.symmetric(vertical: 14),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                ),
-                child: const Text(
-                  'Close',
-                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
   }
 }

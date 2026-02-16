@@ -400,19 +400,23 @@ class _VibeFlowAppState extends ConsumerState<VibeFlowApp> {
         return ValueListenableBuilder<bool>(
           valueListenable: isMiniplayerVisible,
           builder: (context, isVisible, _) {
+            final banStatus = ref.watch(banStatusProvider);
+            final isBanned = banStatus.maybeWhen(
+              data: (banned) => banned,
+              orElse: () => false,
+            );
+
             return Stack(
               children: [
                 Padding(
                   padding: EdgeInsets.only(
-                    // ✅ Remove bottom padding when miniplayer is hidden
-                    bottom: (!isVisible || isImmersive)
+                    bottom: (!isVisible || isImmersive || isBanned)
                         ? 0
                         : kMiniplayerHeight + bottomInset,
                   ),
                   child: child!,
                 ),
-                // ✅ Only render miniplayer when visible
-                if (isVisible) const GlobalMiniplayer(),
+                if (isVisible && !isBanned) const GlobalMiniplayer(),
               ],
             );
           },

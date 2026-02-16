@@ -80,8 +80,8 @@ class _PlaylistDetailScreenState extends ConsumerState<PlaylistDetailScreen> {
 
   Widget _buildSidebar(BuildContext context, ThemeData themeData) {
     final double availableHeight = MediaQuery.of(context).size.height;
-    final iconColor = themeData.iconTheme.color ?? Colors.white;
-    final textColor = themeData.textTheme.bodyLarge?.color ?? Colors.white;
+    final iconColor = ref.watch(themeTextPrimaryColorProvider);
+    final textColor = ref.watch(themeTextPrimaryColorProvider);
 
     final labelStyle = AppTypography.sidebarLabel(
       context,
@@ -285,8 +285,8 @@ class _PlaylistDetailScreenState extends ConsumerState<PlaylistDetailScreen> {
   }
 
   Widget _buildTopBar(Playlist playlist, ThemeData themeData) {
-    final textColor = themeData.textTheme.bodyLarge?.color ?? Colors.white;
-    final iconColor = themeData.iconTheme.color ?? Colors.white;
+    final textColor = ref.watch(themeTextPrimaryColorProvider);
+    final iconColor = ref.watch(themeTextPrimaryColorProvider);
 
     final pageTitleStyle = AppTypography.pageTitle(
       context,
@@ -326,9 +326,8 @@ class _PlaylistDetailScreenState extends ConsumerState<PlaylistDetailScreen> {
     List<DbSong> songs,
     ThemeData themeData,
   ) {
-    final textPrimary = themeData.textTheme.bodyLarge?.color ?? Colors.white;
-    final textSecondary =
-        themeData.textTheme.bodyMedium?.color ?? Colors.white70;
+    final textPrimary = ref.watch(themeTextPrimaryColorProvider);
+    final textSecondary = ref.watch(themeTextSecondaryColorProvider);
 
     return Padding(
       padding: const EdgeInsets.fromLTRB(
@@ -366,7 +365,7 @@ class _PlaylistDetailScreenState extends ConsumerState<PlaylistDetailScreen> {
                       )
                     : (songs.isNotEmpty && songs.first.thumbnail.isNotEmpty
                           ? Image.network(
-                              songs.first.thumbnail,
+                              songs.first.thumbnail.split('=').first,
                               fit: BoxFit.cover,
                               errorBuilder: (_, __, ___) =>
                                   _buildCoverPlaceholder(themeData),
@@ -413,33 +412,29 @@ class _PlaylistDetailScreenState extends ConsumerState<PlaylistDetailScreen> {
   }
 
   Widget _buildCoverPlaceholder(ThemeData themeData) {
-    final primaryColor = themeData.primaryColor;
-
-    return Container(
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [
-            primaryColor.withOpacity(0.6),
-            primaryColor.withOpacity(0.9),
-          ],
-        ),
-      ),
-      child: Center(
-        child: Icon(
-          Icons.playlist_play,
-          size: 80,
-          color: Colors.white.withOpacity(0.9),
-        ),
-      ),
+    return Image.asset(
+      'assets/imgs/funny_dawg.jpg',
+      fit: BoxFit.cover,
+      width: 200,
+      height: 200,
+      errorBuilder: (context, error, stackTrace) {
+        debugPrint('❌ Asset not found: $error');
+        return Container(
+          width: 200,
+          height: 200,
+          color: Colors.red, // visible red = asset path is wrong
+          child: const Center(
+            child: Text('IMG ERROR', style: TextStyle(color: Colors.white)),
+          ),
+        );
+      },
     );
   }
 
   Widget _buildControls(List<DbSong> songs, ThemeData themeData) {
     final primaryColor = themeData.primaryColor;
     final backgroundColor = themeData.scaffoldBackgroundColor;
-    final textColor = themeData.textTheme.bodyLarge?.color ?? Colors.white;
+    final textColor = ref.watch(themeTextPrimaryColorProvider);
 
     return Padding(
       padding: const EdgeInsets.symmetric(
@@ -501,12 +496,11 @@ class _PlaylistDetailScreenState extends ConsumerState<PlaylistDetailScreen> {
     bool showDragHandle,
     ThemeData themeData,
   ) {
-    final textPrimary = themeData.textTheme.bodyLarge?.color ?? Colors.white;
-    final textSecondary =
-        themeData.textTheme.bodyMedium?.color ?? Colors.white70;
+    final textPrimary = ref.watch(themeTextPrimaryColorProvider);
+    final textSecondary = ref.watch(themeTextSecondaryColorProvider);
     final primaryColor = themeData.primaryColor;
     final cardBg = themeData.cardColor;
-
+    final activeColor = ref.watch(themeIconActiveColorProvider);
     return Container(
       margin: const EdgeInsets.symmetric(
         horizontal: AppSpacing.lg,
@@ -531,7 +525,7 @@ class _PlaylistDetailScreenState extends ConsumerState<PlaylistDetailScreen> {
                 ),
                 decoration: BoxDecoration(
                   color: isCurrentlyPlaying
-                      ? primaryColor.withOpacity(0.1)
+                      ? activeColor.withOpacity(0.16)
                       : Colors.transparent,
                   borderRadius: BorderRadius.circular(12),
                 ),
@@ -549,14 +543,21 @@ class _PlaylistDetailScreenState extends ConsumerState<PlaylistDetailScreen> {
                           decoration: BoxDecoration(color: cardBg),
                           child: song.thumbnail.isNotEmpty
                               ? Image.network(
-                                  song.thumbnail,
+                                  song.thumbnail.split('=').first,
                                   fit: BoxFit.cover,
-                                  errorBuilder: (_, __, ___) => Icon(
-                                    Icons.music_note,
-                                    color: textSecondary,
+                                  errorBuilder: (_, __, ___) => Image.asset(
+                                    'assets/imgs/funny_dawg.jpg',
+                                    fit: BoxFit.cover,
+                                    width: 50,
+                                    height: 50,
                                   ),
                                 )
-                              : Icon(Icons.music_note, color: textSecondary),
+                              : Image.asset(
+                                  'assets/imgs/funny_dawg.jpg',
+                                  fit: BoxFit.cover,
+                                  width: 50,
+                                  height: 50,
+                                ),
                         ),
                       ),
                     const SizedBox(width: 12),
@@ -571,7 +572,7 @@ class _PlaylistDetailScreenState extends ConsumerState<PlaylistDetailScreen> {
                             song.title,
                             style: AppTypography.body(context).copyWith(
                               color: isCurrentlyPlaying
-                                  ? primaryColor
+                                  ? activeColor
                                   : textPrimary,
                               fontWeight: isCurrentlyPlaying
                                   ? FontWeight.w600
@@ -585,7 +586,7 @@ class _PlaylistDetailScreenState extends ConsumerState<PlaylistDetailScreen> {
                             song.artistsString,
                             style: AppTypography.caption(context).copyWith(
                               color: isCurrentlyPlaying
-                                  ? primaryColor.withOpacity(0.8)
+                                  ? activeColor
                                   : textSecondary,
                             ),
                             maxLines: 1,
@@ -602,7 +603,7 @@ class _PlaylistDetailScreenState extends ConsumerState<PlaylistDetailScreen> {
                           width: 28,
                           height: 28,
                           margin: const EdgeInsets.only(left: 8),
-                          child: _MiniMusicVisualizer(color: primaryColor),
+                          child: _MiniMusicVisualizer(color: activeColor),
                         )
                       else
                         IconButton(
@@ -640,8 +641,7 @@ class _PlaylistDetailScreenState extends ConsumerState<PlaylistDetailScreen> {
   }
 
   Widget _buildNotFoundState(ThemeData themeData) {
-    final textSecondary =
-        themeData.textTheme.bodyMedium?.color ?? Colors.white70;
+    final textSecondary = ref.watch(themeTextSecondaryColorProvider);
 
     return Center(
       child: Column(
@@ -665,9 +665,8 @@ class _PlaylistDetailScreenState extends ConsumerState<PlaylistDetailScreen> {
   }
 
   Widget _buildErrorState(Object error, ThemeData themeData) {
-    final textPrimary = themeData.textTheme.bodyLarge?.color ?? Colors.white;
-    final textSecondary =
-        themeData.textTheme.bodyMedium?.color ?? Colors.white70;
+    final textPrimary = ref.watch(themeTextPrimaryColorProvider);
+    final textSecondary = ref.watch(themeTextSecondaryColorProvider);
     final errorColor = themeData.colorScheme.error;
 
     return Center(
@@ -706,8 +705,7 @@ class _PlaylistDetailScreenState extends ConsumerState<PlaylistDetailScreen> {
   }
 
   Widget _buildEmptySongsState(ThemeData themeData) {
-    final textSecondary =
-        themeData.textTheme.bodyMedium?.color ?? Colors.white70;
+    final textSecondary = ref.watch(themeTextSecondaryColorProvider);
 
     return Center(
       child: Column(
@@ -807,6 +805,7 @@ class _PlaylistDetailScreenState extends ConsumerState<PlaylistDetailScreen> {
                 _deletePlaylist(playlist, themeData);
               },
             ),
+            const SizedBox(height: 75),
           ],
         ),
       ),

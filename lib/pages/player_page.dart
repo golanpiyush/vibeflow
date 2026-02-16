@@ -1277,17 +1277,22 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
   }
 
   Widget _buildPlaceholder() {
-    final themeData = Theme.of(context);
-
-    return Container(
-      color: themeData.cardColor,
-      child: Center(
-        child: Icon(
-          Icons.music_note_rounded,
-          size: 80,
-          color: themeData.disabledColor,
-        ),
-      ),
+    return Image.asset(
+      'assets/imgs/funny_dawg.jpg',
+      fit: BoxFit.cover,
+      errorBuilder: (context, error, stackTrace) {
+        // Ultimate fallback if even the local asset fails
+        return Container(
+          color: Theme.of(context).cardColor,
+          child: Center(
+            child: Icon(
+              Icons.broken_image_rounded,
+              size: 80,
+              color: Theme.of(context).disabledColor,
+            ),
+          ),
+        );
+      },
     );
   }
 

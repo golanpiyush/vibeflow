@@ -435,8 +435,153 @@ class _EnhancedRadioSheetState extends State<EnhancedRadioSheet>
         final customState = snapshot.data as Map<String, dynamic>? ?? {};
         final radioQueueData =
             customState['radio_queue'] as List<dynamic>? ?? [];
+        final radioDecision = customState['radio_decision'] as String?;
+        final radioDecisionType = customState['radio_decision_type'] as String?;
+        final isRadioLoading = customState['radio_loading'] as bool? ?? false;
+        final isPlaylistMode =
+            customState['is_playlist_mode'] as bool? ?? false;
 
-        // Empty state
+        // ✅ Show decision messages based on state
+        if (isPlaylistMode && radioDecision != null) {
+          return Center(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(
+                  Icons.playlist_play,
+                  size: 64,
+                  color: onSurface.withOpacity(0.3),
+                ),
+                const SizedBox(height: 16),
+                Text(
+                  radioDecision,
+                  style: TextStyle(
+                    color: onSurface.withOpacity(0.7),
+                    fontSize: 18,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  'Radio will be available when playlist ends',
+                  style: TextStyle(
+                    color: onSurface.withOpacity(0.4),
+                    fontSize: 14,
+                  ),
+                ),
+              ],
+            ),
+          );
+        }
+
+        if (isRadioLoading) {
+          return Center(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                SizedBox(
+                  width: 40,
+                  height: 40,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 3,
+                    valueColor: AlwaysStoppedAnimation<Color>(primaryColor),
+                  ),
+                ),
+                const SizedBox(height: 24),
+                Text(
+                  radioDecision ?? 'Loading radio...',
+                  style: TextStyle(
+                    color: onSurface.withOpacity(0.7),
+                    fontSize: 18,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  'Finding similar songs for you',
+                  style: TextStyle(
+                    color: onSurface.withOpacity(0.4),
+                    fontSize: 14,
+                  ),
+                ),
+              ],
+            ),
+          );
+        }
+
+        if (radioDecision != null && radioDecisionType == 'cleared') {
+          return Center(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(Icons.radio, size: 64, color: onSurface.withOpacity(0.3)),
+                const SizedBox(height: 16),
+                Text(
+                  radioDecision,
+                  style: TextStyle(
+                    color: onSurface.withOpacity(0.7),
+                    fontSize: 18,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  'Radio will load after this song',
+                  style: TextStyle(
+                    color: onSurface.withOpacity(0.4),
+                    fontSize: 14,
+                  ),
+                ),
+              ],
+            ),
+          );
+        }
+
+        if (radioDecision != null && radioDecisionType == 'existing') {
+          if (radioQueueData.isEmpty) {
+            return Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(
+                    Icons.radio,
+                    size: 64,
+                    color: onSurface.withOpacity(0.3),
+                  ),
+                  const SizedBox(height: 16),
+                  Text(
+                    radioDecision,
+                    style: TextStyle(
+                      color: onSurface.withOpacity(0.7),
+                      fontSize: 18,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    'Tap refresh to load new radio',
+                    style: TextStyle(
+                      color: onSurface.withOpacity(0.4),
+                      fontSize: 14,
+                    ),
+                  ),
+                  const SizedBox(height: 24),
+                  ElevatedButton.icon(
+                    onPressed: _forceRefreshRadio,
+                    icon: const Icon(Icons.refresh),
+                    label: const Text('Refresh Radio'),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: primaryColor,
+                      foregroundColor: themeData.colorScheme.onPrimary,
+                    ),
+                  ),
+                ],
+              ),
+            );
+          }
+        }
+
+        // Empty state (no decision message)
         if (radioQueueData.isEmpty) {
           return Center(
             child: Column(

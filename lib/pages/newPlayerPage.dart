@@ -41,6 +41,11 @@ final currentLyricsProvider = StateProvider<List<Map<String, dynamic>>>(
   (ref) => [],
 );
 final currentLyricsLoadingProvider = StateProvider<bool>((ref) => false);
+final sliderStyleProvider = StateProvider<SliderStyle>(
+  (ref) => SliderStyle.straight,
+);
+
+enum SliderStyle { straight, squiggly }
 
 class NewPlayerPage extends ConsumerStatefulWidget {
   final QuickPick song;
@@ -51,14 +56,20 @@ class NewPlayerPage extends ConsumerStatefulWidget {
 
   @override
   ConsumerState<NewPlayerPage> createState() => _NewPlayerPageState();
-
+  static bool _isNavigating = false;
+  static bool _isOpen = false;
   // ───────── Open with Navigator ─────────
   static Future<void> openWithNavigator(
     NavigatorState navigator,
     QuickPick song, {
     String? heroTag,
   }) async {
-    // Hide miniplayer before navigation
+    // ✅ FIX: Canonical guard — if player is already open, do nothing
+    if (_isOpen) {
+      print('⚠️ [NewPlayerPage] Already open, ignoring duplicate navigation');
+      return;
+    }
+    _isOpen = true;
     isMiniplayerVisible.value = false;
 
     final supabase = Supabase.instance.client;
@@ -72,7 +83,6 @@ class NewPlayerPage extends ConsumerStatefulWidget {
             .select('is_beta_tester')
             .eq('id', userId)
             .single();
-
         useBetaPlayer = profile?['is_beta_tester'] ?? false;
       } catch (e) {
         print('Error checking beta status: $e');
@@ -80,31 +90,35 @@ class NewPlayerPage extends ConsumerStatefulWidget {
       }
     }
 
-    await navigator
-        .push(
-          PageTransitions.playerScale(
-            page: useBetaPlayer
-                ? NewPlayerPage(song: song, heroTag: heroTag)
-                : PlayerScreen(song: song, heroTag: heroTag),
-          ),
-        )
-        .then((_) {
-          // Restore miniplayer visibility after navigation
-          isMiniplayerVisible.value = true;
-        });
+    try {
+      await navigator.push(
+        PageTransitions.playerScale(
+          page: useBetaPlayer
+              ? NewPlayerPage(song: song, heroTag: heroTag)
+              : PlayerScreen(song: song, heroTag: heroTag),
+        ),
+      );
+    } finally {
+      isMiniplayerVisible.value = true;
+      _isOpen = false;
+    }
   }
 
-  // ───────── Open with BuildContext ─────────
+  // REPLACE open() with:
   static Future<void> open(
     BuildContext context,
     QuickPick song, {
     String? heroTag,
   }) async {
-    // Hide miniplayer before navigation
+    // ✅ FIX: Same canonical guard
+    if (_isOpen) {
+      print('⚠️ [NewPlayerPage] Already open, ignoring duplicate navigation');
+      return;
+    }
+    _isOpen = true;
     isMiniplayerVisible.value = false;
 
     final navigator = Navigator.of(context);
-
     final supabase = Supabase.instance.client;
     final userId = supabase.auth.currentUser?.id;
     bool useBetaPlayer = false;
@@ -116,7 +130,6 @@ class NewPlayerPage extends ConsumerStatefulWidget {
             .select('is_beta_tester')
             .eq('id', userId)
             .single();
-
         useBetaPlayer = profile?['is_beta_tester'] ?? false;
       } catch (e) {
         print('Error checking beta status: $e');
@@ -124,18 +137,18 @@ class NewPlayerPage extends ConsumerStatefulWidget {
       }
     }
 
-    await navigator
-        .push(
-          PageTransitions.playerScale(
-            page: useBetaPlayer
-                ? NewPlayerPage(song: song, heroTag: heroTag)
-                : PlayerScreen(song: song, heroTag: heroTag),
-          ),
-        )
-        .then((_) {
-          // Restore miniplayer visibility after navigation
-          isMiniplayerVisible.value = true;
-        });
+    try {
+      await navigator.push(
+        PageTransitions.playerScale(
+          page: useBetaPlayer
+              ? NewPlayerPage(song: song, heroTag: heroTag)
+              : PlayerScreen(song: song, heroTag: heroTag),
+        ),
+      );
+    } finally {
+      isMiniplayerVisible.value = true;
+      _isOpen = false;
+    }
   }
 }
 
@@ -158,11 +171,12 @@ class _NewPlayerPageState extends ConsumerState<NewPlayerPage>
   Timer? _sleepTimer;
   Duration? _sleepTimerDuration;
   DateTime? _sleepTimerEndTime;
+  Timer? _debounceTimer;
 
   @override
   void initState() {
     super.initState();
-    isMiniplayerVisible.value = false;
+
     _scaleController = AnimationController(
       duration: const Duration(milliseconds: 600),
       vsync: this,
@@ -196,12 +210,7 @@ class _NewPlayerPageState extends ConsumerState<NewPlayerPage>
         _updateRotation(state.playing);
       }
     });
-
-    // ✅ CRITICAL FIX: Debounce mediaItemStream to prevent duplicate triggers
-    Timer? _debounceTimer;
-    String? _lastProcessedVideoId;
-    String? _lastProcessedTitle;
-
+    bool _isFirstEmission = true;
     _audioService.mediaItemStream.listen((mediaItem) {
       if (!mounted) return;
 
@@ -209,14 +218,27 @@ class _NewPlayerPageState extends ConsumerState<NewPlayerPage>
         final newVideoId = mediaItem.id;
         final newTitle = mediaItem.title;
 
-        // ✅ FIX: Cancel pending debounce if same song
-        if (_debounceTimer?.isActive ?? false) {
+        // ✅ Skip first emission if it's the same song we already have
+        if (_isFirstEmission) {
+          _isFirstEmission = false;
+          if (newVideoId == widget.song.videoId) {
+            print(
+              '⏭️ [MediaStream] Skipping first emission (same as opened song)',
+            );
+            _currentVideoId = newVideoId;
+            _lastProcessedVideoId = newVideoId;
+            _lastProcessedTitle = newTitle;
+            return;
+          }
+          _isFirstEmission = false;
+        }
+        if (_mediaItemDebounceTimer?.isActive ?? false) {
           if (newVideoId == _lastProcessedVideoId &&
               newTitle == _lastProcessedTitle) {
             print('⏭️ [MediaStream] Ignoring duplicate emission');
             return;
           }
-          _debounceTimer?.cancel();
+          _mediaItemDebounceTimer?.cancel();
         }
 
         print('🎵 [MediaStream] Received update:');
@@ -233,15 +255,18 @@ class _NewPlayerPageState extends ConsumerState<NewPlayerPage>
           print('🔄 [MediaStream] New song detected, updating UI');
 
           // ✅ FIX: Debounce to prevent multiple rapid calls
-          _debounceTimer = Timer(const Duration(milliseconds: 150), () {
-            if (!mounted) return;
+          _mediaItemDebounceTimer = Timer(
+            const Duration(milliseconds: 150),
+            () {
+              if (!mounted) return;
 
-            _currentVideoId = newVideoId;
-            _lastProcessedVideoId = newVideoId;
-            _lastProcessedTitle = newTitle;
+              _currentVideoId = newVideoId;
+              _lastProcessedVideoId = newVideoId;
+              _lastProcessedTitle = newTitle;
 
-            _onSongChanged(mediaItem);
-          });
+              _onSongChanged(mediaItem);
+            },
+          );
         } else {
           print(
             '✓ [MediaStream] Same song as current/last processed, no update',
@@ -1598,22 +1623,29 @@ class _NewPlayerPageState extends ConsumerState<NewPlayerPage>
 
   // Updated placeholder with transparent background
   Widget _buildPlaceholder() {
-    return Container(
-      color: Colors.transparent,
-      child: Center(
-        child: Container(
-          padding: const EdgeInsets.all(24),
-          decoration: BoxDecoration(
-            shape: BoxShape.circle,
-            color: Colors.black.withOpacity(0.3),
+    return Image.asset(
+      'assets/imgs/funny_dawg.jpg',
+      fit: BoxFit.cover,
+      errorBuilder: (context, error, stackTrace) {
+        // Ultimate fallback if even the local asset fails
+        return Container(
+          color: Colors.transparent,
+          child: Center(
+            child: Container(
+              padding: const EdgeInsets.all(24),
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: Colors.black.withOpacity(0.3),
+              ),
+              child: const Icon(
+                Icons.broken_image_rounded,
+                size: 70,
+                color: Colors.white38,
+              ),
+            ),
           ),
-          child: const Icon(
-            Icons.music_note_rounded,
-            size: 70,
-            color: Colors.white38,
-          ),
-        ),
-      ),
+        );
+      },
     );
   }
 
@@ -1765,54 +1797,49 @@ class _NewPlayerPageState extends ConsumerState<NewPlayerPage>
           ],
         ),
 
-        // ✨ NEW: Line-by-line lyrics area (before slider)
+        // ✨ FIXED: Line-by-line lyrics area with proper visibility
         if (showLyricsHere) ...[
-          StreamBuilder<MediaItem?>(
-            stream: _audioService.mediaItemStream,
-            builder: (context, snapshot) {
-              final currentMedia = snapshot.data;
+          const SizedBox(height: 16),
+          Container(
+            height: 100, // Increased height for better visibility
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+            decoration: BoxDecoration(
+              color: surfaceVariant.withOpacity(0.2),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(
+                color: primaryColor.withOpacity(0.3),
+                width: 1,
+              ),
+            ),
+            child: StreamBuilder<MediaItem?>(
+              stream: _audioService.mediaItemStream,
+              builder: (context, snapshot) {
+                final currentMedia = snapshot.data;
 
-              print(
-                '🎵 [Compact Lyrics] Rendering - hasMedia: ${currentMedia != null}',
-              );
-
-              if (currentMedia == null) {
-                return Container(
-                  height: 80,
-                  color: Colors.red.withOpacity(0.1), // Debug: Show area
-                  child: Center(
+                if (currentMedia == null) {
+                  return Center(
                     child: Text(
-                      'Waiting for media...',
+                      'No song playing',
                       style: GoogleFonts.inter(
-                        color: Colors.white.withOpacity(0.5),
-                        fontSize: 12,
+                        color: textSecondary,
+                        fontSize: 13,
                       ),
                     ),
-                  ),
-                );
-              }
+                  );
+                }
 
-              return Container(
-                height: 80,
-                padding: const EdgeInsets.symmetric(horizontal: 20),
-                decoration: BoxDecoration(
-                  color: const Color.fromARGB(
-                    0,
-                    0,
-                    187,
-                    212,
-                  ), // Debug: Show area
-                ),
-                child: CompactLineByLineLyrics(
+                return CompactLineByLineLyrics(
                   title: currentMedia.title,
                   artist: currentMedia.artist ?? 'Unknown Artist',
                   videoId: currentMedia.id,
                   duration: currentMedia.duration?.inSeconds ?? 0,
                   accentColor: _albumPalette?.vibrant ?? primaryColor,
-                ),
-              );
-            },
+                );
+              },
+            ),
           ),
+          const SizedBox(height: 16),
         ],
 
         // Progress slider
@@ -2682,7 +2709,10 @@ class _NewPlayerPageState extends ConsumerState<NewPlayerPage>
 
   @override
   void dispose() {
-    isMiniplayerVisible.value = true; // ✅ ADD THIS - was missing!
+    // ✅ Do NOT touch isMiniplayerVisible here — the static open() finally block
+    // owns that lifecycle. Touching it here causes the race condition where
+    // dispose() fires before the second page's initState, briefly showing
+    // the miniplayer and confusing the _isOpen guard.
     _mediaItemDebounceTimer?.cancel();
     _sleepTimer?.cancel();
 

@@ -273,7 +273,7 @@ class _AlbumsGridPageState extends ConsumerState<AlbumsGridPage> {
   }) {
     return GestureDetector(
       onTap: onTap,
-      behavior: HitTestBehavior.opaque, // ✅ Better tap detection
+      behavior: HitTestBehavior.opaque,
       child: SizedBox(
         width: 72,
         child: Column(
@@ -282,7 +282,7 @@ class _AlbumsGridPageState extends ConsumerState<AlbumsGridPage> {
             if (icon != null) ...[
               Icon(
                 icon,
-                size: 28,
+                size: isActive ? 20 : 28, // ✅ Smaller when active
                 color: isActive ? iconActiveColor : iconInactiveColor,
               ),
               const SizedBox(height: 16),
@@ -294,9 +294,7 @@ class _AlbumsGridPageState extends ConsumerState<AlbumsGridPage> {
                 textAlign: TextAlign.center,
                 style: labelStyle.copyWith(
                   fontSize: 16,
-                  fontWeight: isActive
-                      ? FontWeight.w600
-                      : FontWeight.w400, // ✅ Bold when active
+                  fontWeight: isActive ? FontWeight.w600 : FontWeight.w400,
                 ),
               ),
             ),

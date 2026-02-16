@@ -79,6 +79,7 @@ dependencies:
   palette_generator:
   awesome_notifications:
   # wikipedia_search:
+  wave_slider:
   workmanager:
   supabase_flutter:
 
@@ -129,14 +130,17 @@ flutter:
     - assets/animations/pepe_listen.json
     - assets/animations/updating.json
     - assets/animations/cogs.json
-    
+    - assets/animations/banned.json
+
+    # iMAGES
+    - assets/imgs/funny_dawg.jpg
 
     # Logos
     - assets/icons/logo_unamed.png
     - assets/icons/logo_named.png
 
 
-    # App Icons
+    # Icons
     - assets/icons/spotify.png
     - assets/icons/ytmusic.png
 

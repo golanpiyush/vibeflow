@@ -108,6 +108,15 @@ class _HomePageState extends ConsumerState<HomePage>
   List<CommunityPlaylist> communityPlaylists = [];
   bool isLoadingCommunityPlaylists = false;
 
+  static const List<String> _featuredPlaylistIds = [
+    'PLeSOpHVuLnrj3GiP9cYPgbCsDBZviWJab',
+    'PL7op4eJJ-4qhnDYjf3yKWDhvd307jbGK6',
+    'PLJmgVeYWaLwCGsVp-ug3QTVabyIufjxKD',
+    'PLF1dRqxCfd0fYFwNrbe1NSwsuTf7FWskp',
+  ];
+  List<CommunityPlaylist> _featuredPlaylists = [];
+  bool _isLoadingFeaturedPlaylists = false;
+
   @override
   void initState() {
     super.initState();
@@ -144,6 +153,7 @@ class _HomePageState extends ConsumerState<HomePage>
       // Load content in parallel
       await Future.wait([
         _loadQuickPicks(),
+        _loadFeaturedPlaylists(), // ✅ ADD THIS LINE
         _loadAlbums(),
         _loadArtists(),
         _fetchRandomArtists(),
@@ -240,6 +250,40 @@ class _HomePageState extends ConsumerState<HomePage>
       print('Stack: ${stack.toString().split('\n').take(3).join('\n')}');
       if (!mounted) return; // ✅ Check before setState in catch
       setState(() => isLoadingAlbums = false);
+    }
+  }
+
+  Future<void> _loadFeaturedPlaylists() async {
+    if (!mounted) return;
+    setState(() => _isLoadingFeaturedPlaylists = true);
+
+    try {
+      final playlists = <CommunityPlaylist>[];
+
+      // Load each playlist's metadata
+      for (final playlistId in _featuredPlaylistIds) {
+        try {
+          final playlistData = await _scraper.getPlaylistMetadata(playlistId);
+          if (playlistData != null) {
+            playlists.add(playlistData);
+          }
+        } catch (e) {
+          print('⚠️ Error loading playlist $playlistId: $e');
+          // Continue loading other playlists even if one fails
+        }
+      }
+
+      if (!mounted) return;
+      setState(() {
+        _featuredPlaylists = playlists;
+        _isLoadingFeaturedPlaylists = false;
+      });
+
+      print('✅ Loaded ${_featuredPlaylists.length} featured playlists');
+    } catch (e) {
+      print('❌ Error loading featured playlists: $e');
+      if (!mounted) return;
+      setState(() => _isLoadingFeaturedPlaylists = false);
     }
   }
 
@@ -602,14 +646,16 @@ class _HomePageState extends ConsumerState<HomePage>
                                   children: [
                                     _buildQuickPicks(),
                                     const SizedBox(height: 36),
+                                    // _buildFeaturedPlaylists(), // ✅ ADD THIS LINE
+                                    // const SizedBox(height: 36),
                                     _buildAlbums(),
                                     const SizedBox(height: 36),
                                     _buildSimilarArtists(),
                                     const SizedBox(height: 20),
-                                    if (_hasAccessCode) ...[
-                                      const SizedBox(height: 36),
-                                      _buildFeaturedPlaylist(),
-                                    ],
+                                    // if (_hasAccessCode) ...[
+                                    //   const SizedBox(height: 36),
+                                    //   _buildFeaturedPlaylist(),
+                                    // ],
                                     const SizedBox(height: 20),
                                   ],
                                 ),
@@ -1215,6 +1261,265 @@ class _HomePageState extends ConsumerState<HomePage>
                   ),
                 ],
               ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildFeaturedPlaylists() {
+    final textPrimaryColor = ref.watch(themeTextPrimaryColorProvider);
+    final iconActiveColor = ref.watch(themeIconActiveColorProvider);
+    final cardSize = ResponsiveSpacing.albumCardSize(context);
+    final listHeight = cardSize + 90.0; // Slightly taller for playlist info
+    final thumbnailRadius = ref.watch(thumbnailRadiusProvider);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.only(left: 16, right: 16),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                'Playlists You Might Like',
+                style: AppTypography.sectionHeader(context).copyWith(
+                  color: textPrimaryColor,
+                  fontSize: ResponsiveSpacing.sectionHeaderFontSize(context),
+                ),
+              ),
+              if (_isLoadingFeaturedPlaylists)
+                SizedBox(
+                  width: 16,
+                  height: 16,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: iconActiveColor,
+                  ),
+                ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 14),
+
+        if (_isLoadingFeaturedPlaylists)
+          ShimmerLoading(
+            child: SizedBox(
+              height: listHeight,
+              child: ListView.builder(
+                scrollDirection: Axis.horizontal,
+                padding: const EdgeInsets.only(left: 16),
+                itemCount: 4,
+                cacheExtent: 500,
+                addAutomaticKeepAlives: true,
+                addRepaintBoundaries: true,
+                itemBuilder: (context, index) {
+                  return Padding(
+                    padding: const EdgeInsets.only(right: 14),
+                    child: SizedBox(
+                      width: cardSize,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          SkeletonBox(
+                            width: cardSize,
+                            height: cardSize,
+                            borderRadius: cardSize * thumbnailRadius * 0.08,
+                          ),
+                          const SizedBox(height: 10),
+                          SkeletonBox(
+                            width: cardSize,
+                            height: 14,
+                            borderRadius: 4,
+                          ),
+                          const SizedBox(height: 6),
+                          SkeletonBox(
+                            width: cardSize * 0.7,
+                            height: 12,
+                            borderRadius: 4,
+                          ),
+                          const SizedBox(height: 5),
+                          SkeletonBox(width: 60, height: 11, borderRadius: 4),
+                        ],
+                      ),
+                    ),
+                  );
+                },
+              ),
+            ),
+          )
+        else if (_featuredPlaylists.isEmpty)
+          Center(
+            child: Padding(
+              padding: const EdgeInsets.all(32.0),
+              child: Text(
+                'No playlists found',
+                style: AppTypography.subtitle(
+                  context,
+                ).copyWith(color: textPrimaryColor.withOpacity(0.6)),
+              ),
+            ),
+          )
+        else
+          SizedBox(
+            height: listHeight,
+            child: ListView.builder(
+              scrollDirection: Axis.horizontal,
+              padding: const EdgeInsets.only(left: 16),
+              cacheExtent: 500,
+              addAutomaticKeepAlives: true,
+              addRepaintBoundaries: true,
+              itemCount: _featuredPlaylists.length,
+              itemBuilder: (context, index) {
+                return Padding(
+                  padding: const EdgeInsets.only(right: 14),
+                  child: SizedBox(
+                    width: cardSize,
+                    height: listHeight,
+                    child: _buildFeaturedPlaylistCard(
+                      _featuredPlaylists[index],
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
+      ],
+    );
+  }
+
+  Widget _buildFeaturedPlaylistCard(CommunityPlaylist playlist) {
+    final cardSize = ResponsiveSpacing.albumCardSize(context);
+    final cardBackgroundColor = ref.watch(themeCardBackgroundColorProvider);
+    final iconInactiveColor = ref.watch(themeTextSecondaryColorProvider);
+    final textPrimaryColor = ref.watch(themeTextPrimaryColorProvider);
+    final textSecondaryColor = ref.watch(themeTextSecondaryColorProvider);
+    final thumbnailRadius = ref.watch(thumbnailRadiusProvider);
+
+    final double borderRadius = cardSize * thumbnailRadius * 0.08;
+
+    return GestureDetector(
+      onTap: () => _openPlaylistDetails(playlist),
+      child: SizedBox(
+        width: cardSize,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Playlist Cover
+            Stack(
+              children: [
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(borderRadius),
+                  child: Container(
+                    width: cardSize,
+                    height: cardSize,
+                    color: cardBackgroundColor,
+                    child:
+                        playlist.thumbnail != null &&
+                            playlist.thumbnail!.isNotEmpty
+                        ? Image.network(
+                            playlist.thumbnail!,
+                            fit: BoxFit.cover,
+                            cacheWidth: 500,
+                            cacheHeight: 500,
+                            loadingBuilder: (context, child, loadingProgress) {
+                              if (loadingProgress == null) return child;
+                              return ShimmerLoading(
+                                child: SkeletonBox(
+                                  width: cardSize,
+                                  height: cardSize,
+                                  borderRadius: borderRadius,
+                                ),
+                              );
+                            },
+                            errorBuilder: (context, error, stackTrace) =>
+                                Center(
+                                  child: Icon(
+                                    Icons.playlist_play,
+                                    color: iconInactiveColor,
+                                    size: cardSize * 0.3,
+                                  ),
+                                ),
+                          )
+                        : Center(
+                            child: Icon(
+                              Icons.playlist_play,
+                              color: iconInactiveColor,
+                              size: cardSize * 0.3,
+                            ),
+                          ),
+                  ),
+                ),
+                // Playlist indicator overlay
+                Positioned(
+                  bottom: 8,
+                  right: 8,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 6,
+                      vertical: 3,
+                    ),
+                    decoration: BoxDecoration(
+                      color: Colors.black.withOpacity(0.7),
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Icon(
+                          Icons.playlist_play,
+                          color: Colors.white,
+                          size: 12,
+                        ),
+                        const SizedBox(width: 3),
+                        Text(
+                          '${playlist.songCount}',
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 10,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+
+            // Playlist Title
+            Text(
+              playlist.title,
+              style: AppTypography.subtitle(context).copyWith(
+                fontWeight: FontWeight.w600,
+                color: textPrimaryColor,
+                fontSize: 13,
+              ),
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+            ),
+            const SizedBox(height: 4),
+
+            // Creator Name
+            Text(
+              playlist.creator,
+              style: AppTypography.caption(
+                context,
+              ).copyWith(color: textSecondaryColor, fontSize: 12),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+            const SizedBox(height: 3),
+
+            // Song count
+            Text(
+              '${playlist.songCount} songs',
+              style: AppTypography.captionSmall(
+                context,
+              ).copyWith(color: textSecondaryColor.withOpacity(0.7)),
             ),
           ],
         ),
@@ -2915,6 +3220,7 @@ class _HomePageState extends ConsumerState<HomePage>
         ),
         child: Row(
           children: [
+            // 🔥 FIXED: Removed SizedBox, let AspectRatio control the size
             Hero(
               tag: 'thumbnail-${quickPick.videoId}',
               child: ClipRRect(
@@ -2922,34 +3228,23 @@ class _HomePageState extends ConsumerState<HomePage>
                 child: SizedBox(
                   width: artSize,
                   height: artSize,
-                  child: AspectRatio(
-                    aspectRatio: 1,
-                    child: quickPick.thumbnail.isNotEmpty
-                        ? Image.network(
-                            quickPick.thumbnail,
-                            fit: BoxFit.cover,
-                            loadingBuilder: (context, child, loadingProgress) {
-                              if (loadingProgress == null) return child;
-                              return ShimmerLoading(
-                                child: SkeletonBox(
-                                  width: artSize,
-                                  height: artSize,
-                                  borderRadius: 12,
-                                ),
-                              );
-                            },
-                            errorBuilder: (_, __, ___) => Container(
-                              color: cardBackgroundColor,
-                              child: Center(
-                                child: Icon(
-                                  Icons.music_note,
-                                  color: iconInactiveColor,
-                                  size: 20,
-                                ),
+                  child: quickPick.thumbnail.isNotEmpty
+                      ? Image.network(
+                          quickPick.thumbnail,
+                          fit: BoxFit.cover,
+                          loadingBuilder: (context, child, loadingProgress) {
+                            if (loadingProgress == null) return child;
+                            return ShimmerLoading(
+                              child: Container(
+                                width: artSize,
+                                height: artSize,
+                                color: cardBackgroundColor,
                               ),
-                            ),
-                          )
-                        : Container(
+                            );
+                          },
+                          errorBuilder: (_, __, ___) => Container(
+                            width: artSize,
+                            height: artSize,
                             color: cardBackgroundColor,
                             child: Center(
                               child: Icon(
@@ -2959,7 +3254,19 @@ class _HomePageState extends ConsumerState<HomePage>
                               ),
                             ),
                           ),
-                  ),
+                        )
+                      : Container(
+                          width: artSize,
+                          height: artSize,
+                          color: cardBackgroundColor,
+                          child: Center(
+                            child: Icon(
+                              Icons.music_note,
+                              color: iconInactiveColor,
+                              size: 20,
+                            ),
+                          ),
+                        ),
                 ),
               ),
             ),
@@ -2969,27 +3276,24 @@ class _HomePageState extends ConsumerState<HomePage>
                 mainAxisAlignment: MainAxisAlignment.center,
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  // ✅ UPDATE THIS TEXT:
                   Text(
                     quickPick.title,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: AppTypography.songTitle(context).copyWith(
                       fontWeight: FontWeight.w500,
-                      color: textPrimaryColor, // ✅ ADDED
+                      color: textPrimaryColor,
                       fontSize: 15,
                     ),
                   ),
                   const SizedBox(height: 4),
-                  // ✅ UPDATE THIS TEXT:
                   Text(
                     quickPick.artists,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: AppTypography.subtitle(context).copyWith(
-                      color: textSecondaryColor, // ✅ ADDED
-                      fontSize: 13,
-                    ),
+                    style: AppTypography.subtitle(
+                      context,
+                    ).copyWith(color: textSecondaryColor, fontSize: 13),
                   ),
                 ],
               ),

@@ -28,6 +28,9 @@ class _GlobalMiniplayerState extends ConsumerState<GlobalMiniplayer> {
   bool _isExtractingColors = false;
   QuickPick? _lastPlayed;
 
+  // ✅ FIX: Track navigation state to prevent duplicate pushes
+  bool _isNavigating = false;
+
   @override
   void initState() {
     super.initState();
@@ -64,12 +67,50 @@ class _GlobalMiniplayerState extends ConsumerState<GlobalMiniplayer> {
     return '${m.toString().padLeft(2, '0')}:${s.toString().padLeft(2, '0')}';
   }
 
+  // ✅ FIX: Centralized navigation method with full duplicate-push protection
+  Future<void> _openPlayer(QuickPick song) async {
+    // Guard 1: Already navigating from this miniplayer instance
+    if (_isNavigating) {
+      print('⚠️ [Miniplayer] Already navigating, ignoring tap');
+      return;
+    }
+
+    // Guard 2: Player page is already open (isMiniplayerVisible is false
+    // because new_player_page sets it false in initState and true in dispose)
+    if (!isMiniplayerVisible.value) {
+      print(
+        '⚠️ [Miniplayer] Player already open (miniplayer hidden), ignoring tap',
+      );
+      return;
+    }
+
+    // Guard 3: Check the actual navigator stack
+    final nav = rootNavigatorKey.currentState;
+    if (nav == null) return;
+
+    // If we can pop AND the miniplayer is somehow visible, something is off —
+    // trust isMiniplayerVisible as the canonical signal and bail.
+    if (!isMiniplayerVisible.value) return;
+
+    _isNavigating = true;
+    try {
+      await NewPlayerPage.openWithNavigator(
+        nav,
+        song,
+        heroTag: 'global-mini-${song.videoId}',
+      );
+    } finally {
+      if (mounted) {
+        _isNavigating = false;
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final isImmersive = ref.watch(immersiveModeProvider);
     final mediaQuery = MediaQuery.of(context);
     final bottomInset = mediaQuery.padding.bottom;
-    // Pill/button nav has larger bottom inset (> ~20dp on most devices)
     final hasVisibleNavBar = bottomInset > 24;
 
     return StreamBuilder<MediaItem?>(
@@ -100,9 +141,6 @@ class _GlobalMiniplayerState extends ConsumerState<GlobalMiniplayer> {
         final muted = _cachedPalette?.muted ?? const Color(0xFF2A2A2A);
         final vibrant = _cachedPalette?.vibrant ?? dominant;
 
-        // ── Positioning logic ─────────────────────────────────────────────
-        // Immersive + pill nav → cover nav bar (bottom: 0)
-        // Non-immersive → sit above the system nav bar
         final double bottomPosition = isImmersive
             ? 0
             : (hasVisibleNavBar ? bottomInset : bottomInset);
@@ -156,7 +194,6 @@ class _GlobalMiniplayerState extends ConsumerState<GlobalMiniplayer> {
                   )
                 : 0.0;
 
-            // Total height: player bar + extra padding when covering nav bar
             final extraBottom = isImmersive && hasVisibleNavBar
                 ? bottomInset
                 : 0.0;
@@ -165,15 +202,8 @@ class _GlobalMiniplayerState extends ConsumerState<GlobalMiniplayer> {
             return Material(
               color: Colors.transparent,
               child: GestureDetector(
-                onTap: () {
-                  final nav = rootNavigatorKey.currentState;
-                  if (nav == null) return;
-                  NewPlayerPage.openWithNavigator(
-                    nav,
-                    song,
-                    heroTag: 'global-mini-${song.videoId}',
-                  );
-                },
+                // ✅ FIX: Use _openPlayer which has full duplicate-push protection
+                onTap: () => _openPlayer(song),
                 child: Container(
                   height: totalHeight,
                   decoration: BoxDecoration(
@@ -237,7 +267,7 @@ class _GlobalMiniplayerState extends ConsumerState<GlobalMiniplayer> {
                           ),
                         ),
 
-                      // ── Main row — always 70px tall from top ──────────
+                      // ── Main row ──────────────────────────────────────
                       SizedBox(
                         height: kMiniplayerHeight,
                         child: Padding(
@@ -266,7 +296,7 @@ class _GlobalMiniplayerState extends ConsumerState<GlobalMiniplayer> {
 
                               const SizedBox(width: 12),
 
-                              // ── Title + Artist — NO underline ─────────
+                              // Title + Artist
                               Expanded(
                                 child: Column(
                                   mainAxisAlignment: MainAxisAlignment.center,
@@ -278,7 +308,6 @@ class _GlobalMiniplayerState extends ConsumerState<GlobalMiniplayer> {
                                         color: Colors.white,
                                         fontSize: 14,
                                         fontWeight: FontWeight.w600,
-                                        // ✅ Explicitly no decoration
                                         decoration: TextDecoration.none,
                                         decorationColor: Colors.transparent,
                                       ),
@@ -291,7 +320,6 @@ class _GlobalMiniplayerState extends ConsumerState<GlobalMiniplayer> {
                                       style: const TextStyle(
                                         color: Colors.white60,
                                         fontSize: 12,
-                                        // ✅ Explicitly no decoration
                                         decoration: TextDecoration.none,
                                         decorationColor: Colors.transparent,
                                       ),
@@ -302,27 +330,6 @@ class _GlobalMiniplayerState extends ConsumerState<GlobalMiniplayer> {
                                 ),
                               ),
 
-                              // // ── Immersive toggle button ───────────────
-                              // SizedBox(
-                              //   width: 36,
-                              //   height: 36,
-                              //   child: IconButton(
-                              //     padding: EdgeInsets.zero,
-                              //     // ✅ REMOVE tooltip — causes "No Overlay" crash above MaterialApp
-                              //     icon: Icon(
-                              //       isImmersive
-                              //           ? Icons.fullscreen_exit
-                              //           : Icons.fullscreen,
-                              //       color: Colors.white54,
-                              //       size: 20,
-                              //     ),
-                              //     onPressed: () {
-                              //       ref
-                              //           .read(immersiveModeProvider.notifier)
-                              //           .toggle();
-                              //     },
-                              //   ),
-                              // ),
                               // Play / Pause
                               SizedBox(
                                 width: 40,

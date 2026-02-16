@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:math';
 import 'package:http/http.dart' as http;
 import 'package:vibeflow/api_base/albumartistqp_cache.dart';
+import 'package:vibeflow/api_base/community_playlistScaper.dart';
 import 'package:vibeflow/models/album_model.dart';
 import 'package:vibeflow/models/artist_model.dart';
 import 'package:vibeflow/models/audio_model.dart';
@@ -1419,6 +1420,576 @@ class YouTubeMusicScraper {
       return {'artist': artist, 'topSongs': songs};
     } catch (e) {
       print('⚠️ [YTScraper] Parse artist details error: $e');
+      return null;
+    }
+  }
+
+  /// Get playlist metadata without loading all songs (for quick preview)
+  Future<CommunityPlaylist?> getPlaylistMetadata(String playlistId) async {
+    try {
+      print('🎵 [Scraper] Fetching metadata for playlist: $playlistId');
+
+      final uri = Uri.parse('$_baseUrl/browse?key=$_musicApiKey');
+
+      final body = jsonEncode({
+        'context': _buildMusicContext(),
+        'browseId': 'VL$playlistId',
+      });
+
+      final response = await _httpClient
+          .post(uri, headers: _getMusicHeaders(), body: body)
+          .timeout(_timeout);
+
+      if (response.statusCode != 200) {
+        print('❌ Failed to fetch playlist metadata: ${response.statusCode}');
+        return null;
+      }
+
+      final json = jsonDecode(response.body) as Map<String, dynamic>;
+
+      // Extract playlist info
+      String title = 'Unknown Playlist';
+      String creator = 'Unknown';
+      String? thumbnail;
+      int songCount = 0;
+
+      // Try to get header info
+      final header = json['header'];
+      if (header != null) {
+        final musicHeader =
+            header['musicDetailHeaderRenderer'] ??
+            header['musicEditablePlaylistDetailHeaderRenderer'];
+
+        if (musicHeader != null) {
+          // Title
+          final titleRuns = musicHeader['title']?['runs'];
+          if (titleRuns != null && titleRuns.isNotEmpty) {
+            title = titleRuns[0]['text'] ?? title;
+          }
+
+          // Creator
+          final subtitleRuns = musicHeader['subtitle']?['runs'];
+          if (subtitleRuns != null && subtitleRuns.isNotEmpty) {
+            for (final run in subtitleRuns) {
+              final text = run['text'] as String?;
+              if (text != null &&
+                  !text.contains('•') &&
+                  !text.contains('song') &&
+                  text.trim().isNotEmpty) {
+                creator = text.trim();
+                break;
+              }
+            }
+          }
+
+          // Thumbnail
+          final thumbnails =
+              musicHeader['thumbnail']?['croppedSquareThumbnailRenderer']?['thumbnail']?['thumbnails'];
+          if (thumbnails != null && thumbnails.isNotEmpty) {
+            thumbnail = _extractBestThumbnail(thumbnails);
+          }
+
+          // Song count from second subtitle
+          final secondSubtitle = musicHeader['secondSubtitle']?['runs'];
+          if (secondSubtitle != null && secondSubtitle.isNotEmpty) {
+            final countText = secondSubtitle[0]['text'] as String?;
+            if (countText != null) {
+              final match = RegExp(r'(\d+)').firstMatch(countText);
+              if (match != null) {
+                songCount = int.tryParse(match.group(1)!) ?? 0;
+              }
+            }
+          }
+        }
+      }
+
+      print('✅ Playlist metadata: "$title" by $creator ($songCount songs)');
+
+      return CommunityPlaylist(
+        id: playlistId,
+        title: title,
+        creator: creator,
+        thumbnail: thumbnail,
+        songCount: songCount,
+        songs: null, // Metadata only, no songs loaded yet
+      );
+    } catch (e, stackTrace) {
+      print('❌ Error fetching playlist metadata: $e');
+      print('Stack: ${stackTrace.toString().split('\n').take(3).join('\n')}');
+      return null;
+    }
+  }
+
+  /// Get community playlists from home feed
+  Future<List<CommunityPlaylist>> getCommunityPlaylists({
+    int limit = 20,
+  }) async {
+    try {
+      print('🎵 [Scraper] Fetching community playlists...');
+
+      final uri = Uri.parse('$_baseUrl/browse?key=$_musicApiKey');
+
+      final body = jsonEncode({
+        'context': _buildMusicContext(),
+        'browseId': 'FEmusic_home',
+      });
+
+      final response = await _httpClient
+          .post(uri, headers: _getMusicHeaders(), body: body)
+          .timeout(_timeout);
+
+      if (response.statusCode != 200) {
+        throw Exception('Community playlists failed: ${response.statusCode}');
+      }
+
+      final json = jsonDecode(response.body);
+      final playlists = _parseCommunityPlaylists(json, limit);
+
+      print('✅ Found ${playlists.length} community playlists');
+      return playlists;
+    } catch (e) {
+      print('❌ Community playlists error: $e');
+      return [];
+    }
+  }
+
+  List<CommunityPlaylist> _parseCommunityPlaylists(
+    Map<String, dynamic> json,
+    int limit,
+  ) {
+    final playlists = <CommunityPlaylist>[];
+
+    try {
+      final contents =
+          json['contents']?['singleColumnBrowseResultsRenderer']?['tabs']?[0]?['tabRenderer']?['content']?['sectionListRenderer']?['contents']
+              as List?;
+
+      if (contents == null) return playlists;
+
+      for (final section in contents) {
+        final carousel = section['musicCarouselShelfRenderer'];
+        if (carousel != null) {
+          final items = carousel['contents'] as List?;
+          if (items != null) {
+            for (final item in items) {
+              final playlist = _parsePlaylistItem(item);
+              if (playlist != null) {
+                playlists.add(playlist);
+                if (playlists.length >= limit) return playlists;
+              }
+            }
+          }
+        }
+      }
+    } catch (e) {
+      print('⚠️ Parse community playlists error: $e');
+    }
+
+    return playlists;
+  }
+
+  CommunityPlaylist? _parsePlaylistItem(Map<String, dynamic> item) {
+    try {
+      final renderer = item['musicTwoRowItemRenderer'];
+      if (renderer == null) return null;
+
+      // Get playlist ID
+      final playlistId =
+          renderer['navigationEndpoint']?['browseEndpoint']?['browseId']
+              as String?;
+
+      if (playlistId == null || !playlistId.startsWith('VL')) return null;
+
+      // Remove VL prefix
+      final cleanId = playlistId.substring(2);
+
+      // Get title
+      final title =
+          renderer['title']?['runs']?[0]?['text'] as String? ??
+          'Unknown Playlist';
+
+      // Get creator and song count from subtitle
+      String creator = 'Unknown';
+      int songCount = 0;
+
+      final subtitle = renderer['subtitle']?['runs'] as List?;
+      if (subtitle != null && subtitle.isNotEmpty) {
+        for (final run in subtitle) {
+          final text = run['text'] as String?;
+          if (text != null) {
+            if (!text.contains('•') && !text.contains('song')) {
+              creator = text.trim();
+            } else {
+              final match = RegExp(r'(\d+)').firstMatch(text);
+              if (match != null) {
+                songCount = int.tryParse(match.group(1)!) ?? 0;
+              }
+            }
+          }
+        }
+      }
+
+      // Get thumbnail
+      String? thumbnail;
+      final thumbnails =
+          renderer['thumbnailRenderer']?['musicThumbnailRenderer']?['thumbnail']?['thumbnails']
+              as List?;
+      if (thumbnails != null && thumbnails.isNotEmpty) {
+        thumbnail = _extractBestThumbnail(thumbnails);
+      }
+
+      return CommunityPlaylist(
+        id: cleanId,
+        title: title,
+        creator: creator,
+        thumbnail: thumbnail,
+        songCount: songCount,
+        songs: null,
+      );
+    } catch (e) {
+      print('⚠️ Parse playlist item error: $e');
+      return null;
+    }
+  }
+
+  /// Search for playlists
+  Future<List<CommunityPlaylist>> searchPlaylists(
+    String query, {
+    int limit = 20,
+  }) async {
+    try {
+      print('🔍 [Scraper] Searching playlists: "$query"');
+
+      final uri = Uri.parse('$_baseUrl/search?key=$_musicApiKey');
+
+      final body = jsonEncode({
+        'context': _buildMusicContext(),
+        'query': query,
+        'params': 'EgWKAQIoAWoKEAMQBBAJEAoQBQ%3D%3D', // Playlist filter
+      });
+
+      final response = await _httpClient
+          .post(uri, headers: _getMusicHeaders(), body: body)
+          .timeout(_timeout);
+
+      if (response.statusCode != 200) {
+        throw Exception('Playlist search failed: ${response.statusCode}');
+      }
+
+      final json = jsonDecode(response.body);
+      final playlists = _parsePlaylistSearchResults(json, limit);
+
+      print('✅ Found ${playlists.length} playlists');
+      return playlists;
+    } catch (e) {
+      print('❌ Playlist search error: $e');
+      return [];
+    }
+  }
+
+  List<CommunityPlaylist> _parsePlaylistSearchResults(
+    Map<String, dynamic> json,
+    int limit,
+  ) {
+    final playlists = <CommunityPlaylist>[];
+
+    try {
+      final tabs =
+          json['contents']?['tabbedSearchResultsRenderer']?['tabs'] as List?;
+      if (tabs == null) return playlists;
+
+      for (final tab in tabs) {
+        final contents =
+            tab['tabRenderer']?['content']?['sectionListRenderer']?['contents']
+                as List?;
+        if (contents == null) continue;
+
+        for (final section in contents) {
+          final musicShelf = section['musicShelfRenderer'];
+          if (musicShelf != null) {
+            final items = musicShelf['contents'] as List?;
+            if (items != null) {
+              for (final item in items) {
+                final playlist = _parsePlaylistSearchItem(item);
+                if (playlist != null) {
+                  playlists.add(playlist);
+                  if (playlists.length >= limit) return playlists;
+                }
+              }
+            }
+          }
+        }
+      }
+    } catch (e) {
+      print('⚠️ Parse playlist search error: $e');
+    }
+
+    return playlists;
+  }
+
+  CommunityPlaylist? _parsePlaylistSearchItem(Map<String, dynamic> item) {
+    try {
+      final renderer = item['musicResponsiveListItemRenderer'];
+      if (renderer == null) return null;
+
+      // Get playlist ID
+      final playlistId =
+          renderer['navigationEndpoint']?['browseEndpoint']?['browseId']
+              as String?;
+
+      if (playlistId == null || !playlistId.startsWith('VL')) return null;
+
+      final cleanId = playlistId.substring(2);
+
+      // Get title
+      final flexColumns = renderer['flexColumns'] as List?;
+      if (flexColumns == null || flexColumns.isEmpty) return null;
+
+      final title =
+          flexColumns[0]['musicResponsiveListItemFlexColumnRenderer']?['text']?['runs']?[0]?['text']
+              as String? ??
+          'Unknown Playlist';
+
+      // Get creator and song count
+      String creator = 'Unknown';
+      int songCount = 0;
+
+      if (flexColumns.length > 1) {
+        final runs =
+            flexColumns[1]['musicResponsiveListItemFlexColumnRenderer']?['text']?['runs']
+                as List?;
+        if (runs != null) {
+          for (final run in runs) {
+            final text = run['text'] as String?;
+            if (text != null) {
+              if (!text.contains('•') && !text.contains('song')) {
+                creator = text.trim();
+              } else {
+                final match = RegExp(r'(\d+)').firstMatch(text);
+                if (match != null) {
+                  songCount = int.tryParse(match.group(1)!) ?? 0;
+                }
+              }
+            }
+          }
+        }
+      }
+
+      // Get thumbnail
+      String? thumbnail;
+      final thumbnails =
+          renderer['thumbnail']?['musicThumbnailRenderer']?['thumbnail']?['thumbnails']
+              as List?;
+      if (thumbnails != null && thumbnails.isNotEmpty) {
+        thumbnail = _extractBestThumbnail(thumbnails);
+      }
+
+      return CommunityPlaylist(
+        id: cleanId,
+        title: title,
+        creator: creator,
+        thumbnail: thumbnail,
+        songCount: songCount,
+        songs: null,
+      );
+    } catch (e) {
+      print('⚠️ Parse playlist search item error: $e');
+      return null;
+    }
+  }
+
+  /// Stream playlist songs for progressive loading
+  Stream<Song> streamPlaylistSongs(String playlistId) async* {
+    String? continuationToken;
+    int pageCount = 0;
+
+    try {
+      do {
+        pageCount++;
+        print('📄 [Scraper] Fetching playlist page $pageCount...');
+
+        final response = await _fetchPlaylistPage(
+          playlistId,
+          continuationToken,
+        );
+
+        if (response == null) break;
+
+        final pageSongs = _parsePlaylistSongs(response);
+
+        for (final song in pageSongs) {
+          yield song;
+        }
+
+        continuationToken = response['continuationToken'];
+
+        if (pageCount >= 20) break; // Safety limit
+      } while (continuationToken != null);
+    } catch (e) {
+      print('❌ Stream playlist songs error: $e');
+    }
+  }
+
+  Future<Map<String, dynamic>?> _fetchPlaylistPage(
+    String playlistId,
+    String? continuationToken,
+  ) async {
+    try {
+      final uri = Uri.parse('$_baseUrl/browse?key=$_musicApiKey');
+
+      Map<String, dynamic> body;
+
+      if (continuationToken == null) {
+        body = {'context': _buildMusicContext(), 'browseId': 'VL$playlistId'};
+      } else {
+        body = {
+          'context': _buildMusicContext(),
+          'continuation': continuationToken,
+        };
+      }
+
+      final response = await _httpClient
+          .post(uri, headers: _getMusicHeaders(), body: jsonEncode(body))
+          .timeout(_timeout);
+
+      if (response.statusCode != 200) {
+        print('⚠️ Playlist page failed: ${response.statusCode}');
+        return null;
+      }
+
+      final json = jsonDecode(response.body);
+      return _extractPlaylistContents(json);
+    } catch (e) {
+      print('⚠️ Fetch playlist page error: $e');
+      return null;
+    }
+  }
+
+  Map<String, dynamic>? _extractPlaylistContents(Map<String, dynamic> json) {
+    try {
+      // Handle continuation response
+      if (json.containsKey('continuationContents')) {
+        final continuation =
+            json['continuationContents']['musicPlaylistShelfContinuation'];
+        if (continuation != null) {
+          final items = continuation['contents'] as List?;
+          final nextToken =
+              continuation['continuations']?[0]?['nextContinuationData']?['continuation'];
+          return {'items': items ?? [], 'continuationToken': nextToken};
+        }
+      }
+
+      // Handle initial response
+      final contents =
+          json['contents']?['singleColumnBrowseResultsRenderer']?['tabs']?[0]?['tabRenderer']?['content']?['sectionListRenderer']?['contents']
+              as List?;
+
+      if (contents == null) return null;
+
+      for (final section in contents) {
+        final shelf =
+            section['musicPlaylistShelfRenderer'] ??
+            section['musicShelfRenderer'];
+
+        if (shelf != null) {
+          final items = shelf['contents'] as List?;
+          final nextToken =
+              shelf['continuations']?[0]?['nextContinuationData']?['continuation'];
+
+          if (items != null && items.isNotEmpty) {
+            return {'items': items, 'continuationToken': nextToken};
+          }
+        }
+      }
+
+      return null;
+    } catch (e) {
+      print('⚠️ Extract playlist contents error: $e');
+      return null;
+    }
+  }
+
+  List<Song> _parsePlaylistSongs(Map<String, dynamic> page) {
+    final songs = <Song>[];
+    final items = page['items'] as List? ?? [];
+
+    for (final item in items) {
+      final song = _parsePlaylistSongItem(item);
+      if (song != null) {
+        songs.add(song);
+      }
+    }
+
+    return songs;
+  }
+
+  Song? _parsePlaylistSongItem(Map<String, dynamic> item) {
+    try {
+      final renderer = item['musicResponsiveListItemRenderer'];
+      if (renderer == null) return null;
+
+      // Get video ID
+      String? videoId = renderer['playlistItemData']?['videoId'] as String?;
+
+      if (videoId == null) {
+        videoId =
+            renderer['overlay']?['musicItemThumbnailOverlayRenderer']?['content']?['musicPlayButtonRenderer']?['playNavigationEndpoint']?['watchEndpoint']?['videoId']
+                as String?;
+      }
+
+      if (videoId == null) return null;
+
+      // Get title and artist
+      final flexColumns = renderer['flexColumns'] as List?;
+      if (flexColumns == null || flexColumns.isEmpty) return null;
+
+      final title =
+          flexColumns[0]['musicResponsiveListItemFlexColumnRenderer']?['text']?['runs']?[0]?['text']
+              as String? ??
+          'Unknown';
+
+      List<String> artists = ['Unknown Artist'];
+      if (flexColumns.length > 1) {
+        final artistText =
+            flexColumns[1]['musicResponsiveListItemFlexColumnRenderer']?['text']?['runs']?[0]?['text']
+                as String?;
+        if (artistText != null && artistText.isNotEmpty) {
+          artists = [artistText];
+        }
+      }
+
+      // Get thumbnail
+      String thumbnail = '';
+      final thumbnails =
+          renderer['thumbnail']?['musicThumbnailRenderer']?['thumbnail']?['thumbnails']
+              as List?;
+      if (thumbnails != null && thumbnails.isNotEmpty) {
+        thumbnail = _extractBestThumbnail(thumbnails);
+      }
+
+      if (thumbnail.isEmpty) {
+        thumbnail = 'https://i.ytimg.com/vi/$videoId/maxresdefault.jpg';
+      }
+
+      // Get duration
+      String? duration;
+      final lengthText =
+          renderer['fixedColumns']?[0]?['musicResponsiveListItemFixedColumnRenderer']?['text']?['runs']?[0]?['text']
+              as String?;
+      if (lengthText != null) {
+        duration = lengthText;
+      }
+
+      return Song(
+        videoId: videoId,
+        title: title,
+        artists: artists,
+        thumbnail: thumbnail,
+        duration: duration,
+        audioUrl: null,
+      );
+    } catch (e) {
+      print('⚠️ Parse playlist song error: $e');
       return null;
     }
   }

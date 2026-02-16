@@ -6,6 +6,7 @@ import 'package:vibeflow/constants/app_typography.dart';
 import 'package:vibeflow/constants/theme_colors.dart';
 import 'package:vibeflow/managers/vibeflow_engine_logger.dart';
 import 'package:vibeflow/models/engine_logs.dart';
+import 'package:vibeflow/pages/subpages/engine_rate_limit_provider.dart';
 import 'package:vibeflow/utils/theme_provider.dart';
 
 class EngineStatusScreen extends ConsumerStatefulWidget {
@@ -22,6 +23,8 @@ class _EngineStatusScreenState extends ConsumerState<EngineStatusScreen>
   String _selectedCategory = 'ALL';
   bool _autoScroll = true;
   final ScrollController _logScrollController = ScrollController();
+  List<DateTime> _engineActionTimestamps = [];
+  DateTime? _blockUntil;
 
   @override
   void initState() {
@@ -56,63 +59,79 @@ class _EngineStatusScreenState extends ConsumerState<EngineStatusScreen>
 
   @override
   Widget build(BuildContext context) {
-    final backgroundColor = ref.watch(themeBackgroundColorProvider);
-    final textPrimaryColor = ref.watch(themeTextPrimaryColorProvider);
-    final textSecondaryColor = ref.watch(themeTextSecondaryColorProvider);
-    final cardBackgroundColor = ref.watch(themeCardBackgroundColorProvider);
-    final iconActiveColor = ref.watch(themeIconActiveColorProvider);
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final textTheme = theme.textTheme;
 
     return Scaffold(
-      backgroundColor: backgroundColor,
+      backgroundColor: theme.scaffoldBackgroundColor,
       appBar: AppBar(
-        backgroundColor: cardBackgroundColor,
+        backgroundColor: colorScheme.surface,
         elevation: 0,
         leading: IconButton(
-          icon: Icon(Icons.arrow_back, color: textPrimaryColor),
+          icon: Icon(
+            Icons.arrow_back,
+            color: ref.watch(themeTextPrimaryColorProvider),
+          ),
           onPressed: () => Navigator.pop(context),
         ),
-        title: Row(
-          children: [
-            Icon(
-              Icons.settings_input_component,
-              color: _logger.isEngineInitialized ? Colors.green : Colors.grey,
-              size: 24,
-            ),
-            const SizedBox(width: 12),
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+        title: ListenableBuilder(
+          listenable: _logger,
+          builder: (context, _) {
+            final isRunning = _logger.isEngineInitialized;
+            return Row(
               children: [
-                Text(
-                  'Engine Status',
-                  style: AppTypography.pageTitle(
-                    context,
-                  ).copyWith(color: textPrimaryColor, fontSize: 18),
-                ),
-                Text(
-                  _logger.isEngineInitialized ? 'Running' : 'Offline',
-                  style: TextStyle(
-                    color: _logger.isEngineInitialized
-                        ? Colors.green
-                        : textSecondaryColor,
-                    fontSize: 12,
+                AnimatedSwitcher(
+                  duration: const Duration(milliseconds: 400),
+                  child: Icon(
+                    isRunning
+                        ? Icons.settings_input_component
+                        : Icons.power_settings_new,
+                    key: ValueKey(isRunning),
+                    color: isRunning ? Colors.green : Colors.red,
+                    size: 24,
                   ),
                 ),
+                const SizedBox(width: 12),
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Engine Status',
+                      style: textTheme.titleMedium?.copyWith(
+                        fontWeight: FontWeight.bold,
+                        color: ref.watch(themeTextPrimaryColorProvider),
+                      ),
+                    ),
+                    AnimatedSwitcher(
+                      duration: const Duration(milliseconds: 300),
+                      child: Text(
+                        isRunning ? 'Running' : 'Offline',
+                        key: ValueKey(isRunning),
+                        style: textTheme.bodySmall?.copyWith(
+                          color: isRunning ? Colors.green : Colors.red,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
               ],
-            ),
-          ],
+            );
+          },
         ),
         actions: [
           IconButton(
-            icon: Icon(Icons.refresh, color: iconActiveColor),
+            icon: Icon(Icons.refresh, color: colorScheme.primary),
             onPressed: () => setState(() {}),
             tooltip: 'Refresh',
           ),
         ],
         bottom: TabBar(
           controller: _tabController,
-          labelColor: iconActiveColor,
-          unselectedLabelColor: textSecondaryColor,
-          indicatorColor: iconActiveColor,
+          labelColor: colorScheme.primary,
+          unselectedLabelColor: ref.watch(themeTextSecondaryColorProvider),
+          indicatorColor: colorScheme.primary,
           tabs: const [
             Tab(text: 'Overview'),
             Tab(text: 'Logs'),
@@ -127,12 +146,10 @@ class _EngineStatusScreenState extends ConsumerState<EngineStatusScreen>
     );
   }
 
-  // OVERVIEW TAB
   Widget _buildOverviewTab() {
-    final textPrimaryColor = ref.watch(themeTextPrimaryColorProvider);
-    final textSecondaryColor = ref.watch(themeTextSecondaryColorProvider);
-    final cardBackgroundColor = ref.watch(themeCardBackgroundColorProvider);
-    final iconActiveColor = ref.watch(themeIconActiveColorProvider);
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final textTheme = theme.textTheme;
 
     return ListenableBuilder(
       listenable: _logger,
@@ -166,7 +183,7 @@ class _EngineStatusScreenState extends ConsumerState<EngineStatusScreen>
                     _buildInfoRow(
                       'Initialized At',
                       _formatDateTime(_logger.initializationTime!),
-                      textSecondaryColor,
+                      ref.watch(themeTextSecondaryColorProvider),
                     ),
                   ],
                   if (uptime != null) ...[
@@ -174,12 +191,15 @@ class _EngineStatusScreenState extends ConsumerState<EngineStatusScreen>
                     _buildInfoRow(
                       'Uptime',
                       _formatDuration(uptime),
-                      textSecondaryColor,
+                      ref.watch(themeTextSecondaryColorProvider),
                     ),
                   ],
                 ],
               ),
+              const SizedBox(height: AppSpacing.lg),
 
+              // ADD as first item in the Column children list in _buildOverviewTab:
+              _buildEngineControls(),
               const SizedBox(height: AppSpacing.lg),
 
               // Active Operations Card
@@ -187,17 +207,16 @@ class _EngineStatusScreenState extends ConsumerState<EngineStatusScreen>
                 title: 'Active Operations',
                 icon: Icons.sync,
                 iconColor: _logger.activeOperations.isEmpty
-                    ? textSecondaryColor
-                    : iconActiveColor,
+                    ? colorScheme.onSurface.withOpacity(0.6)
+                    : colorScheme.primary,
                 children: [
                   if (_logger.activeOperations.isEmpty)
                     Padding(
                       padding: const EdgeInsets.symmetric(vertical: 8),
                       child: Text(
                         'No active operations',
-                        style: TextStyle(
-                          color: textSecondaryColor,
-                          fontSize: 14,
+                        style: textTheme.bodyMedium?.copyWith(
+                          color: ref.watch(themeTextSecondaryColorProvider),
                         ),
                       ),
                     )
@@ -212,9 +231,10 @@ class _EngineStatusScreenState extends ConsumerState<EngineStatusScreen>
                             Expanded(
                               child: Text(
                                 op,
-                                style: TextStyle(
-                                  color: textPrimaryColor,
-                                  fontSize: 13,
+                                style: textTheme.bodyMedium?.copyWith(
+                                  color: ref.watch(
+                                    themeTextPrimaryColorProvider,
+                                  ),
                                 ),
                                 overflow: TextOverflow.ellipsis,
                               ),
@@ -222,9 +242,10 @@ class _EngineStatusScreenState extends ConsumerState<EngineStatusScreen>
                             if (duration != null)
                               Text(
                                 '${duration.inSeconds}s',
-                                style: TextStyle(
-                                  color: textSecondaryColor,
-                                  fontSize: 12,
+                                style: textTheme.bodySmall?.copyWith(
+                                  color: ref.watch(
+                                    themeTextSecondaryColorProvider,
+                                  ),
                                 ),
                               ),
                           ],
@@ -240,7 +261,7 @@ class _EngineStatusScreenState extends ConsumerState<EngineStatusScreen>
               _buildInfoCard(
                 title: 'Quick Stats',
                 icon: Icons.analytics,
-                iconColor: iconActiveColor,
+                iconColor: colorScheme.primary,
                 children: [
                   Row(
                     children: [
@@ -249,8 +270,6 @@ class _EngineStatusScreenState extends ConsumerState<EngineStatusScreen>
                           'Total Fetches',
                           _logger.totalFetches.toString(),
                           Icons.download,
-                          textPrimaryColor,
-                          textSecondaryColor,
                         ),
                       ),
                       Expanded(
@@ -258,8 +277,6 @@ class _EngineStatusScreenState extends ConsumerState<EngineStatusScreen>
                           'Cache Hits',
                           _logger.cacheHits.toString(),
                           Icons.bolt,
-                          textPrimaryColor,
-                          textSecondaryColor,
                         ),
                       ),
                     ],
@@ -272,8 +289,6 @@ class _EngineStatusScreenState extends ConsumerState<EngineStatusScreen>
                           'Success Rate',
                           '${_logger.successRate.toStringAsFixed(1)}%',
                           Icons.check_circle,
-                          textPrimaryColor,
-                          textSecondaryColor,
                         ),
                       ),
                       Expanded(
@@ -281,8 +296,6 @@ class _EngineStatusScreenState extends ConsumerState<EngineStatusScreen>
                           'Enrichments',
                           _logger.totalEnrichments.toString(),
                           Icons.auto_awesome,
-                          textPrimaryColor,
-                          textSecondaryColor,
                         ),
                       ),
                     ],
@@ -296,16 +309,15 @@ class _EngineStatusScreenState extends ConsumerState<EngineStatusScreen>
               _buildInfoCard(
                 title: 'Recent Activity',
                 icon: Icons.history,
-                iconColor: iconActiveColor,
+                iconColor: colorScheme.primary,
                 children: [
                   if (_logger.logs.isEmpty)
                     Padding(
                       padding: const EdgeInsets.symmetric(vertical: 8),
                       child: Text(
                         'No recent activity',
-                        style: TextStyle(
-                          color: textSecondaryColor,
-                          fontSize: 14,
+                        style: textTheme.bodyMedium?.copyWith(
+                          color: ref.watch(themeTextPrimaryColorProvider),
                         ),
                       ),
                     )
@@ -328,16 +340,19 @@ class _EngineStatusScreenState extends ConsumerState<EngineStatusScreen>
                                 children: [
                                   Text(
                                     log.message,
-                                    style: TextStyle(
-                                      color: textPrimaryColor,
-                                      fontSize: 12,
+                                    style: textTheme.bodySmall?.copyWith(
+                                      color: ref.watch(
+                                        themeTextPrimaryColorProvider,
+                                      ),
                                     ),
                                   ),
                                   Text(
                                     log.formattedTime,
-                                    style: TextStyle(
-                                      color: textSecondaryColor,
+                                    style: textTheme.bodySmall?.copyWith(
                                       fontSize: 10,
+                                      color: ref.watch(
+                                        themeTextSecondaryColorProvider,
+                                      ),
                                     ),
                                   ),
                                 ],
@@ -358,10 +373,9 @@ class _EngineStatusScreenState extends ConsumerState<EngineStatusScreen>
 
   // LOGS TAB
   Widget _buildLogsTab() {
-    final textPrimaryColor = ref.watch(themeTextPrimaryColorProvider);
-    final textSecondaryColor = ref.watch(themeTextSecondaryColorProvider);
-    final cardBackgroundColor = ref.watch(themeCardBackgroundColorProvider);
-    final iconActiveColor = ref.watch(themeIconActiveColorProvider);
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final textTheme = theme.textTheme;
 
     return ListenableBuilder(
       listenable: _logger,
@@ -375,7 +389,7 @@ class _EngineStatusScreenState extends ConsumerState<EngineStatusScreen>
             // Filter and Controls
             Container(
               padding: const EdgeInsets.all(AppSpacing.md),
-              color: cardBackgroundColor,
+              color: colorScheme.surface,
               child: Column(
                 children: [
                   // Category Filter
@@ -383,47 +397,17 @@ class _EngineStatusScreenState extends ConsumerState<EngineStatusScreen>
                     scrollDirection: Axis.horizontal,
                     child: Row(
                       children: [
-                        _buildCategoryChip(
-                          'ALL',
-                          textPrimaryColor,
-                          textSecondaryColor,
-                          iconActiveColor,
-                        ),
+                        _buildCategoryChip('ALL'),
                         const SizedBox(width: 8),
-                        _buildCategoryChip(
-                          'INIT',
-                          textPrimaryColor,
-                          textSecondaryColor,
-                          iconActiveColor,
-                        ),
+                        _buildCategoryChip('INIT'),
                         const SizedBox(width: 8),
-                        _buildCategoryChip(
-                          'FETCH',
-                          textPrimaryColor,
-                          textSecondaryColor,
-                          iconActiveColor,
-                        ),
+                        _buildCategoryChip('FETCH'),
                         const SizedBox(width: 8),
-                        _buildCategoryChip(
-                          'CACHE',
-                          textPrimaryColor,
-                          textSecondaryColor,
-                          iconActiveColor,
-                        ),
+                        _buildCategoryChip('CACHE'),
                         const SizedBox(width: 8),
-                        _buildCategoryChip(
-                          'ENRICH',
-                          textPrimaryColor,
-                          textSecondaryColor,
-                          iconActiveColor,
-                        ),
+                        _buildCategoryChip('ENRICH'),
                         const SizedBox(width: 8),
-                        _buildCategoryChip(
-                          'BATCH',
-                          textPrimaryColor,
-                          textSecondaryColor,
-                          iconActiveColor,
-                        ),
+                        _buildCategoryChip('BATCH'),
                       ],
                     ),
                   ),
@@ -441,14 +425,13 @@ class _EngineStatusScreenState extends ConsumerState<EngineStatusScreen>
                               size: 18,
                               color: _autoScroll
                                   ? Colors.green
-                                  : textSecondaryColor,
+                                  : ref.watch(themeTextSecondaryColorProvider),
                             ),
                             const SizedBox(width: 4),
                             Text(
                               'Auto-scroll',
-                              style: TextStyle(
-                                color: textSecondaryColor,
-                                fontSize: 12,
+                              style: textTheme.bodySmall?.copyWith(
+                                color: ref.watch(themeTextPrimaryColorProvider),
                               ),
                             ),
                           ],
@@ -458,11 +441,11 @@ class _EngineStatusScreenState extends ConsumerState<EngineStatusScreen>
                       // Log count
                       Text(
                         '${filteredLogs.length} logs',
-                        style: TextStyle(
-                          color: textSecondaryColor,
-                          fontSize: 12,
+                        style: textTheme.bodySmall?.copyWith(
+                          color: ref.watch(themeTextPrimaryColorProvider),
                         ),
                       ),
+
                       const SizedBox(width: 16),
                       // Clear button
                       TextButton.icon(
@@ -470,9 +453,22 @@ class _EngineStatusScreenState extends ConsumerState<EngineStatusScreen>
                           showDialog(
                             context: context,
                             builder: (context) => AlertDialog(
-                              title: const Text('Clear Logs?'),
-                              content: const Text(
+                              backgroundColor: colorScheme.surface,
+                              title: Text(
+                                'Clear Logs?',
+                                style: textTheme.titleLarge?.copyWith(
+                                  color: ref.watch(
+                                    themeTextPrimaryColorProvider,
+                                  ),
+                                ),
+                              ),
+                              content: Text(
                                 'This will clear all log entries. This action cannot be undone.',
+                                style: textTheme.bodyMedium?.copyWith(
+                                  color: ref.watch(
+                                    themeTextSecondaryColorProvider,
+                                  ),
+                                ),
                               ),
                               actions: [
                                 TextButton(
@@ -490,14 +486,16 @@ class _EngineStatusScreenState extends ConsumerState<EngineStatusScreen>
                             ),
                           );
                         },
-                        icon: Icon(
+                        icon: const Icon(
                           Icons.delete_outline,
                           size: 16,
                           color: Colors.red,
                         ),
                         label: Text(
                           'Clear',
-                          style: TextStyle(color: Colors.red, fontSize: 12),
+                          style: textTheme.bodySmall?.copyWith(
+                            color: Colors.red,
+                          ),
                         ),
                       ),
                     ],
@@ -516,12 +514,14 @@ class _EngineStatusScreenState extends ConsumerState<EngineStatusScreen>
                           Icon(
                             Icons.article_outlined,
                             size: 48,
-                            color: textSecondaryColor.withOpacity(0.5),
+                            color: ref.watch(themeTextSecondaryColorProvider),
                           ),
                           const SizedBox(height: 16),
                           Text(
                             'No logs available',
-                            style: TextStyle(color: textSecondaryColor),
+                            style: textTheme.bodyMedium?.copyWith(
+                              color: ref.watch(themeTextSecondaryColorProvider),
+                            ),
                           ),
                         ],
                       ),
@@ -536,6 +536,7 @@ class _EngineStatusScreenState extends ConsumerState<EngineStatusScreen>
                       },
                     ),
             ),
+            const SizedBox(height: AppSpacing.fourxxxl),
           ],
         );
       },
@@ -544,10 +545,9 @@ class _EngineStatusScreenState extends ConsumerState<EngineStatusScreen>
 
   // STATS TAB
   Widget _buildStatsTab() {
-    final textPrimaryColor = ref.watch(themeTextPrimaryColorProvider);
-    final textSecondaryColor = ref.watch(themeTextSecondaryColorProvider);
-    final cardBackgroundColor = ref.watch(themeCardBackgroundColorProvider);
-    final iconActiveColor = ref.watch(themeIconActiveColorProvider);
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final textTheme = theme.textTheme;
 
     return ListenableBuilder(
       listenable: _logger,
@@ -561,15 +561,13 @@ class _EngineStatusScreenState extends ConsumerState<EngineStatusScreen>
               _buildInfoCard(
                 title: 'Fetch Statistics',
                 icon: Icons.download,
-                iconColor: iconActiveColor,
+                iconColor: colorScheme.primary,
                 children: [
                   _buildStatBar(
                     'Successful',
                     _logger.successfulFetches,
                     _logger.totalFetches,
                     Colors.green,
-                    textPrimaryColor,
-                    textSecondaryColor,
                   ),
                   const SizedBox(height: 12),
                   _buildStatBar(
@@ -577,8 +575,6 @@ class _EngineStatusScreenState extends ConsumerState<EngineStatusScreen>
                     _logger.failedFetches,
                     _logger.totalFetches,
                     Colors.red,
-                    textPrimaryColor,
-                    textSecondaryColor,
                   ),
                   const SizedBox(height: 16),
                   Row(
@@ -588,17 +584,15 @@ class _EngineStatusScreenState extends ConsumerState<EngineStatusScreen>
                         children: [
                           Text(
                             '${_logger.successRate.toStringAsFixed(1)}%',
-                            style: TextStyle(
+                            style: textTheme.headlineMedium?.copyWith(
                               color: Colors.green,
-                              fontSize: 24,
                               fontWeight: FontWeight.bold,
                             ),
                           ),
                           Text(
                             'Success Rate',
-                            style: TextStyle(
-                              color: textSecondaryColor,
-                              fontSize: 12,
+                            style: textTheme.bodySmall?.copyWith(
+                              color: ref.watch(themeTextSecondaryColorProvider),
                             ),
                           ),
                         ],
@@ -607,17 +601,15 @@ class _EngineStatusScreenState extends ConsumerState<EngineStatusScreen>
                         children: [
                           Text(
                             _logger.totalFetches.toString(),
-                            style: TextStyle(
-                              color: textPrimaryColor,
-                              fontSize: 24,
+                            style: textTheme.headlineMedium?.copyWith(
                               fontWeight: FontWeight.bold,
+                              color: ref.watch(themeTextPrimaryColorProvider),
                             ),
                           ),
                           Text(
                             'Total Fetches',
-                            style: TextStyle(
-                              color: textSecondaryColor,
-                              fontSize: 12,
+                            style: textTheme.bodySmall?.copyWith(
+                              color: ref.watch(themeTextSecondaryColorProvider),
                             ),
                           ),
                         ],
@@ -633,15 +625,13 @@ class _EngineStatusScreenState extends ConsumerState<EngineStatusScreen>
               _buildInfoCard(
                 title: 'Cache Statistics',
                 icon: Icons.storage,
-                iconColor: iconActiveColor,
+                iconColor: colorScheme.primary,
                 children: [
                   _buildStatBar(
                     'Cache Hits',
                     _logger.cacheHits,
                     _logger.cacheHits + _logger.cacheMisses,
                     Colors.blue,
-                    textPrimaryColor,
-                    textSecondaryColor,
                   ),
                   const SizedBox(height: 12),
                   _buildStatBar(
@@ -649,8 +639,6 @@ class _EngineStatusScreenState extends ConsumerState<EngineStatusScreen>
                     _logger.cacheMisses,
                     _logger.cacheHits + _logger.cacheMisses,
                     Colors.orange,
-                    textPrimaryColor,
-                    textSecondaryColor,
                   ),
                   const SizedBox(height: 16),
                   Row(
@@ -660,17 +648,15 @@ class _EngineStatusScreenState extends ConsumerState<EngineStatusScreen>
                         children: [
                           Text(
                             '${_logger.cacheHitRate.toStringAsFixed(1)}%',
-                            style: TextStyle(
+                            style: textTheme.headlineMedium?.copyWith(
                               color: Colors.blue,
-                              fontSize: 24,
                               fontWeight: FontWeight.bold,
                             ),
                           ),
                           Text(
                             'Hit Rate',
-                            style: TextStyle(
-                              color: textSecondaryColor,
-                              fontSize: 12,
+                            style: textTheme.bodySmall?.copyWith(
+                              color: ref.watch(themeTextSecondaryColorProvider),
                             ),
                           ),
                         ],
@@ -679,17 +665,15 @@ class _EngineStatusScreenState extends ConsumerState<EngineStatusScreen>
                         children: [
                           Text(
                             '${_logger.cacheHits + _logger.cacheMisses}',
-                            style: TextStyle(
-                              color: textPrimaryColor,
-                              fontSize: 24,
+                            style: textTheme.headlineMedium?.copyWith(
                               fontWeight: FontWeight.bold,
+                              color: ref.watch(themeTextPrimaryColorProvider),
                             ),
                           ),
                           Text(
                             'Total Requests',
-                            style: TextStyle(
-                              color: textSecondaryColor,
-                              fontSize: 12,
+                            style: textTheme.bodySmall?.copyWith(
+                              color: ref.watch(themeTextSecondaryColorProvider),
                             ),
                           ),
                         ],
@@ -705,24 +689,22 @@ class _EngineStatusScreenState extends ConsumerState<EngineStatusScreen>
               _buildInfoCard(
                 title: 'Enrichment Statistics',
                 icon: Icons.auto_awesome,
-                iconColor: iconActiveColor,
+                iconColor: colorScheme.primary,
                 children: [
                   Center(
                     child: Column(
                       children: [
                         Text(
                           _logger.totalEnrichments.toString(),
-                          style: TextStyle(
-                            color: iconActiveColor,
-                            fontSize: 48,
+                          style: textTheme.displaySmall?.copyWith(
+                            color: colorScheme.primary,
                             fontWeight: FontWeight.bold,
                           ),
                         ),
                         Text(
                           'Total Enrichments',
-                          style: TextStyle(
-                            color: textSecondaryColor,
-                            fontSize: 14,
+                          style: textTheme.bodyMedium?.copyWith(
+                            color: ref.watch(themeTextSecondaryColorProvider),
                           ),
                         ),
                       ],
@@ -740,9 +722,18 @@ class _EngineStatusScreenState extends ConsumerState<EngineStatusScreen>
                     showDialog(
                       context: context,
                       builder: (context) => AlertDialog(
-                        title: const Text('Reset Statistics?'),
-                        content: const Text(
+                        backgroundColor: colorScheme.surface,
+                        title: Text(
+                          'Reset Statistics?',
+                          style: textTheme.titleLarge?.copyWith(
+                            color: ref.watch(themeTextPrimaryColorProvider),
+                          ),
+                        ),
+                        content: Text(
                           'This will reset all statistics counters to zero. Logs will not be affected.',
+                          style: textTheme.bodyMedium?.copyWith(
+                            color: ref.watch(themeTextSecondaryColorProvider),
+                          ),
                         ),
                         actions: [
                           TextButton(
@@ -769,8 +760,8 @@ class _EngineStatusScreenState extends ConsumerState<EngineStatusScreen>
                   icon: const Icon(Icons.refresh),
                   label: const Text('Reset Statistics'),
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: cardBackgroundColor,
-                    foregroundColor: iconActiveColor,
+                    backgroundColor: colorScheme.surfaceContainerHighest,
+                    foregroundColor: colorScheme.primary,
                   ),
                 ),
               ),
@@ -781,7 +772,173 @@ class _EngineStatusScreenState extends ConsumerState<EngineStatusScreen>
     );
   }
 
-  // Helper Widgets
+  Widget _buildEngineControls() {
+    final textPrimary = ref.watch(themeTextPrimaryColorProvider);
+    final textSecondary = ref.watch(themeTextSecondaryColorProvider);
+    final isStopped = !_logger.isEngineInitialized;
+
+    // Watch rate limit notifier to get access to methods
+    final rateLimitNotifier = ref.watch(engineRateLimitProvider.notifier);
+    final rateLimitState = ref.watch(engineRateLimitProvider);
+
+    // Access state properties directly
+    final isBlocked =
+        rateLimitState.blockUntil != null &&
+        DateTime.now().isBefore(rateLimitState.blockUntil!);
+
+    final remainingBlockSeconds = rateLimitState.blockUntil != null
+        ? rateLimitState.blockUntil!.difference(DateTime.now()).inSeconds
+        : 0;
+
+    final isButtonDisabled = isBlocked;
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(
+        horizontal: AppSpacing.lg,
+        vertical: AppSpacing.md,
+      ),
+      child: Column(
+        children: [
+          // Block overlay message (shown when rate limited)
+          if (isButtonDisabled)
+            Container(
+              margin: const EdgeInsets.only(bottom: 12),
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.orange.withOpacity(0.15),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: Colors.orange.withOpacity(0.3)),
+              ),
+              child: Row(
+                children: [
+                  const Icon(
+                    Icons.timer_off_rounded,
+                    color: Colors.orange,
+                    size: 20,
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
+                      'You seem to be abusing the engine wait for ${_formatBlockTime(remainingBlockSeconds)} before trying again xd.',
+                      style: TextStyle(
+                        color: Colors.orange.shade300,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+
+          Row(
+            children: [
+              // Stop Button
+              Expanded(
+                child: GestureDetector(
+                  onTap: isStopped || isButtonDisabled
+                      ? null
+                      : () => _showStopConfirmation(),
+                  child: AnimatedOpacity(
+                    opacity: isStopped || isButtonDisabled ? 0.35 : 1.0,
+                    duration: const Duration(milliseconds: 300),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      decoration: BoxDecoration(
+                        color: Colors.red.withOpacity(
+                          isStopped || isButtonDisabled ? 0.05 : 0.12,
+                        ),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(
+                          color: Colors.red.withOpacity(
+                            isStopped || isButtonDisabled ? 0.2 : 0.4,
+                          ),
+                        ),
+                      ),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(
+                            Icons.stop_circle_outlined,
+                            color: Colors.red.withOpacity(
+                              isStopped || isButtonDisabled ? 0.4 : 1.0,
+                            ),
+                            size: 20,
+                          ),
+                          const SizedBox(width: 8),
+                          Text(
+                            _getStopButtonText(isStopped, isButtonDisabled),
+                            style: TextStyle(
+                              color: Colors.red.withOpacity(
+                                isStopped || isButtonDisabled ? 0.4 : 1.0,
+                              ),
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+
+              const SizedBox(width: 12),
+
+              // Restart Button
+              Expanded(
+                child: GestureDetector(
+                  onTap: isButtonDisabled
+                      ? null
+                      : () => _showRestartConfirmation(),
+                  child: AnimatedOpacity(
+                    opacity: isButtonDisabled ? 0.35 : 1.0,
+                    duration: const Duration(milliseconds: 300),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      decoration: BoxDecoration(
+                        color: Colors.green.withOpacity(
+                          isButtonDisabled ? 0.05 : 0.12,
+                        ),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(
+                          color: Colors.green.withOpacity(
+                            isButtonDisabled ? 0.2 : 0.4,
+                          ),
+                        ),
+                      ),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(
+                            Icons.restart_alt,
+                            color: Colors.green.withOpacity(
+                              isButtonDisabled ? 0.4 : 1.0,
+                            ),
+                            size: 20,
+                          ),
+                          const SizedBox(width: 8),
+                          Text(
+                            _getRestartButtonText(isStopped, isButtonDisabled),
+                            style: TextStyle(
+                              color: Colors.green.withOpacity(
+                                isButtonDisabled ? 0.4 : 1.0,
+                              ),
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+  // HELPER WIDGETS
 
   Widget _buildInfoCard({
     required String title,
@@ -789,14 +946,16 @@ class _EngineStatusScreenState extends ConsumerState<EngineStatusScreen>
     required Color iconColor,
     required List<Widget> children,
   }) {
-    final cardBackgroundColor = ref.watch(themeCardBackgroundColorProvider);
-    final textPrimaryColor = ref.watch(themeTextPrimaryColorProvider);
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final textTheme = theme.textTheme;
 
     return Container(
       padding: const EdgeInsets.all(AppSpacing.md),
       decoration: BoxDecoration(
-        color: cardBackgroundColor,
+        color: colorScheme.surfaceContainerHighest,
         borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: colorScheme.outline.withOpacity(0.2)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -807,10 +966,9 @@ class _EngineStatusScreenState extends ConsumerState<EngineStatusScreen>
               const SizedBox(width: 8),
               Text(
                 title,
-                style: TextStyle(
-                  color: textPrimaryColor,
-                  fontSize: 16,
+                style: textTheme.titleMedium?.copyWith(
                   fontWeight: FontWeight.bold,
+                  color: ref.watch(themeTextPrimaryColorProvider),
                 ),
               ),
             ],
@@ -823,17 +981,23 @@ class _EngineStatusScreenState extends ConsumerState<EngineStatusScreen>
   }
 
   Widget _buildInfoRow(String label, String value, Color valueColor) {
-    final textSecondaryColor = ref.watch(themeTextSecondaryColorProvider);
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final textTheme = theme.textTheme;
 
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
-        Text(label, style: TextStyle(color: textSecondaryColor, fontSize: 14)),
+        Text(
+          label,
+          style: textTheme.bodyMedium?.copyWith(
+            color: ref.watch(themeTextSecondaryColorProvider),
+          ),
+        ),
         Text(
           value,
-          style: TextStyle(
+          style: textTheme.bodyMedium?.copyWith(
             color: valueColor,
-            fontSize: 14,
             fontWeight: FontWeight.w500,
           ),
         ),
@@ -841,45 +1005,46 @@ class _EngineStatusScreenState extends ConsumerState<EngineStatusScreen>
     );
   }
 
-  Widget _buildStatItem(
-    String label,
-    String value,
-    IconData icon,
-    Color textPrimaryColor,
-    Color textSecondaryColor,
-  ) {
+  Widget _buildStatItem(String label, String value, IconData icon) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final textTheme = theme.textTheme;
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Row(
           children: [
-            Icon(icon, size: 16, color: textSecondaryColor),
+            Icon(
+              icon,
+              size: 16,
+              color: ref.watch(themeTextSecondaryColorProvider),
+            ),
             const SizedBox(width: 4),
             Text(
               label,
-              style: TextStyle(color: textSecondaryColor, fontSize: 12),
+              style: textTheme.bodySmall?.copyWith(
+                color: ref.watch(themeTextSecondaryColorProvider),
+              ),
             ),
           ],
         ),
         const SizedBox(height: 4),
         Text(
           value,
-          style: TextStyle(
-            color: textPrimaryColor,
-            fontSize: 20,
+          style: textTheme.titleLarge?.copyWith(
             fontWeight: FontWeight.bold,
+            color: ref.watch(themeTextPrimaryColorProvider),
           ),
         ),
       ],
     );
   }
 
-  Widget _buildCategoryChip(
-    String category,
-    Color textPrimaryColor,
-    Color textSecondaryColor,
-    Color activeColor,
-  ) {
+  Widget _buildCategoryChip(String category) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final textTheme = theme.textTheme;
     final isSelected = _selectedCategory == category;
 
     return GestureDetector(
@@ -887,20 +1052,21 @@ class _EngineStatusScreenState extends ConsumerState<EngineStatusScreen>
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
         decoration: BoxDecoration(
-          color: isSelected ? activeColor.withOpacity(0.2) : Colors.transparent,
+          color: isSelected ? colorScheme.primaryContainer : Colors.transparent,
           borderRadius: BorderRadius.circular(16),
           border: Border.all(
             color: isSelected
-                ? activeColor
-                : textSecondaryColor.withOpacity(0.3),
+                ? colorScheme.primary
+                : colorScheme.outline.withOpacity(0.3),
             width: 1,
           ),
         ),
         child: Text(
           category,
-          style: TextStyle(
-            color: isSelected ? activeColor : textSecondaryColor,
-            fontSize: 12,
+          style: textTheme.bodySmall?.copyWith(
+            color: isSelected
+                ? colorScheme.onPrimaryContainer
+                : ref.watch(themeTextSecondaryColorProvider),
             fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
           ),
         ),
@@ -909,15 +1075,15 @@ class _EngineStatusScreenState extends ConsumerState<EngineStatusScreen>
   }
 
   Widget _buildLogEntry(EngineLogEntry log) {
-    final textPrimaryColor = ref.watch(themeTextPrimaryColorProvider);
-    final textSecondaryColor = ref.watch(themeTextSecondaryColorProvider);
-    final cardBackgroundColor = ref.watch(themeCardBackgroundColorProvider);
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final textTheme = theme.textTheme;
 
     return Container(
       margin: const EdgeInsets.only(bottom: 8),
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: cardBackgroundColor,
+        color: colorScheme.surfaceContainerHighest,
         borderRadius: BorderRadius.circular(8),
         border: Border.all(
           color: _getLogColor(log.level).withOpacity(0.3),
@@ -944,7 +1110,7 @@ class _EngineStatusScreenState extends ConsumerState<EngineStatusScreen>
                 ),
                 child: Text(
                   log.level,
-                  style: TextStyle(
+                  style: textTheme.bodySmall?.copyWith(
                     color: _getLogColor(log.level),
                     fontSize: 10,
                     fontWeight: FontWeight.bold,
@@ -955,21 +1121,24 @@ class _EngineStatusScreenState extends ConsumerState<EngineStatusScreen>
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                 decoration: BoxDecoration(
-                  color: textSecondaryColor.withOpacity(0.1),
+                  color: colorScheme.outline.withOpacity(0.1),
                   borderRadius: BorderRadius.circular(4),
                 ),
                 child: Text(
                   log.category,
-                  style: TextStyle(color: textSecondaryColor, fontSize: 10),
+                  style: textTheme.bodySmall?.copyWith(
+                    fontSize: 10,
+                    color: ref.watch(themeTextPrimaryColorProvider),
+                  ),
                 ),
               ),
               const Spacer(),
               Text(
                 log.formattedTime,
-                style: TextStyle(
-                  color: textSecondaryColor,
+                style: textTheme.bodySmall?.copyWith(
                   fontSize: 10,
                   fontFamily: 'monospace',
+                  color: ref.watch(themeTextSecondaryColorProvider),
                 ),
               ),
             ],
@@ -980,7 +1149,9 @@ class _EngineStatusScreenState extends ConsumerState<EngineStatusScreen>
           // Message
           Text(
             log.message,
-            style: TextStyle(color: textPrimaryColor, fontSize: 13),
+            style: textTheme.bodyMedium?.copyWith(
+              color: ref.watch(themeTextPrimaryColorProvider),
+            ),
           ),
 
           // Video ID if present
@@ -991,17 +1162,16 @@ class _EngineStatusScreenState extends ConsumerState<EngineStatusScreen>
                 Clipboard.setData(ClipboardData(text: log.videoId!));
                 ScaffoldMessenger.of(context).showSnackBar(
                   const SnackBar(
-                    content: Text('Video ID copied'),
+                    content: Text('Track-id copied'),
                     duration: Duration(seconds: 1),
                   ),
                 );
               },
               child: Text(
-                'ID: ${log.videoId}',
-                style: TextStyle(
-                  color: textSecondaryColor,
-                  fontSize: 11,
+                'Track-id: ${log.videoId}',
+                style: textTheme.bodySmall?.copyWith(
                   fontFamily: 'monospace',
+                  color: ref.watch(themeTextSecondaryColorProvider),
                 ),
               ),
             ),
@@ -1012,10 +1182,9 @@ class _EngineStatusScreenState extends ConsumerState<EngineStatusScreen>
             const SizedBox(height: 4),
             Text(
               '♪ ${log.songTitle}',
-              style: TextStyle(
-                color: textSecondaryColor,
-                fontSize: 11,
+              style: textTheme.bodySmall?.copyWith(
                 fontStyle: FontStyle.italic,
+                color: ref.watch(themeTextSecondaryColorProvider),
               ),
             ),
           ],
@@ -1024,15 +1193,12 @@ class _EngineStatusScreenState extends ConsumerState<EngineStatusScreen>
     );
   }
 
-  Widget _buildStatBar(
-    String label,
-    int value,
-    int total,
-    Color color,
-    Color textPrimaryColor,
-    Color textSecondaryColor,
-  ) {
+  Widget _buildStatBar(String label, int value, int total, Color color) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final textTheme = theme.textTheme;
     final percentage = total > 0 ? (value / total) * 100 : 0.0;
+    final textPrimary = ref.watch(themeTextPrimaryColorProvider);
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -1042,11 +1208,15 @@ class _EngineStatusScreenState extends ConsumerState<EngineStatusScreen>
           children: [
             Text(
               label,
-              style: TextStyle(color: textSecondaryColor, fontSize: 14),
+              style: textTheme.bodyMedium?.copyWith(color: textPrimary),
             ),
+
             Text(
               '$value / $total (${percentage.toStringAsFixed(1)}%)',
-              style: TextStyle(color: textPrimaryColor, fontSize: 14),
+              style: textTheme.bodyMedium?.copyWith(
+                fontWeight: FontWeight.w500,
+                color: textPrimary,
+              ),
             ),
           ],
         ),
@@ -1055,7 +1225,7 @@ class _EngineStatusScreenState extends ConsumerState<EngineStatusScreen>
           borderRadius: BorderRadius.circular(4),
           child: LinearProgressIndicator(
             value: total > 0 ? value / total : 0,
-            backgroundColor: textSecondaryColor.withOpacity(0.2),
+            backgroundColor: colorScheme.outline.withOpacity(0.2),
             valueColor: AlwaysStoppedAnimation<Color>(color),
             minHeight: 8,
           ),
@@ -1106,5 +1276,205 @@ class _EngineStatusScreenState extends ConsumerState<EngineStatusScreen>
     } else {
       return '${duration.inSeconds}s';
     }
+  }
+
+  String _formatBlockTime(int seconds) {
+    if (seconds >= 60) {
+      final minutes = (seconds / 60).floor();
+      final remainingSeconds = seconds % 60;
+      return '$minutes min ${remainingSeconds} sec';
+    }
+    return '$seconds sec';
+  }
+
+  String _getStopButtonText(bool isStopped, bool isBlocked) {
+    if (isBlocked) return 'Rate Limited';
+    if (isStopped) return 'Already Stopped';
+    return 'Stop Engine';
+  }
+
+  String _getRestartButtonText(bool isStopped, bool isBlocked) {
+    if (isBlocked) return 'Rate Limited';
+    return isStopped ? 'Restart Engine' : 'Restart';
+  }
+
+  void _recordEngineAction() {
+    final now = DateTime.now();
+    final actionType = _lastActionType;
+    final rateLimitNotifier = ref.read(engineRateLimitProvider.notifier);
+    final currentState = ref.read(engineRateLimitProvider);
+
+    // Check if we're already blocked
+    final isCurrentlyBlocked =
+        currentState.blockUntil != null &&
+        DateTime.now().isBefore(currentState.blockUntil!);
+
+    if (isCurrentlyBlocked) {
+      // Don't record actions if already blocked
+      return;
+    }
+
+    // Log the action
+    _logger.logInfo(
+      'Engine action recorded: $actionType',
+      category: 'ENGINE',
+      metadata: {
+        'action': actionType,
+        'actions_in_last_10s': currentState.actionTimestamps.length + 1,
+      },
+    );
+
+    // Check if we're approaching the limit (will be 3 after adding)
+    if (currentState.actionTimestamps.length >= 2) {
+      _logger.logWarning(
+        '⚠️ Approaching rate limit: ${currentState.actionTimestamps.length + 1} actions in 10 seconds',
+        category: 'ENGINE',
+        metadata: {
+          'action_count': currentState.actionTimestamps.length + 1,
+          'remaining_before_block':
+              4 - (currentState.actionTimestamps.length + 1),
+        },
+      );
+    }
+
+    // Add the action
+    rateLimitNotifier.addAction();
+
+    // Check if we've just become blocked
+    final newState = ref.read(engineRateLimitProvider);
+    final becameBlocked =
+        !isCurrentlyBlocked &&
+        newState.blockUntil != null &&
+        DateTime.now().isBefore(newState.blockUntil!);
+
+    if (becameBlocked) {
+      _logger.logWarning(
+        '🚫 RATE LIMIT TRIGGERED: 4 engine actions in 10 seconds',
+        category: 'ENGINE',
+        metadata: {
+          'action_count': 4,
+          'block_duration_minutes': 10,
+          'block_until': newState.blockUntil!.toIso8601String(),
+        },
+      );
+
+      // Show rate limit warning
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Row(
+            children: [
+              const Icon(Icons.warning_amber_rounded, color: Colors.white),
+              const SizedBox(width: 12),
+              const Expanded(
+                child: Text(
+                  'Too many engine operations. Please wait 10 minutes.',
+                  style: TextStyle(fontWeight: FontWeight.w500),
+                ),
+              ),
+            ],
+          ),
+          backgroundColor: Colors.orange.shade800,
+          duration: const Duration(seconds: 4),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+
+      // Schedule unblock
+      Future.delayed(const Duration(minutes: 10), () {
+        if (mounted) {
+          rateLimitNotifier.clearBlock();
+
+          _logger.logInfo(
+            '✅ Rate limit expired - engine controls re-enabled',
+            category: 'ENGINE',
+            metadata: {'block_duration_minutes': 10},
+          );
+
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: const Text('Engine controls are now available again.'),
+              backgroundColor: Colors.green.shade700,
+              duration: const Duration(seconds: 2),
+              behavior: SnackBarBehavior.floating,
+            ),
+          );
+        }
+      });
+    }
+  }
+
+  // Add this class variable to track the last action type
+  String _lastActionType = 'unknown';
+
+  void _showStopConfirmation() {
+    final textPrimary = ref.watch(themeTextPrimaryColorProvider);
+    final textSecondary = ref.watch(themeTextSecondaryColorProvider);
+
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: Theme.of(context).cardColor,
+        title: Text(
+          'Stop Engine?',
+          style: TextStyle(color: textPrimary, fontWeight: FontWeight.bold),
+        ),
+        content: Text(
+          'This will stop the VibeFlow Engine and kill all playback.',
+          style: TextStyle(color: textSecondary),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: Text('Cancel', style: TextStyle(color: textSecondary)),
+          ),
+          TextButton(
+            onPressed: () {
+              _lastActionType = 'stop'; // Set action type
+              _recordEngineAction();
+              _logger.stopEngine();
+              Navigator.pop(context);
+              setState(() {});
+            },
+            child: const Text('Stop', style: TextStyle(color: Colors.red)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showRestartConfirmation() {
+    final textPrimary = ref.watch(themeTextPrimaryColorProvider);
+    final textSecondary = ref.watch(themeTextSecondaryColorProvider);
+
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: Theme.of(context).cardColor,
+        title: Text(
+          'Restart Engine?',
+          style: TextStyle(color: textPrimary, fontWeight: FontWeight.bold),
+        ),
+        content: Text(
+          'This will restart the VibeFlow Engine.',
+          style: TextStyle(color: textSecondary),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: Text('Cancel', style: TextStyle(color: textSecondary)),
+          ),
+          TextButton(
+            onPressed: () {
+              _lastActionType = 'restart'; // Set action type
+              _recordEngineAction();
+              _logger.restartEngine();
+              Navigator.pop(context);
+              setState(() {});
+            },
+            child: const Text('Restart', style: TextStyle(color: Colors.green)),
+          ),
+        ],
+      ),
+    );
   }
 }

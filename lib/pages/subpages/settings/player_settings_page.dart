@@ -80,7 +80,8 @@ class _PlayerSettingsPageState extends ConsumerState<PlayerSettingsPage> {
               retryHandler.persistentQueueEnabled;
           ref.read(loudnessNormalizationEnabledProvider.notifier).state =
               retryHandler.loudnessNormalizationEnabled;
-
+          ref.read(lineByLineLyricsEnabledProvider.notifier).state =
+              retryHandler.lineByLineLyricsEnabled;
           print('✅ [UI] Settings loaded on retry');
         }
       }
@@ -301,6 +302,56 @@ class _PlayerSettingsPageState extends ConsumerState<PlayerSettingsPage> {
             ),
 
             const SizedBox(height: AppSpacing.xxl),
+            _buildToggleItem(
+              'Line-by-line lyrics',
+              'Spotify-style synchronized lyrics',
+              ref.watch(lineByLineLyricsEnabledProvider),
+              () async {
+                final handler = getAudioHandler();
+                if (handler == null) {
+                  HapticFeedbackService().vibratingForNotAllowed();
+                  return;
+                }
+
+                final notifier = ref.read(
+                  lineByLineLyricsEnabledProvider.notifier,
+                );
+                final newValue = !notifier.state;
+
+                try {
+                  await handler.setLineByLineLyricsEnabled(newValue);
+                  notifier.state = newValue;
+
+                  if (!mounted) return;
+
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text(
+                        newValue
+                            ? 'Line-by-line lyrics enabled'
+                            : 'Line-by-line lyrics disabled',
+                      ),
+                      behavior: SnackBarBehavior.floating,
+                      duration: const Duration(seconds: 2),
+                    ),
+                  );
+                } catch (e) {
+                  HapticFeedbackService().vibrateAudioError();
+
+                  if (!mounted) return;
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('Failed to update setting'),
+                      backgroundColor: Colors.red,
+                    ),
+                  );
+                }
+              },
+              textPrimaryColor: textPrimaryColor,
+              textSecondaryColor: textSecondaryColor,
+              iconActiveColor: iconActiveColor,
+            ),
+            const SizedBox(height: AppSpacing.xxl),
 
             ref
                 .watch(hasAccessCodeProvider)
@@ -359,55 +410,6 @@ class _PlayerSettingsPageState extends ConsumerState<PlayerSettingsPage> {
           const SizedBox(height: AppSpacing.lg),
 
           // Line-by-line lyrics toggle
-          _buildToggleItem(
-            'Line-by-line lyrics',
-            'Spotify-style synchronized lyrics',
-            ref.watch(lineByLineLyricsEnabledProvider),
-            () async {
-              final handler = getAudioHandler();
-              if (handler == null) {
-                HapticFeedbackService().vibratingForNotAllowed();
-                return;
-              }
-
-              final notifier = ref.read(
-                lineByLineLyricsEnabledProvider.notifier,
-              );
-              final newValue = !notifier.state;
-
-              try {
-                await handler.setLineByLineLyricsEnabled(newValue);
-                notifier.state = newValue;
-
-                if (!mounted) return;
-
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(
-                    content: Text(
-                      newValue
-                          ? 'Line-by-line lyrics enabled'
-                          : 'Line-by-line lyrics disabled',
-                    ),
-                    behavior: SnackBarBehavior.floating,
-                    duration: const Duration(seconds: 2),
-                  ),
-                );
-              } catch (e) {
-                HapticFeedbackService().vibrateAudioError();
-
-                if (!mounted) return;
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text('Failed to update setting'),
-                    backgroundColor: Colors.red,
-                  ),
-                );
-              }
-            },
-            textPrimaryColor: textPrimaryColor,
-            textSecondaryColor: textSecondaryColor,
-            iconActiveColor: iconActiveColor,
-          ),
         ],
       ),
     );

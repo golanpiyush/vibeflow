@@ -232,7 +232,16 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
       final profileService = ref.read(profileServiceProvider);
       String? newProfilePicUrl;
 
+      // Handle profile picture upload and old picture deletion
       if (_newProfilePicFile != null) {
+        // Delete old profile picture if exists
+        if (_currentProfilePic != null && _currentProfilePic!.isNotEmpty) {
+          await profileService.deleteProfilePictureByFileName(
+            _currentProfilePic!,
+          );
+        }
+
+        // Upload new profile picture
         newProfilePicUrl = await profileService.uploadProfilePicture(
           currentUser.id,
           _newProfilePicFile!.path,
@@ -244,10 +253,14 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
       }
 
       final updateData = <String, dynamic>{
-        'profile_pic_url': newProfilePicUrl ?? _currentProfilePic,
         'show_listening_activity': _showListeningActivity,
         'is_jammer_on': _isJammerOn,
       };
+
+      // Only update profile_pic_url if a new one was uploaded
+      if (newProfilePicUrl != null) {
+        updateData['profile_pic_url'] = newProfilePicUrl;
+      }
 
       if (_selectedGender != null) {
         updateData['gender'] = _selectedGender!.toLowerCase();
@@ -353,6 +366,7 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
     final colorScheme = theme.colorScheme;
 
     final hasImage = _newProfilePicFile != null || _currentProfilePic != null;
+
     return Scaffold(
       backgroundColor: bgColor,
       body: SingleChildScrollView(
@@ -362,8 +376,6 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // Header
-
               // Profile Picture Section
               Center(
                 child: Column(
@@ -374,22 +386,26 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
                           radius: 64,
                           backgroundColor: hasImage
                               ? surfaceColor
-                              : colorScheme.surface, // ✅ use card bg when null
+                              : colorScheme.surface,
                           foregroundImage: _newProfilePicFile != null
                               ? FileImage(_newProfilePicFile!)
                               : (_currentProfilePic != null
-                                    ? NetworkImage(_currentProfilePic!)
+                                    ? NetworkImage(
+                                        ref
+                                            .read(profileServiceProvider)
+                                            .buildProfileImageUrl(
+                                              _currentProfilePic!,
+                                            )!,
+                                      )
                                     : null),
                           child: !hasImage
                               ? Icon(
                                   Icons.person,
                                   size: 64,
-                                  color: colorScheme
-                                      .onSurfaceVariant, // ✅ better than grey
+                                  color: colorScheme.onSurfaceVariant,
                                 )
                               : null,
                         ),
-
                         Positioned(
                           bottom: 0,
                           right: 0,
@@ -433,23 +449,20 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
                   context,
                 ).copyWith(color: textSecondaryColor),
               ),
-
               SizedBox(height: AppSpacing.sm),
               TextFormField(
                 controller: _usernameController,
                 enabled: canChangeUsername,
-                style: AppTypography.songTitle(context).copyWith(
-                  color: textPrimaryColor, // main text color
-                ),
+                style: AppTypography.songTitle(
+                  context,
+                ).copyWith(color: textPrimaryColor),
                 decoration: InputDecoration(
                   hintText: canChangeUsername
                       ? 'Enter your username'
                       : 'Username changes limit reached',
-                  hintStyle: AppTypography.caption(context).copyWith(
-                    color: isDark
-                        ? Colors.grey[400]
-                        : Colors.white, // hint text color white in light theme
-                  ),
+                  hintStyle: AppTypography.caption(
+                    context,
+                  ).copyWith(color: textMutedColor),
                   filled: true,
                   fillColor: canChangeUsername ? cardColor : surfaceColor,
                   border: OutlineInputBorder(
@@ -474,7 +487,6 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
                   return null;
                 },
               ),
-
               SizedBox(height: AppSpacing.sm),
               Text(
                 canChangeUsername
@@ -485,7 +497,7 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
                       ? accentColor
                       : isDark
                       ? Colors.orange
-                      : Colors.deepOrange, // lighter orange for light theme
+                      : Colors.deepOrange,
                 ),
               ),
               SizedBox(height: AppSpacing.xl),
@@ -497,7 +509,6 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
                   context,
                 ).copyWith(color: textSecondaryColor),
               ),
-
               SizedBox(height: AppSpacing.sm),
               TextFormField(
                 controller: _emailController,
@@ -551,7 +562,6 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
                       : (canChangeEmail ? Colors.blue : Colors.orange),
                 ),
               ),
-
               SizedBox(height: AppSpacing.xxl),
 
               // Privacy Settings Section
@@ -614,7 +624,6 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
                   ],
                 ),
               ),
-
               SizedBox(height: AppSpacing.xxl),
 
               // Jammer Mode Section
@@ -782,6 +791,7 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
                 ),
               ),
               SizedBox(height: AppSpacing.xxl),
+
               // Save Button
               SizedBox(
                 width: double.infinity,

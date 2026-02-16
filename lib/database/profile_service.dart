@@ -109,59 +109,45 @@ class ProfileService {
     }
   }
 
-  /// Upload profile picture - SIMPLIFIED VERSION
-  // In profile_service.dart
+  /// Upload profile picture
   Future<String?> uploadProfilePicture(String userId, String imagePath) async {
     try {
       final file = File(imagePath);
       final bytes = await file.readAsBytes();
       final fileExt = imagePath.split('.').last;
 
-      // ✅ CORRECT: Use userId as the filename directly
       final fileName = '$userId.$fileExt';
-      final filePath = fileName; // Just the filename, bucket handles the rest
 
-      print('📤 Uploading profile picture...');
-      print('   User ID: $userId');
-      print('   File path in bucket: $filePath');
-
-      // Upload to Supabase Storage
       await _supabase.storage
           .from('profile-pictures')
           .uploadBinary(
-            filePath,
+            fileName,
             bytes,
             fileOptions: FileOptions(
-              contentType: 'image/${fileExt}',
-              upsert: true, // Replace if exists
+              contentType: 'image/$fileExt',
+              upsert: true,
             ),
           );
 
-      // Get public URL
-      final publicUrl = _supabase.storage
-          .from('profile-pictures')
-          .getPublicUrl(filePath);
+      print('✅ Uploaded: $fileName');
 
-      print('✅ Profile picture uploaded successfully');
-      print('   Public URL: $publicUrl');
-
-      return publicUrl;
+      // Return only file name
+      return fileName;
     } catch (e) {
       print('❌ Error uploading profile picture: $e');
       return null;
     }
   }
 
-  /// Delete profile picture
+  /// Delete profile picture by userId (tries multiple extensions)
   Future<bool> deleteProfilePicture(String userId) async {
     try {
       final fileExtensions = ['jpeg', 'jpg', 'png', 'webp'];
 
       for (final ext in fileExtensions) {
         try {
-          final fileName = 'profile_$userId.$ext';
+          final fileName = '$userId.$ext';
           await _supabase.storage.from('profile-pictures').remove([fileName]);
-
           print('✅ Deleted old profile picture: $fileName');
         } catch (e) {
           // File might not exist, continue
@@ -175,6 +161,20 @@ class ProfileService {
     }
   }
 
+  /// Delete profile picture by exact filename
+  Future<bool> deleteProfilePictureByFileName(String fileName) async {
+    try {
+      if (fileName.isEmpty) return false;
+
+      await _supabase.storage.from('profile-pictures').remove([fileName]);
+      print('✅ Deleted profile picture: $fileName');
+      return true;
+    } catch (e) {
+      print('❌ Error deleting profile picture by filename: $e');
+      return false;
+    }
+  }
+
   /// Get profile picture URL for a user
   Future<String?> getProfilePictureUrl(String userId) async {
     try {
@@ -184,6 +184,13 @@ class ProfileService {
       print('❌ Error getting profile picture URL: $e');
       return null;
     }
+  }
+
+  /// Build public URL for profile image
+  String? buildProfileImageUrl(String? fileName) {
+    if (fileName == null || fileName.isEmpty) return null;
+
+    return _supabase.storage.from('profile-pictures').getPublicUrl(fileName);
   }
 }
 

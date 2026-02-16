@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:vibeflow/models/engine_logs.dart';
+import 'package:vibeflow/services/bg_audio_handler.dart';
 
 /// Central logger for VibeFlow Engine operations
 class VibeFlowEngineLogger extends ChangeNotifier {
@@ -15,6 +16,7 @@ class VibeFlowEngineLogger extends ChangeNotifier {
 
   // Engine status
   bool _isEngineInitialized = false;
+  bool get isBlocked => !_isEngineInitialized;
   DateTime? _initializationTime;
 
   // Operation counters
@@ -286,6 +288,58 @@ class VibeFlowEngineLogger extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Log an info message
+  void logInfo(
+    String message, {
+    String category = 'INFO',
+    Map<String, dynamic>? metadata,
+  }) {
+    _addLog(
+      EngineLogEntry(
+        timestamp: DateTime.now(),
+        level: 'INFO',
+        category: category,
+        message: message,
+        metadata: metadata,
+      ),
+    );
+  }
+
+  /// Log a warning message
+  void logWarning(
+    String message, {
+    String category = 'WARNING',
+    Map<String, dynamic>? metadata,
+  }) {
+    _addLog(
+      EngineLogEntry(
+        timestamp: DateTime.now(),
+        level: 'WARNING',
+        category: category,
+        message: message,
+        metadata: metadata,
+      ),
+    );
+  }
+
+  /// Log an error message
+  void logError(
+    String message, {
+    String? error,
+    String category = 'ERROR',
+    Map<String, dynamic>? metadata,
+  }) {
+    _addLog(
+      EngineLogEntry(
+        timestamp: DateTime.now(),
+        level: 'ERROR',
+        category: category,
+        message: error != null ? '$message: $error' : message,
+        metadata: metadata,
+      ),
+    );
+  }
+
   /// Start tracking an operation
   void _startOperation(String operationId) {
     _activeOperations.add(operationId);
@@ -322,6 +376,34 @@ class VibeFlowEngineLogger extends ChangeNotifier {
     _cacheMisses = 0;
     _totalEnrichments = 0;
     notifyListeners();
+  }
+
+  // ADD after resetStats() method:
+  void stopEngine() {
+    _isEngineInitialized = false;
+    _activeOperations.clear();
+    _operationStartTimes.clear();
+    _addLog(
+      EngineLogEntry(
+        timestamp: DateTime.now(),
+        level: 'WARNING',
+        category: 'INIT',
+        message: 'VibeFlow Engine manually stopped',
+      ),
+    );
+
+    // Kill playback
+    final handler = getAudioHandler();
+    if (handler != null) {
+      handler.stopImmediately();
+    }
+  }
+
+  void restartEngine() {
+    stopEngine();
+    Future.delayed(const Duration(milliseconds: 500), () {
+      logInitialization(success: true);
+    });
   }
 
   /// Get logs by category

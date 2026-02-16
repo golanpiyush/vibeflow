@@ -634,11 +634,14 @@ class _IntegratedPlaylistsScreenState
   Future<void> _createNewPlaylist() async {
     final nameController = TextEditingController();
     final descController = TextEditingController();
-    final iconActiveColor = ref.read(themeIconActiveColorProvider);
-    final bgColor = ref.read(themeBackgroundColorProvider);
-    final cardBg = ref.read(themeCardBackgroundColorProvider);
-    final textPrimary = ref.read(themeTextPrimaryColorProvider);
-    final textSecondary = ref.read(themeTextSecondaryColorProvider);
+
+    // Get theme values from providers correctly
+    final themeData = Theme.of(context);
+    final iconActiveColor = themeData.colorScheme.primary;
+    final bgColor = themeData.scaffoldBackgroundColor;
+    final cardBg = themeData.cardColor;
+    final textPrimary = themeData.colorScheme.onSurface;
+    final textSecondary = themeData.colorScheme.onSurfaceVariant;
 
     final result = await showDialog<Map<String, String>>(
       context: context,
@@ -654,24 +657,44 @@ class _IntegratedPlaylistsScreenState
         content: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            _buildTextField(
-              nameController,
-              'Playlist name',
+            TextField(
+              controller: nameController,
               autofocus: true,
-              accentColor: iconActiveColor,
-              textColor: textPrimary,
-              hintColor: textSecondary,
-              fillColor: bgColor,
+              style: TextStyle(color: textPrimary),
+              decoration: InputDecoration(
+                hintText: 'Playlist name',
+                hintStyle: TextStyle(color: textSecondary.withOpacity(0.5)),
+                filled: true,
+                fillColor: bgColor,
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: BorderSide.none,
+                ),
+                focusedBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: BorderSide(color: iconActiveColor, width: 2),
+                ),
+              ),
             ),
             const SizedBox(height: 16),
-            _buildTextField(
-              descController,
-              'Description (optional)',
+            TextField(
+              controller: descController,
               maxLines: 3,
-              accentColor: iconActiveColor,
-              textColor: textPrimary,
-              hintColor: textSecondary,
-              fillColor: bgColor,
+              style: TextStyle(color: textPrimary),
+              decoration: InputDecoration(
+                hintText: 'Description (optional)',
+                hintStyle: TextStyle(color: textSecondary.withOpacity(0.5)),
+                filled: true,
+                fillColor: bgColor,
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: BorderSide.none,
+                ),
+                focusedBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: BorderSide(color: iconActiveColor, width: 2),
+                ),
+              ),
             ),
           ],
         ),
@@ -684,8 +707,8 @@ class _IntegratedPlaylistsScreenState
             onPressed: () {
               if (nameController.text.trim().isNotEmpty) {
                 Navigator.pop(context, {
-                  'name': nameController.text,
-                  'description': descController.text,
+                  'name': nameController.text.trim(),
+                  'description': descController.text.trim(),
                 });
               }
             },
@@ -707,15 +730,30 @@ class _IntegratedPlaylistsScreenState
         final repo = await ref.read(playlistRepositoryFutureProvider.future);
         await repo.createPlaylist(
           name: result['name']!.trim(),
-          description: result['description']?.trim(),
+          description: result['description']?.trim().isNotEmpty == true
+              ? result['description']!.trim()
+              : null,
         );
         ref.invalidate(playlistsProvider);
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-              content: Text('Created "${result['name']}"'),
+              content: Row(
+                children: [
+                  Icon(
+                    Icons.check_circle,
+                    color: Theme.of(context).colorScheme.onPrimary,
+                    size: 20,
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(child: Text('Created "${result['name']}"')),
+                ],
+              ),
               backgroundColor: Colors.green,
               behavior: SnackBarBehavior.floating,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(10),
+              ),
             ),
           );
         }
@@ -723,9 +761,22 @@ class _IntegratedPlaylistsScreenState
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-              content: Text('Error: $e'),
+              content: Row(
+                children: [
+                  Icon(
+                    Icons.error_outline,
+                    color: Theme.of(context).colorScheme.onPrimary,
+                    size: 20,
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(child: Text('Error: $e')),
+                ],
+              ),
               backgroundColor: Colors.red,
               behavior: SnackBarBehavior.floating,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(10),
+              ),
             ),
           );
         }
@@ -778,12 +829,8 @@ class _SpotifyImportCard extends StatelessWidget {
       onTap: onTap,
       child: Container(
         decoration: BoxDecoration(
-          color: const Color(0xFF1A1A1A),
+          color: const Color.fromARGB(41, 0, 0, 0),
           borderRadius: BorderRadius.circular(12),
-          border: Border.all(
-            color: const Color(0xFF1DB954).withOpacity(0.4),
-            width: 1.5,
-          ),
         ),
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
@@ -820,12 +867,19 @@ class _SpotifyImportCard extends StatelessWidget {
               ),
             ),
             const SizedBox(height: 6),
-            Text(
-              'Paste a playlist link',
-              style: TextStyle(
-                color: Colors.white.withOpacity(0.4),
-                fontSize: 11,
-              ),
+            Consumer(
+              builder: (context, ref, child) {
+                final textSecondary = ref.watch(
+                  themeTextSecondaryColorProvider,
+                );
+                return Text(
+                  'Paste a playlist link',
+                  style: TextStyle(
+                    color: textSecondary.withOpacity(0.4),
+                    fontSize: 11,
+                  ),
+                );
+              },
             ),
           ],
         ),
@@ -2200,18 +2254,23 @@ class _ErrorBanner extends StatelessWidget {
 
 // ─── Playlist card ────────────────────────────────────────────────────────────
 
-class _PlaylistCard extends StatelessWidget {
+class _PlaylistCard extends ConsumerWidget {
+  // Changed to ConsumerWidget
   final Playlist playlist;
   final VoidCallback onTap;
   const _PlaylistCard({required this.playlist, required this.onTap});
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    // Added WidgetRef
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+
     return GestureDetector(
       onTap: onTap,
       child: Container(
         decoration: BoxDecoration(
-          color: const Color(0xFF1A1A1A),
+          color: const Color.fromARGB(41, 0, 0, 0), // Transparent background
           borderRadius: BorderRadius.circular(12),
         ),
         child: Column(
@@ -2223,7 +2282,7 @@ class _PlaylistCard extends StatelessWidget {
                 borderRadius: const BorderRadius.vertical(
                   top: Radius.circular(12),
                 ),
-                child: _buildCover(),
+                child: _buildCover(theme, colorScheme), // Pass theme
               ),
             ),
             Expanded(
@@ -2239,9 +2298,8 @@ class _PlaylistCard extends StatelessWidget {
                         Expanded(
                           child: Text(
                             playlist.name,
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 16,
+                            style: theme.textTheme.titleMedium?.copyWith(
+                              color: colorScheme.onSurface,
                               fontWeight: FontWeight.w600,
                             ),
                             maxLines: 1,
@@ -2249,9 +2307,9 @@ class _PlaylistCard extends StatelessWidget {
                           ),
                         ),
                         if (playlist.isFavorite)
-                          const Icon(
+                          Icon(
                             Icons.favorite,
-                            color: Color(0xFFFF4458),
+                            color: colorScheme.error,
                             size: 16,
                           ),
                       ],
@@ -2259,9 +2317,8 @@ class _PlaylistCard extends StatelessWidget {
                     const SizedBox(height: 4),
                     Text(
                       '${playlist.songCount} ${playlist.songCount == 1 ? 'song' : 'songs'}',
-                      style: TextStyle(
-                        color: Colors.white.withOpacity(0.6),
-                        fontSize: 13,
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: colorScheme.onSurfaceVariant,
                       ),
                     ),
                   ],
@@ -2274,21 +2331,31 @@ class _PlaylistCard extends StatelessWidget {
     );
   }
 
-  Widget _buildCover() {
+  Widget _buildCover(ThemeData theme, ColorScheme colorScheme) {
     if (playlist.coverImagePath != null) {
-      return Image.file(
-        File(playlist.coverImagePath!),
-        fit: BoxFit.cover,
-        errorBuilder: (_, __, ___) => _buildGradient(),
+      return ClipRRect(
+        borderRadius: BorderRadius.circular(12),
+        child: Image.file(
+          File(playlist.coverImagePath!),
+          fit: BoxFit.cover,
+          errorBuilder: (_, __, ___) => ClipRRect(
+            borderRadius: BorderRadius.circular(12),
+            child: _buildGradient(theme, colorScheme),
+          ),
+        ),
       );
     }
-    return _buildGradient();
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(12),
+      child: _buildGradient(theme, colorScheme),
+    );
   }
 
-  Widget _buildGradient() {
+  Widget _buildGradient(ThemeData theme, ColorScheme colorScheme) {
     final colors = playlist.isFavorite
-        ? [const Color(0xFFFF4458), const Color(0xFFFF6B7A)]
-        : [const Color(0xFF6B4CE8), const Color(0xFF8B6CE8)];
+        ? [colorScheme.error, colorScheme.error.withOpacity(0.7)]
+        : [colorScheme.primary, colorScheme.secondary];
+
     return Container(
       decoration: BoxDecoration(
         gradient: LinearGradient(
@@ -2301,7 +2368,7 @@ class _PlaylistCard extends StatelessWidget {
         child: Icon(
           playlist.isFavorite ? Icons.favorite : Icons.playlist_play,
           size: 50,
-          color: Colors.white.withOpacity(0.8),
+          color: colorScheme.onPrimary.withOpacity(0.8),
         ),
       ),
     );
@@ -2492,9 +2559,8 @@ class _YTMusicImportCard extends StatelessWidget {
       onTap: onTap,
       child: Container(
         decoration: BoxDecoration(
-          color: const Color(0xFF1A1A1A),
+          color: const Color.fromARGB(41, 0, 0, 0),
           borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: Colors.red.withOpacity(0.4), width: 1.5),
         ),
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
@@ -2527,12 +2593,19 @@ class _YTMusicImportCard extends StatelessWidget {
               ),
             ),
             const SizedBox(height: 6),
-            Text(
-              'Paste playlist link or ID',
-              style: TextStyle(
-                color: Colors.white.withOpacity(0.4),
-                fontSize: 11,
-              ),
+            Consumer(
+              builder: (context, ref, child) {
+                final textSecondary = ref.watch(
+                  themeTextSecondaryColorProvider,
+                );
+                return Text(
+                  'Paste playlist link or ID',
+                  style: TextStyle(
+                    color: textSecondary.withOpacity(0.4),
+                    fontSize: 11,
+                  ),
+                );
+              },
             ),
           ],
         ),

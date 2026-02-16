@@ -1,6 +1,7 @@
 // lib/pages/listen_together/listen_together_home_screen.dart
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_riverpod/legacy.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:vibeflow/api_base/db_actions.dart';
 import 'package:vibeflow/constants/app_colors.dart';
@@ -8,8 +9,12 @@ import 'package:vibeflow/constants/app_spacing.dart';
 import 'package:vibeflow/constants/app_typography.dart';
 import 'package:vibeflow/models/listening_together.dart';
 import 'package:vibeflow/pages/authOnboard/Screens/edit_profile.dart';
+import 'package:vibeflow/pages/authOnboard/listen_together/jammer_sessions_screen.dart';
+import 'package:vibeflow/pages/authOnboard/listen_together/jammer_settings_screen.dart';
 import 'package:vibeflow/providers/jammer_status_provider.dart';
 import 'package:vibeflow/providers/listen_together_providers.dart';
+
+final listenTogetherSidebarIndexProvider = StateProvider<int>((ref) => 0);
 
 /// Listen Together (Jammer) Home Screen
 /// Shows options to host or join a nearby session
@@ -93,56 +98,74 @@ class _ListenTogetherHomeScreenState
   @override
   Widget build(BuildContext context) {
     final themeData = Theme.of(context);
-    final activeSession = ref.watch(activeSessionProvider);
-    final invitations = ref.watch(invitationControllerProvider);
-    final mutualFollowers = ref.watch(mutualFollowersProvider);
-    final jammerStatus = ref.watch(jammerStatusProvider);
+    final selectedIndex = ref.watch(listenTogetherSidebarIndexProvider);
 
     return Scaffold(
       backgroundColor: themeData.scaffoldBackgroundColor,
       body: SafeArea(
-        child: Column(
+        child: Row(
           children: [
-            _buildTopBar(context, themeData),
+            _buildSidebar(context, ref, selectedIndex, themeData),
             Expanded(
-              child: jammerStatus.when(
-                data: (isJammerOn) {
-                  if (!isJammerOn) {
-                    return _buildJammerDisabledView(themeData);
-                  }
-                  return activeSession.when(
-                    data: (session) {
-                      if (session != null) {
-                        return _buildActiveSessionView(session, themeData);
-                      }
-                      return _buildMainContent(
-                        invitations,
-                        mutualFollowers,
-                        themeData,
-                      );
-                    },
-                    loading: () => Center(
-                      child: CircularProgressIndicator(
-                        color: themeData.primaryColor,
-                      ),
-                    ),
-                    error: (error, stack) =>
-                        _buildErrorView(error.toString(), themeData),
-                  );
-                },
-                loading: () => Center(
-                  child: CircularProgressIndicator(
-                    color: themeData.primaryColor,
-                  ),
-                ),
-                error: (error, stack) =>
-                    _buildErrorView(error.toString(), themeData),
+              child: Column(
+                children: [
+                  const SizedBox(height: AppSpacing.xxxl),
+                  _buildTopBar(context, themeData),
+                  Expanded(child: _buildContent(selectedIndex)),
+                ],
               ),
             ),
+            const SizedBox(height: AppSpacing.fourxxxl),
           ],
         ),
       ),
     );
+  }
+
+  Widget _buildContent(int selectedIndex) {
+    switch (selectedIndex) {
+      case 0:
+        // Home content (existing)
+        final activeSession = ref.watch(activeSessionProvider);
+        final invitations = ref.watch(invitationControllerProvider);
+        final mutualFollowers = ref.watch(mutualFollowersProvider);
+        final jammerStatus = ref.watch(jammerStatusProvider);
+        final themeData = Theme.of(context);
+        return jammerStatus.when(
+          data: (isJammerOn) {
+            if (!isJammerOn) {
+              return _buildJammerDisabledView(themeData);
+            }
+            return activeSession.when(
+              data: (session) {
+                if (session != null) {
+                  return _buildActiveSessionView(session, themeData);
+                }
+                return _buildMainContent(
+                  invitations,
+                  mutualFollowers,
+                  themeData,
+                );
+              },
+              loading: () => Center(
+                child: CircularProgressIndicator(color: themeData.primaryColor),
+              ),
+              error: (error, stack) =>
+                  _buildErrorView(error.toString(), themeData),
+            );
+          },
+          loading: () => Center(
+            child: CircularProgressIndicator(color: themeData.primaryColor),
+          ),
+          error: (error, stack) => _buildErrorView(error.toString(), themeData),
+        );
+      case 1:
+        return const JammerSessionsScreen();
+      case 2:
+        return const JammerSettingsScreen();
+      default:
+        return const JammerSessionsScreen();
+    }
   }
 
   Widget _buildTopBar(BuildContext context, ThemeData themeData) {
@@ -170,6 +193,91 @@ class _ListenTogetherHomeScreenState
     );
   }
 
+  Widget _buildSidebar(
+    BuildContext context,
+    WidgetRef ref,
+    int selectedIndex,
+    ThemeData themeData,
+  ) {
+    final double availableHeight = MediaQuery.of(context).size.height;
+    final colorScheme = themeData.colorScheme;
+    final primaryColor = colorScheme.primary;
+    final inactiveColor = colorScheme.onSurface.withOpacity(0.5);
+
+    return Container(
+      width: 80,
+      height: availableHeight,
+      alignment: Alignment.centerLeft,
+      child: SingleChildScrollView(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const SizedBox(height: 200),
+            _buildSidebarItem(
+              label: 'Home',
+              isActive: selectedIndex == 0,
+              activeColor: primaryColor,
+              inactiveColor: inactiveColor,
+              onTap: () =>
+                  ref.read(listenTogetherSidebarIndexProvider.notifier).state =
+                      0,
+            ),
+            const SizedBox(height: 16),
+            _buildSidebarItem(
+              label: 'Sessions',
+              isActive: selectedIndex == 1,
+              activeColor: primaryColor,
+              inactiveColor: inactiveColor,
+              onTap: () =>
+                  ref.read(listenTogetherSidebarIndexProvider.notifier).state =
+                      1,
+            ),
+            const SizedBox(height: 16),
+            _buildSidebarItem(
+              label: 'Settings',
+              isActive: selectedIndex == 2,
+              activeColor: primaryColor,
+              inactiveColor: inactiveColor,
+              onTap: () =>
+                  ref.read(listenTogetherSidebarIndexProvider.notifier).state =
+                      2,
+            ),
+            const SizedBox(height: 40),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSidebarItem({
+    required String label,
+    bool isActive = false,
+    required Color activeColor,
+    required Color inactiveColor,
+    VoidCallback? onTap,
+  }) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        width: 80,
+        height: 100,
+        alignment: Alignment.center,
+        child: RotatedBox(
+          quarterTurns: -1,
+          child: Text(
+            label,
+            textAlign: TextAlign.center,
+            style: AppTypography.sidebarLabel(context).copyWith(
+              fontSize: 15,
+              color: isActive ? activeColor : inactiveColor,
+              fontWeight: isActive ? FontWeight.w600 : FontWeight.normal,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _buildJammerDisabledView(ThemeData themeData) {
     final primaryColor = themeData.primaryColor;
     final textPrimary = themeData.textTheme.bodyLarge?.color ?? Colors.white;
@@ -187,19 +295,30 @@ class _ListenTogetherHomeScreenState
             AnimatedBuilder(
               animation: _pulseController,
               builder: (context, child) {
-                return Transform.scale(
-                  scale: 1.0 + (_pulseController.value * 0.05),
-                  child: Container(
-                    padding: const EdgeInsets.all(AppSpacing.xxl),
-                    decoration: BoxDecoration(
-                      color: primaryColor.withOpacity(0.1),
-                      shape: BoxShape.circle,
+                final scale = 1.0 + (_pulseController.value * 0.25);
+                final opacity = 0.7 + (_pulseController.value * 0.3);
+
+                return Opacity(
+                  opacity: opacity,
+                  child: Transform.scale(
+                    scale: scale,
+                    child: Container(
+                      padding: const EdgeInsets.all(AppSpacing.xxl),
+                      decoration: BoxDecoration(
+                        color: primaryColor.withOpacity(0.15),
+                        shape: BoxShape.circle,
+                      ),
+                      child: Icon(
+                        Icons.music_off,
+                        size: 80,
+                        color: primaryColor,
+                      ),
                     ),
-                    child: Icon(Icons.music_off, size: 80, color: primaryColor),
                   ),
                 );
               },
             ),
+
             const SizedBox(height: AppSpacing.xxl),
             Text(
               'Jammer Mode is Disabled',
@@ -504,8 +623,11 @@ class _ListenTogetherHomeScreenState
               CircleAvatar(
                 radius: 24,
                 backgroundColor: bgColor,
-                backgroundImage: invitation.hostProfilePic != null
-                    ? NetworkImage(invitation.hostProfilePic!)
+                backgroundImage:
+                    getProfileImageUrl(invitation.hostProfilePic) != null
+                    ? NetworkImage(
+                        getProfileImageUrl(invitation.hostProfilePic)!,
+                      )
                     : null,
                 child: invitation.hostProfilePic == null
                     ? Icon(Icons.person, color: textSecondary)
@@ -1337,4 +1459,12 @@ class _CreateSessionDialogState extends ConsumerState<_CreateSessionDialog> {
       }
     }
   }
+}
+
+String? getProfileImageUrl(String? fileName) {
+  if (fileName == null || fileName.isEmpty) return null;
+
+  return Supabase.instance.client.storage
+      .from('profile-pictures')
+      .getPublicUrl(fileName);
 }

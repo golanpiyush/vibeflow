@@ -203,16 +203,10 @@ class _SocialScreenState extends ConsumerState<SocialScreen> {
     ThemeData themeData,
   ) {
     final double availableHeight = MediaQuery.of(context).size.height;
-    final primaryColor = themeData.primaryColor;
-    final textSecondary =
-        themeData.textTheme.bodyMedium?.color ?? Colors.white70;
-
-    final sidebarLabelStyle = AppTypography.sidebarLabel(
-      context,
-    ).copyWith(color: textSecondary);
-    final sidebarLabelActiveStyle = AppTypography.sidebarLabelActive(
-      context,
-    ).copyWith(color: primaryColor);
+    final colorScheme = themeData.colorScheme;
+    final primaryColor = colorScheme.primary;
+    final textColor = colorScheme.onSurface;
+    final inactiveColor = colorScheme.onSurface.withOpacity(0.5);
 
     Future<bool> _shouldShowJammer() async {
       try {
@@ -250,23 +244,21 @@ class _SocialScreenState extends ConsumerState<SocialScreen> {
             _buildSidebarItem(
               label: 'Friends',
               isActive: selectedIndex == 0,
-              labelStyle: selectedIndex == 0
-                  ? sidebarLabelActiveStyle
-                  : sidebarLabelStyle,
+              activeColor: primaryColor,
+              inactiveColor: inactiveColor,
               onTap: () =>
                   ref.read(socialSidebarIndexProvider.notifier).state = 0,
             ),
-            const SizedBox(height: 24),
+            const SizedBox(height: 16),
             _buildSidebarItem(
               label: 'Profiles',
               isActive: selectedIndex == 1,
-              labelStyle: selectedIndex == 1
-                  ? sidebarLabelActiveStyle
-                  : sidebarLabelStyle,
+              activeColor: primaryColor,
+              inactiveColor: inactiveColor,
               onTap: () =>
                   ref.read(socialSidebarIndexProvider.notifier).state = 1,
             ),
-            const SizedBox(height: 24),
+            const SizedBox(height: 16),
             FutureBuilder<bool>(
               future: _shouldShowJammer(),
               builder: (context, snapshot) {
@@ -284,9 +276,8 @@ class _SocialScreenState extends ConsumerState<SocialScreen> {
                     _buildSidebarItem(
                       label: 'Jammer',
                       isActive: selectedIndex == 3,
-                      labelStyle: selectedIndex == 3
-                          ? sidebarLabelActiveStyle
-                          : sidebarLabelStyle,
+                      activeColor: primaryColor,
+                      inactiveColor: inactiveColor,
                       onTap: () => Navigator.push(
                         context,
                         MaterialPageRoute(
@@ -294,7 +285,7 @@ class _SocialScreenState extends ConsumerState<SocialScreen> {
                         ),
                       ),
                     ),
-                    const SizedBox(height: 24),
+                    const SizedBox(height: 16),
                   ],
                 );
               },
@@ -302,9 +293,8 @@ class _SocialScreenState extends ConsumerState<SocialScreen> {
             _buildSidebarItem(
               label: 'Edit Profile',
               isActive: selectedIndex == 2,
-              labelStyle: selectedIndex == 2
-                  ? sidebarLabelActiveStyle
-                  : sidebarLabelStyle,
+              activeColor: primaryColor,
+              inactiveColor: inactiveColor,
               onTap: () =>
                   ref.read(socialSidebarIndexProvider.notifier).state = 2,
             ),
@@ -318,7 +308,8 @@ class _SocialScreenState extends ConsumerState<SocialScreen> {
   Widget _buildSidebarItem({
     required String label,
     bool isActive = false,
-    required TextStyle labelStyle,
+    required Color activeColor,
+    required Color inactiveColor,
     VoidCallback? onTap,
   }) {
     return GestureDetector(
@@ -332,7 +323,11 @@ class _SocialScreenState extends ConsumerState<SocialScreen> {
           child: Text(
             label,
             textAlign: TextAlign.center,
-            style: labelStyle.copyWith(fontSize: 15),
+            style: AppTypography.sidebarLabel(context).copyWith(
+              fontSize: 15,
+              color: isActive ? activeColor : inactiveColor,
+              fontWeight: isActive ? FontWeight.w600 : FontWeight.normal,
+            ),
           ),
         ),
       ),

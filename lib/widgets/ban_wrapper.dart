@@ -68,7 +68,7 @@ class BannedScreen extends StatelessWidget {
 
                     // Message
                     Text(
-                      'Your account has been suspended due to violation of our terms of service.',
+                      'Your account has been suspended due to violation of my terms of service/usage.',
                       style: TextStyle(
                         fontSize: 16,
                         color: Colors.white.withOpacity(0.7),
@@ -152,29 +152,29 @@ class BannedScreen extends StatelessWidget {
                     const SizedBox(height: 24),
 
                     // Sign Out Button
-                    OutlinedButton.icon(
-                      onPressed: () async {
-                        await Supabase.instance.client.auth.signOut();
-                      },
-                      icon: const Icon(Icons.logout, color: Colors.red),
-                      label: Text(
-                        'Sign Out',
-                        style: TextStyle(color: Colors.red.shade400),
-                      ),
-                      style: OutlinedButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 32,
-                          vertical: 16,
-                        ),
-                        side: BorderSide(
-                          color: Colors.red.shade400,
-                          width: 1.5,
-                        ),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                      ),
-                    ),
+                    // OutlinedButton.icon(
+                    //   onPressed: () async {
+                    //     await Supabase.instance.client.auth.signOut();
+                    //   },
+                    //   icon: const Icon(Icons.logout, color: Colors.red),
+                    //   label: Text(
+                    //     'Sign Out',
+                    //     style: TextStyle(color: Colors.red.shade400),
+                    //   ),
+                    //   style: OutlinedButton.styleFrom(
+                    //     padding: const EdgeInsets.symmetric(
+                    //       horizontal: 32,
+                    //       vertical: 16,
+                    //     ),
+                    //     side: BorderSide(
+                    //       color: Colors.red.shade400,
+                    //       width: 1.5,
+                    //     ),
+                    //     shape: RoundedRectangleBorder(
+                    //       borderRadius: BorderRadius.circular(12),
+                    //     ),
+                    //   ),
+                    // ),
                   ],
                 ),
               ),
