@@ -203,6 +203,10 @@ ThemeData _buildCustomLightTheme(AppFontFamily fontFamily) {
       surface: Colors.white,
       background: Colors.white,
       error: Color(0xFFFF3B30),
+      onPrimary: Colors.white,
+      onSecondary: Colors.black,
+      onSurface: Colors.black,
+      onBackground: Colors.black,
     ),
     textTheme: _getTextTheme(fontFamily),
     appBarTheme: const AppBarTheme(
@@ -222,9 +226,9 @@ ThemeData _buildPureBlackTheme(AppFontFamily fontFamily) {
     useMaterial3: true,
     brightness: Brightness.dark,
     scaffoldBackgroundColor: Colors.black,
-    primaryColor: Colors.black,
+    primaryColor: const Color(0xFF6B4CE8),
     colorScheme: const ColorScheme.dark(
-      primary: Colors.black,
+      primary: Color(0xFF6B4CE8),
       secondary: Color(0xFF1A1A1A),
       surface: Color(0xFF0A0A0A),
       background: Colors.black,
@@ -291,6 +295,10 @@ ThemeData _buildCustomDarkTheme(AppFontFamily fontFamily) {
       surface: Color(0xFF1E1E1E),
       background: Color(0xFF121212),
       error: Color(0xFFFF3B30),
+      onPrimary: Colors.white,
+      onSecondary: Colors.white,
+      onSurface: Colors.white,
+      onBackground: Colors.white,
     ),
     textTheme: _getTextTheme(fontFamily),
     appBarTheme: const AppBarTheme(
@@ -304,39 +312,81 @@ ThemeData _buildCustomDarkTheme(AppFontFamily fontFamily) {
   );
 }
 
+// ✅ FIXED: Dark theme provider with proper text contrast for Material You
 final darkThemeProvider = Provider<ThemeData>((ref) {
   final themeState = ref.watch(themeProvider);
   final fontFamily = themeState.fontFamily;
 
   switch (themeState.themeType) {
     case ThemeType.light:
-      return _buildCustomDarkTheme(fontFamily); // Regular dark, not pure black
+      return _buildCustomDarkTheme(fontFamily);
 
     case ThemeType.material:
-      final baseTheme = themeState.seedColor != null
-          ? ThemeData(
-              useMaterial3: true,
-              colorScheme: ColorScheme.fromSeed(
-                seedColor: themeState.seedColor!,
-                brightness: Brightness.dark,
-              ),
+      // ✅ FIX: Use systemThemeMode to determine brightness for Material You
+      final brightness = themeState.systemThemeMode == AppThemeMode.light
+          ? Brightness.light
+          : Brightness.dark;
+
+      final seedColor = themeState.seedColor ?? const Color(0xFF6B4CE8);
+
+      // ✅ CRITICAL FIX: Generate proper Material You dark scheme with MAXIMUM text contrast
+      final colorScheme = brightness == Brightness.dark
+          ? ColorScheme.fromSeed(
+              seedColor: seedColor,
+              brightness: Brightness.dark,
+            ).copyWith(
+              // ✅ FIXED: Use pure white for maximum contrast (no opacity)
+              onSurface: Colors.white,
+              onSurfaceVariant: Colors.white.withOpacity(0.85),
+              onBackground: Colors.white,
+              onPrimary: Colors.white,
+              onSecondary: Colors.white,
+              onError: Colors.white,
+              // ✅ Ensure card backgrounds are distinct and visible
+              surface: const Color(0xFF1C1B1F),
+              surfaceVariant: const Color(0xFF49454F),
+              background: const Color(0xFF1C1B1F),
+              // ✅ Add subtle surface tint for depth
+              surfaceTint: seedColor.withOpacity(0.05),
             )
-          : ThemeData(
-              useMaterial3: true,
-              colorScheme: ColorScheme.fromSeed(
-                seedColor: const Color(0xFF6B4CE8),
-                brightness: Brightness.dark,
-              ),
+          : ColorScheme.fromSeed(
+              seedColor: seedColor,
+              brightness: Brightness.light,
             );
 
-      return baseTheme.copyWith(textTheme: _getTextTheme(fontFamily));
+      final baseTheme = ThemeData(
+        useMaterial3: true,
+        colorScheme: colorScheme,
+        scaffoldBackgroundColor: colorScheme.background,
+        cardColor: colorScheme.surface,
+        dialogBackgroundColor: colorScheme.surface,
+      );
+
+      return baseTheme.copyWith(
+        textTheme: _getTextTheme(fontFamily).apply(
+          // ✅ ENSURE all text is bright white in dark mode
+          bodyColor: brightness == Brightness.dark ? Colors.white : null,
+          displayColor: brightness == Brightness.dark ? Colors.white : null,
+        ),
+        // ✅ Ensure app bar has good contrast
+        appBarTheme: AppBarTheme(
+          backgroundColor: colorScheme.surface,
+          foregroundColor: colorScheme.onSurface,
+          elevation: 0,
+        ),
+        // ✅ Ensure bottom nav has good contrast
+        bottomNavigationBarTheme: BottomNavigationBarThemeData(
+          backgroundColor: colorScheme.surface,
+          selectedItemColor: colorScheme.primary,
+          unselectedItemColor: colorScheme.onSurface.withOpacity(0.6),
+        ),
+      );
 
     case ThemeType.pureBlack:
-      return _buildPureBlackTheme(
-        fontFamily,
-      ); // Only pure black returns pure black
+      return _buildPureBlackTheme(fontFamily);
   }
 });
+
 final thumbnailRadiusProvider = Provider<double>((ref) {
   final roundness = ref.watch(themeProvider).thumbnailRoundness;
 

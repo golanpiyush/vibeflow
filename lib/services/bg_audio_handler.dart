@@ -15,6 +15,7 @@ import 'package:vibeflow/models/song_model.dart';
 import 'package:vibeflow/providers/RealTimeService.dart';
 import 'package:vibeflow/services/audioGoverner.dart';
 import 'package:vibeflow/services/cacheManager.dart';
+import 'package:vibeflow/services/last_played_service.dart';
 import 'package:vibeflow/services/smart_audio_refetcher.dart';
 import 'package:vibeflow/services/smart_radio_service.dart';
 import 'package:vibeflow/utils/audio_session_bridge.dart';
@@ -48,7 +49,8 @@ class BackgroundAudioHandler extends BaseAudioHandler
   final UserPreferenceTracker _userPreferences = UserPreferenceTracker();
   final SmartRadioService _smartRadioService = SmartRadioService();
   final YouTubeMusicScraper _scraper = YouTubeMusicScraper();
-
+  bool _lineByLineLyricsEnabled = false;
+  bool get lineByLineLyricsEnabled => _lineByLineLyricsEnabled;
   final RadioService _radioService = RadioService();
   final Map<String, String> _urlCache = {};
   final Map<String, DateTime> _urlCacheTime = {};
@@ -165,6 +167,8 @@ class BackgroundAudioHandler extends BaseAudioHandler
           prefs.getBool('persistent_queue_enabled') ?? false;
       _loudnessNormalizationEnabled =
           prefs.getBool('loudness_normalization_enabled') ?? false; // ADD THIS
+      _lineByLineLyricsEnabled =
+          prefs.getBool('line_by_line_lyrics_enabled') ?? false;
 
       print(
         '⚙️ [Settings] Loaded - Resume: $_resumePlaybackEnabled, Queue: $_persistentQueueEnabled, Normalization: $_loudnessNormalizationEnabled',
@@ -594,7 +598,7 @@ class BackgroundAudioHandler extends BaseAudioHandler
       if (state == ProcessingState.completed) {
         print('✅ [BackgroundAudioHandler] Song completed');
 
-        // ADD THIS: Record completed listen
+        // Record completed listen
         final currentMedia = mediaItem.value;
         if (currentMedia != null) {
           _userPreferences.recordListen(
@@ -610,10 +614,15 @@ class BackgroundAudioHandler extends BaseAudioHandler
           print('🔁 [LoopMode.one] Restarting current song');
           _audioPlayer.seek(Duration.zero);
           _audioPlayer.play();
-          return; // Don't call skipToNext
+          return;
         }
 
-        print('⏭️ [BackgroundAudioHandler] Playing next...');
+        // ✅ FIX: Ensure playback continues
+        print('⏭️ [BackgroundAudioHandler] Auto-continuing to next song...');
+
+        // Set intent to keep playing BEFORE calling skipToNext
+        playbackState.add(playbackState.value.copyWith(playing: true));
+
         skipToNext();
       }
     });
@@ -643,28 +652,31 @@ class BackgroundAudioHandler extends BaseAudioHandler
       onError: (Object e, StackTrace st) {
         print('❌ [AudioPlayer] Error event: $e');
 
-        // Only handle if not already recovering
-        if (_isAutoRecovering) {
-          print('⏳ [AudioPlayer] Recovery in progress, ignoring error');
-          return;
-        }
+        // ✅ ADD: Prevent crashes from error events
+        try {
+          if (_isAutoRecovering) {
+            print('⏳ [AudioPlayer] Recovery in progress, ignoring error');
+            return;
+          }
 
-        final errorMessage = e.toString();
-        final songTitle = mediaItem.value?.title ?? 'Unknown';
+          final errorMessage = e.toString();
+          final songTitle = mediaItem.value?.title ?? 'Unknown';
 
-        // Check if it's a recoverable error
-        if (_isRecoverableError(errorMessage)) {
-          print(
-            '🔄 [AudioPlayer] Recoverable error, starting smart recovery...',
-          );
-          _handleSmartAutoRecovery();
-        } else {
-          // Unrecoverable error
-          _governor.onPlaybackError(errorMessage, songTitle);
-          _notifyPlaybackError(
-            'Playback failed: ${_sanitizeErrorMessage(errorMessage)}',
-            isSourceError: false,
-          );
+          if (_isRecoverableError(errorMessage)) {
+            print(
+              '🔄 [AudioPlayer] Recoverable error, starting smart recovery...',
+            );
+            _handleSmartAutoRecovery();
+          } else {
+            _governor.onPlaybackError(errorMessage, songTitle);
+            _notifyPlaybackError(
+              'Playback failed: ${_sanitizeErrorMessage(errorMessage)}',
+              isSourceError: false,
+            );
+          }
+        } catch (innerError) {
+          // ✅ ADD: Catch any errors in error handler itself
+          print('❌ [AudioPlayer] Error in error handler: $innerError');
         }
       },
     );
@@ -921,63 +933,11 @@ class BackgroundAudioHandler extends BaseAudioHandler
     }
   }
 
-  Future<void> _handle403ErrorRecovery() async {
-    if (_isRefreshingUrl) return;
-    _governor.on403Error();
-    final currentMedia = mediaItem.value;
-    if (currentMedia == null) return;
-
-    _isRefreshingUrl = true;
-    _isUrlExpired = true;
-
-    _updateCustomState({'url_expired': true, 'refreshing_url': true});
-
-    try {
-      print('🔄 [Auto-Refresh] URL expired, refreshing in background...');
-
-      final audioCache = AudioUrlCache();
-      await audioCache.remove(currentMedia.id);
-      _urlCache.remove(currentMedia.id);
-      _urlCacheTime.remove(currentMedia.id);
-
-      final quickPick = _quickPickFromMediaItem(currentMedia);
-      final freshUrl = await _core.getAudioUrl(
-        currentMedia.id,
-        song: quickPick,
-      );
-
-      if (freshUrl != null && freshUrl.isNotEmpty) {
-        print('✅ [Auto-Refresh] Fresh URL obtained in background');
-        _governor.onUrlRefreshSuccess();
-        await _audioPlayer.setUrl(freshUrl);
-        await _audioPlayer.play();
-
-        await Future.delayed(const Duration(milliseconds: 300));
-        await _tracker.startTracking(quickPick);
-
-        _isUrlExpired = false;
-
-        _updateCustomState({'url_expired': false, 'refreshing_url': false});
-
-        print('✅ [Auto-Refresh] Playback resumed');
-      } else {
-        print('❌ [Auto-Refresh] Failed to get fresh URL');
-        _updateCustomState({
-          'url_expired': true,
-          'refreshing_url': false,
-          'refresh_failed': true,
-        });
-      }
-    } catch (e) {
-      print('❌ [Auto-Refresh] Error: $e');
-      _updateCustomState({
-        'url_expired': true,
-        'refreshing_url': false,
-        'refresh_failed': true,
-      });
-    } finally {
-      _isRefreshingUrl = false;
-    }
+  Future<void> setLineByLineLyricsEnabled(bool enabled) async {
+    _lineByLineLyricsEnabled = enabled;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('line_by_line_lyrics_enabled', enabled);
+    print('✅ Line-by-line lyrics ${enabled ? 'enabled' : 'disabled'}');
   }
 
   @override
@@ -1297,6 +1257,7 @@ class BackgroundAudioHandler extends BaseAudioHandler
 
       print('📝 [HANDLER] Starting realtime tracking...');
       await _tracker.startTracking(song);
+      await LastPlayedService.saveLastPlayed(song); // ✅ ADD THIS
 
       print('✅ [HANDLER] ========== PLAYBACK STARTED ==========');
       print('   Song: ${song.title}');
@@ -1605,6 +1566,7 @@ class BackgroundAudioHandler extends BaseAudioHandler
 
       print('📝 [HANDLER] Starting realtime tracking...');
       await _tracker.startTracking(song);
+      await LastPlayedService.saveLastPlayed(song); // ✅ ADD THIS
 
       print('✅ [HANDLER] ========== PLAYBACK STARTED FROM RADIO ==========');
       print(
@@ -2873,32 +2835,76 @@ class BackgroundAudioHandler extends BaseAudioHandler
 
       try {
         print('🔍 [SKIP] Getting audio URL...');
-        final audioUrl = await _getAudioUrl(nextMedia.id, song: nextSong);
+        String? audioUrl = await _getAudioUrl(nextMedia!.id, song: nextSong);
 
-        if (audioUrl == null) {
-          throw Exception('Failed to get audio URL for ${nextMedia.title}');
+        // Skip unavailable songs instead of crashing
+        while (audioUrl == null) {
+          print(
+            '⏭️ [SKIP] Song unavailable: "${nextMedia!.title}", trying next...',
+          );
+
+          if (_isPlayingPlaylist && _currentIndex < _queue.length - 1) {
+            _currentIndex++;
+            _playlistCurrentIndex++;
+            nextMedia = _queue[_currentIndex];
+            nextSong = _quickPickFromMediaItem(nextMedia!);
+            print(
+              '📋 [SKIP] Trying playlist song ${_currentIndex + 1}/${_queue.length}: ${nextMedia!.title}',
+            );
+            audioUrl = await _getAudioUrl(nextMedia!.id, song: nextSong);
+          } else if (!_isPlayingPlaylist &&
+              _radioQueue.isNotEmpty &&
+              _radioQueueIndex < _radioQueue.length - 1) {
+            _radioQueueIndex++;
+            nextMedia = _radioQueue[_radioQueueIndex];
+            nextSong = _quickPickFromMediaItem(nextMedia!);
+            print(
+              '📻 [SKIP] Trying radio song ${_radioQueueIndex + 1}/${_radioQueue.length}: ${nextMedia!.title}',
+            );
+            audioUrl = await _getAudioUrl(nextMedia!.id, song: nextSong);
+          } else {
+            print(
+              '❌ [SKIP] No more songs available after skipping unavailable tracks',
+            );
+            playbackState.add(
+              playbackState.value.copyWith(
+                processingState: AudioProcessingState.idle,
+                playing: false,
+              ),
+            );
+            return;
+          }
         }
 
-        print('✅ [SKIP] Got audio URL, setting player...');
+        // Update mediaItem to reflect the actual song being played (may have changed)
+        mediaItem.add(nextMedia!);
+
+        print(
+          '✅ [SKIP] Got audio URL for: ${nextMedia!.title}, setting player...',
+        );
 
         try {
           await _audioPlayer.setUrl(audioUrl);
-          // ✅ NEW: Re-attach audio effects
-          await Future.delayed(const Duration(milliseconds: 100));
-          await _reattachAudioEffects();
+
+          // ✅ FIX: Start playback IMMEDIATELY without waiting
+          print('▶️ [SKIP] Starting playback immediately...');
+          await _audioPlayer.play();
+
+          // Re-attach audio effects AFTER starting playback
+          Future.delayed(const Duration(milliseconds: 100), () {
+            _reattachAudioEffects();
+          });
         } catch (e) {
           throw Exception('Failed to set audio source: $e');
         }
 
-        print('▶️ [SKIP] Starting playback...');
-        await _audioPlayer.play();
-
-        await Future.delayed(const Duration(milliseconds: 300));
+        await Future.delayed(const Duration(milliseconds: 200));
 
         print('📝 [SKIP] Starting tracking...');
-        await _tracker.startTracking(nextSong);
+        await _tracker.startTracking(nextSong!);
+        await LastPlayedService.saveLastPlayed(nextSong!); // ✅ ADD THIS
 
-        print('✅ [SKIP] Successfully playing: ${nextMedia.title}');
+        print('✅ [SKIP] Successfully playing: ${nextMedia!.title}');
 
         return;
       } catch (e, stackTrace) {
@@ -2924,8 +2930,8 @@ class BackgroundAudioHandler extends BaseAudioHandler
     print('❌ [SKIP] No next song available');
     playbackState.add(
       playbackState.value.copyWith(
-        processingState: AudioProcessingState.idle,
-        playing: false,
+        processingState: AudioProcessingState.loading,
+        playing: true, // ✅ KEEP playing: true for auto-continue
       ),
     );
   }
@@ -2986,6 +2992,8 @@ class BackgroundAudioHandler extends BaseAudioHandler
         // Wait for playback to start, then track
         await Future.delayed(const Duration(milliseconds: 300));
         await _tracker.startTracking(prevSong);
+        await LastPlayedService.saveLastPlayed(prevSong!); // ✅ ADD THIS
+
         return;
       }
     }
@@ -3041,7 +3049,6 @@ class BackgroundAudioHandler extends BaseAudioHandler
       await _audioPlayer.stop();
       await Future.delayed(const Duration(milliseconds: 100));
 
-      // Clear radio and mark playlist mode
       print('🗑️ [PLAYLIST] Clearing radio (entering playlist mode)');
       _radioQueue.clear();
       _radioQueueIndex = -1;
@@ -3084,30 +3091,55 @@ class BackgroundAudioHandler extends BaseAudioHandler
       _currentIndex = startIndex.clamp(0, _queue.length - 1);
       queue.add(_queue);
 
+      // Try to find a playable song starting from startIndex
+      String? audioUrl;
+      int playableIndex = _currentIndex;
+
+      while (playableIndex < songs.length) {
+        final candidateSong = songs[playableIndex];
+        print(
+          '🔍 [PLAYLIST] Trying song ${playableIndex + 1}/${songs.length}: ${candidateSong.title}',
+        );
+        audioUrl = await _getAudioUrl(
+          candidateSong.videoId,
+          song: candidateSong,
+        );
+
+        if (audioUrl != null && audioUrl.isNotEmpty) {
+          print('✅ [PLAYLIST] Got audio URL for: ${candidateSong.title}');
+          break;
+        }
+
+        print(
+          '⏭️ [PLAYLIST] Song unavailable, skipping: ${candidateSong.title}',
+        );
+        playableIndex++;
+      }
+
+      if (audioUrl == null || audioUrl.isEmpty) {
+        throw Exception('No playable songs found in playlist');
+      }
+
+      // Update index to the first playable song
+      if (playableIndex != _currentIndex) {
+        _currentIndex = playableIndex;
+        _playlistCurrentIndex = playableIndex;
+        print(
+          '📋 [PLAYLIST] Adjusted start to index $_currentIndex after skipping unavailable songs',
+        );
+      }
+
+      // Set current media item AFTER resolving the playable index
       final currentSong = songs[_currentIndex];
       final currentMedia = _queue[_currentIndex];
-
-      // Set current media item (now with HQ art for notification)
       mediaItem.add(currentMedia);
 
       print('🖼️ [PLAYLIST] Current song HQ art: ${currentMedia.artUri}');
       print('   Title: ${currentMedia.title}');
       print('   Artist: ${currentMedia.artist}');
 
-      print(
-        '🔍 [PLAYLIST] Getting audio URL for song ${_currentIndex + 1}/${songs.length}...',
-      );
-
-      final audioUrl = await _getAudioUrl(
-        currentSong.videoId,
-        song: currentSong,
-      );
-      if (audioUrl == null) {
-        throw Exception('Failed to get audio URL');
-      }
-
       await _audioPlayer.setUrl(audioUrl);
-      // ✅ NEW: Re-attach audio effects
+      // Re-attach audio effects after setting new audio source
       await Future.delayed(const Duration(milliseconds: 100));
       await _reattachAudioEffects();
       await _audioPlayer.play();
@@ -3125,6 +3157,7 @@ class BackgroundAudioHandler extends BaseAudioHandler
 
       await Future.delayed(const Duration(milliseconds: 300));
       await _tracker.startTracking(currentSong);
+      await LastPlayedService.saveLastPlayed(currentSong); // ✅ ADD THIS
 
       print('✅ [PLAYLIST] ========== PLAYBACK STARTED ==========');
       print(

@@ -1,4 +1,9 @@
-// lib/main.dart - WITH DEEP LINKING ADDED
+// lib/main.dart - FIXED VERSION
+// Key changes:
+// 1. Changed notification icon to use existing 'mipmap/ic_launcher'
+// 2. Set androidStopForegroundOnPause to false to keep notification visible
+
+import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -10,7 +15,7 @@ import 'package:vibeflow/pages/access_code_management_screen.dart';
 import 'package:vibeflow/pages/authOnboard/access_code_screen.dart';
 import 'package:vibeflow/pages/authOnboard/profile_setup_screen.dart';
 import 'package:vibeflow/pages/home_page.dart';
-import 'package:vibeflow/pages/newPlayerPage.dart';
+import 'package:vibeflow/providers/immersive_mode_provider.dart';
 import 'package:vibeflow/services/access_code_wrapper.dart';
 import 'package:vibeflow/services/audio_service.dart';
 import 'package:vibeflow/services/haptic_feedback_service.dart';
@@ -20,30 +25,39 @@ import 'package:vibeflow/utils/secure_storage.dart';
 import 'package:vibeflow/utils/theme_provider.dart';
 import 'package:vibeflow/services/supabase_initializer.dart';
 import 'package:vibeflow/widgets/ban_wrapper.dart';
+import 'package:vibeflow/widgets/global_miniplayer.dart';
 
 final GlobalKey<NavigatorState> rootNavigatorKey = GlobalKey<NavigatorState>();
+final ValueNotifier<bool> isMiniplayerVisible = ValueNotifier(true);
 
 Future<void> main() async {
+  FlutterError.onError = (FlutterErrorDetails details) {
+    FlutterError.presentError(details);
+    debugPrint('❌ [Flutter Error] ${details.exception}');
+    debugPrint('Stack: ${details.stack}');
+  };
+
+  PlatformDispatcher.instance.onError = (error, stack) {
+    debugPrint('❌ [Platform Error] $error');
+    debugPrint('Stack: $stack');
+    return true;
+  };
+
   WidgetsFlutterBinding.ensureInitialized();
 
-  // 🗄️ Initialize Database FIRST
   final dbService = DatabaseService();
   await dbService.database;
   print('✅ Local database initialized');
 
-  // 🔐 Initialize Supabase
   await SupabaseInitializer.initialize();
   print('✅ Supabase initialized');
 
-  // 🎵 Initialize Audio Service
   await AudioServices.init();
   print('✅ Audio service initialized');
 
-  // 🤖 Initialize AI Playlist System (if access code exists)
   await _initializeAiSystem();
   print('✅ AI system check complete');
 
-  // 📥 Check downloads after app update (INTEGRATED)
   final updateReport = await DownloadService.checkAfterUpdate();
   if (updateReport.wasUpdated) {
     print(
@@ -58,40 +72,12 @@ Future<void> main() async {
     print('✅ Downloads verified (no update)');
   }
 
-  // 🔔 Initialize Awesome Notifications
   await _initAwesomeNotifications();
   print('✅ Notifications initialized');
 
-  // 📱 Initialize haptic feedback
   await HapticFeedbackService().initialize();
   print('✅ Haptic feedback initialized');
 
-  // // 🔄 CHECK FOR UPDATES FROM GITHUB - ADD THIS SECTION
-  // print('🔍 Checking for app updates from GitHub...');
-  // try {
-  //   final updateResult = await UpdateManagerService.checkForUpdate();
-
-  //   switch (updateResult.status) {
-  //     case UpdateStatus.available:
-  //       print('🎉 ${updateResult.message}');
-  //       if (updateResult.updateInfo != null) {
-  //         print('   Current: v${updateResult.updateInfo!.currentVersion}');
-  //         print('   Latest: v${updateResult.updateInfo!.latestVersion}');
-  //         print('   Size: ${updateResult.updateInfo!.fileSizeFormatted}');
-  //       }
-  //       break;
-  //     case UpdateStatus.upToDate:
-  //       print('✅ ${updateResult.message}');
-  //       break;
-  //     case UpdateStatus.error:
-  //       print('⚠️ ${updateResult.message}');
-  //       break;
-  //   }
-  // } catch (e) {
-  //   print('⚠️ Update check failed: $e');
-  // }
-
-  // 🎛 System UI styling
   SystemChrome.setSystemUIOverlayStyle(
     const SystemUiOverlayStyle(
       statusBarColor: Colors.transparent,
@@ -99,7 +85,26 @@ Future<void> main() async {
     ),
   );
 
+  _setupNotificationListeners();
+
   runApp(const ProviderScope(child: VibeFlowApp()));
+}
+
+void _setupNotificationListeners() {
+  AwesomeNotifications().setListeners(
+    onActionReceivedMethod: (ReceivedAction receivedAction) async {
+      debugPrint('🔔 Notification action: ${receivedAction.buttonKeyPressed}');
+    },
+    onNotificationCreatedMethod: (ReceivedNotification notification) async {
+      debugPrint('🔔 Notification created: ${notification.title}');
+    },
+    onNotificationDisplayedMethod: (ReceivedNotification notification) async {
+      debugPrint('🔔 Notification displayed: ${notification.title}');
+    },
+    onDismissActionReceivedMethod: (ReceivedAction receivedAction) async {
+      debugPrint('🔔 Notification dismissed: ${receivedAction.title}');
+    },
+  );
 }
 
 Future<void> _initializeAiSystem() async {
@@ -115,51 +120,46 @@ Future<void> _initializeAiSystem() async {
     }
   } catch (e) {
     print('❌ Failed to initialize AI Playlist System: $e');
-    // App can still work without AI features
   }
 }
 
-/// 🔔 Awesome Notifications setup
 Future<void> _initAwesomeNotifications() async {
-  await AwesomeNotifications().initialize(
-    null, // Uses app icon
-    [
-      NotificationChannel(
-        channelKey: 'download_channel',
-        channelName: 'Downloads',
-        channelDescription: 'Download progress notifications',
-        defaultColor: const Color(0xFF9C27B0),
-        ledColor: Colors.white,
-        importance: NotificationImportance.High,
-        channelShowBadge: true,
-        playSound: false,
-        enableVibration: false,
-      ),
-      NotificationChannel(
-        channelKey: 'audio_error_channel',
-        channelName: 'Audio Errors',
-        channelDescription: 'Notifications for audio playback errors',
-        defaultColor: const Color(0xFFFF4458),
-        ledColor: Colors.red,
-        importance: NotificationImportance.High,
-        channelShowBadge: false,
-        playSound: true,
-        enableVibration: true,
-      ),
-      NotificationChannel(
-        channelKey: 'social_updates_channel',
-        channelName: 'Social Updates',
-        channelDescription: 'Notifications for social features',
-        defaultColor: const Color(0xFF2196F3),
-        ledColor: Colors.blue,
-        importance: NotificationImportance.Default,
-        channelShowBadge: true,
-        playSound: false,
-        enableVibration: true,
-      ),
-    ],
-    debug: false,
-  );
+  await AwesomeNotifications().initialize(null, [
+    NotificationChannel(
+      channelKey: 'download_channel',
+      channelName: 'Music Playback',
+      channelDescription: 'Now playing controls and music notifications',
+      defaultColor: const Color(0xFF9C27B0),
+      ledColor: Colors.white,
+      importance: NotificationImportance.Max,
+      channelShowBadge: true,
+      playSound: false,
+      enableVibration: false,
+      criticalAlerts: true,
+    ),
+    NotificationChannel(
+      channelKey: 'audio_error_channel',
+      channelName: 'Audio Errors',
+      channelDescription: 'Notifications for audio playback errors',
+      defaultColor: const Color(0xFFFF4458),
+      ledColor: Colors.red,
+      importance: NotificationImportance.High,
+      channelShowBadge: false,
+      playSound: true,
+      enableVibration: true,
+    ),
+    NotificationChannel(
+      channelKey: 'social_updates_channel',
+      channelName: 'Social Updates',
+      channelDescription: 'Notifications for social features',
+      defaultColor: const Color(0xFF2196F3),
+      ledColor: Colors.blue,
+      importance: NotificationImportance.Default,
+      channelShowBadge: true,
+      playSound: false,
+      enableVibration: true,
+    ),
+  ], debug: false);
 
   final isAllowed = await AwesomeNotifications().isNotificationAllowed();
   if (!isAllowed) {
@@ -168,7 +168,6 @@ Future<void> _initAwesomeNotifications() async {
 }
 
 Future<Widget> _determineInitialRoute() async {
-  // Check for orphan access code first
   final hasOrphan = await AccessCodeScreen.hasOrphanAccessCode();
   if (hasOrphan) {
     final secureStorage = SecureStorageService();
@@ -176,7 +175,6 @@ Future<Widget> _determineInitialRoute() async {
     return ProfileSetupScreen(accessCode: accessCode ?? '');
   }
 
-  // Default route - AccessCodeWrapper will handle the rest
   return const AccessCodeWrapper();
 }
 
@@ -367,7 +365,6 @@ class _VibeFlowAppState extends ConsumerState<VibeFlowApp> {
   void initState() {
     super.initState();
 
-    // 🔗 Initialize deep links after first frame
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final deepLinkService = ref.read(deepLinkServiceProvider);
       deepLinkService.initDeepLinks(context);
@@ -389,8 +386,38 @@ class _VibeFlowAppState extends ConsumerState<VibeFlowApp> {
       theme: lightTheme,
       darkTheme: darkTheme,
       themeMode: themeNotifier.themeMode,
+      // ✅ builder wraps EVERY route — miniplayer persists across all pages
+      builder: (context, child) {
+        final isImmersive = ref.watch(immersiveModeProvider);
+        final bottomInset = MediaQuery.of(context).padding.bottom;
 
-      // ✅ Wrap the home widget instead
+        if (isImmersive) {
+          SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
+        } else {
+          SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+        }
+
+        return ValueListenableBuilder<bool>(
+          valueListenable: isMiniplayerVisible,
+          builder: (context, isVisible, _) {
+            return Stack(
+              children: [
+                Padding(
+                  padding: EdgeInsets.only(
+                    // ✅ Remove bottom padding when miniplayer is hidden
+                    bottom: (!isVisible || isImmersive)
+                        ? 0
+                        : kMiniplayerHeight + bottomInset,
+                  ),
+                  child: child!,
+                ),
+                // ✅ Only render miniplayer when visible
+                if (isVisible) const GlobalMiniplayer(),
+              ],
+            );
+          },
+        );
+      },
       home: BanWrapper(
         child: FutureBuilder<Widget>(
           future: _determineInitialRoute(),
@@ -403,7 +430,6 @@ class _VibeFlowAppState extends ConsumerState<VibeFlowApp> {
 
             final initialScreen = snapshot.data ?? const AccessCodeWrapper();
 
-            // 🔐 Gate AI initialization behind access code
             _hasValidAccessCode().then((hasAccess) {
               if (hasAccess) {
                 initializeAiPlaylistSystem();
@@ -414,7 +440,6 @@ class _VibeFlowAppState extends ConsumerState<VibeFlowApp> {
           },
         ),
       ),
-
       routes: {
         '/home': (context) => const BanWrapper(child: HomePage()),
         '/access-code': (context) =>
@@ -427,21 +452,19 @@ class _VibeFlowAppState extends ConsumerState<VibeFlowApp> {
       scaffoldMessengerKey: AudioErrorHandler.scaffoldMessengerKey,
     );
   }
+}
 
-  Future<void> initializeAiPlaylistSystem() async {
-    try {
-      // Initialize the orchestrator (loads .env, validates API key)
-      await MusicIntelligenceOrchestrator.init();
-      print('✅ AI Playlist System initialized');
-    } catch (e) {
-      print('❌ Failed to initialize AI Playlist System: $e');
-      // App can still work without AI features
-    }
+Future<void> initializeAiPlaylistSystem() async {
+  try {
+    await MusicIntelligenceOrchestrator.init();
+    print('✅ AI Playlist System initialized');
+  } catch (e) {
+    print('❌ Failed to initialize AI Playlist System: $e');
   }
+}
 
-  Future<bool> _hasValidAccessCode() async {
-    final secureStorage = SecureStorageService();
-    final accessCode = await secureStorage.getAccessCode();
-    return accessCode != null && accessCode.isNotEmpty;
-  }
+Future<bool> _hasValidAccessCode() async {
+  final secureStorage = SecureStorageService();
+  final accessCode = await secureStorage.getAccessCode();
+  return accessCode != null && accessCode.isNotEmpty;
 }

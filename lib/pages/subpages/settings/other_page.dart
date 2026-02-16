@@ -657,6 +657,8 @@ class _SettingsPageTemplate extends ConsumerWidget {
       body: SafeArea(
         child: Column(
           children: [
+            const SizedBox(height: AppSpacing.xxxl),
+
             _buildTopBar(context, colorScheme),
             Expanded(
               child: Row(

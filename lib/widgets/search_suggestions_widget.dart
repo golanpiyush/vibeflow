@@ -4,7 +4,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:vibeflow/api_base/yt_music_search_suggestor.dart';
 import 'package:vibeflow/constants/app_spacing.dart';
 import 'package:vibeflow/constants/app_typography.dart';
-import 'package:vibeflow/constants/theme_colors.dart';
 
 /// Widget that displays search suggestions or recent searches
 /// Shows history when query is empty, suggestions when typing
@@ -91,17 +90,14 @@ class _SearchSuggestionsWidgetState
 
   @override
   Widget build(BuildContext context) {
-    final backgroundColor = ref.watch(themeBackgroundColorProvider);
-    final textPrimaryColor = ref.watch(themeTextPrimaryColorProvider);
-    final textSecondaryColor = ref.watch(themeTextSecondaryColorProvider);
-    final accentColor = ref.watch(themeAccentColorProvider);
-    final cardBackgroundColor = ref.watch(themeCardBackgroundColorProvider);
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
 
     final isEmpty = widget.query.trim().isEmpty;
     final hasHistory = _suggestions.any((s) => s.isHistory);
 
     return Container(
-      color: backgroundColor,
+      color: theme.scaffoldBackgroundColor,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -119,11 +115,14 @@ class _SearchSuggestionsWidgetState
                 children: [
                   Text(
                     'Recent Searches',
-                    style: AppTypography.sectionHeader(context).copyWith(
-                      fontSize: 14,
-                      fontWeight: FontWeight.w600,
-                      color: textPrimaryColor,
-                    ),
+                    style:
+                        theme.textTheme.titleSmall?.copyWith(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w600,
+                        ) ??
+                        AppTypography.sectionHeader(
+                          context,
+                        ).copyWith(fontSize: 14, fontWeight: FontWeight.w600),
                   ),
                   TextButton(
                     onPressed: _clearAllHistory,
@@ -137,9 +136,14 @@ class _SearchSuggestionsWidgetState
                     ),
                     child: Text(
                       'Clear All',
-                      style: AppTypography.caption(
-                        context,
-                      ).copyWith(color: accentColor, fontSize: 12),
+                      style:
+                          theme.textTheme.labelSmall?.copyWith(
+                            color: colorScheme.primary,
+                            fontSize: 12,
+                          ) ??
+                          AppTypography.caption(
+                            context,
+                          ).copyWith(color: colorScheme.primary, fontSize: 12),
                     ),
                   ),
                 ],
@@ -152,7 +156,7 @@ class _SearchSuggestionsWidgetState
               padding: const EdgeInsets.all(AppSpacing.lg),
               child: Center(
                 child: CircularProgressIndicator(
-                  color: textSecondaryColor,
+                  color: colorScheme.onSurface.withOpacity(0.6),
                   strokeWidth: 2,
                 ),
               ),
@@ -169,13 +173,7 @@ class _SearchSuggestionsWidgetState
                 itemCount: _suggestions.length,
                 itemBuilder: (context, index) {
                   final suggestion = _suggestions[index];
-                  return _buildSuggestionItem(
-                    suggestion,
-                    textPrimaryColor,
-                    textSecondaryColor,
-                    accentColor,
-                    cardBackgroundColor,
-                  );
+                  return _buildSuggestionItem(suggestion, theme, colorScheme);
                 },
               ),
             ),
@@ -192,22 +190,31 @@ class _SearchSuggestionsWidgetState
                       Icon(
                         Icons.history,
                         size: 56,
-                        color: textSecondaryColor.withOpacity(0.4),
+                        color: colorScheme.onSurface.withOpacity(0.4),
                       ),
                       const SizedBox(height: 16),
                       Text(
                         'No recent searches',
-                        style: AppTypography.subtitle(
-                          context,
-                        ).copyWith(color: textSecondaryColor),
+                        style:
+                            theme.textTheme.titleMedium?.copyWith(
+                              color: colorScheme.onSurface.withOpacity(0.6),
+                            ) ??
+                            AppTypography.subtitle(context).copyWith(
+                              color: colorScheme.onSurface.withOpacity(0.6),
+                            ),
                       ),
                       const SizedBox(height: 6),
                       Text(
                         'Your search history will appear here',
-                        style: AppTypography.caption(context).copyWith(
-                          color: textSecondaryColor.withOpacity(0.7),
-                          fontSize: 12,
-                        ),
+                        style:
+                            theme.textTheme.bodySmall?.copyWith(
+                              color: colorScheme.onSurface.withOpacity(0.5),
+                              fontSize: 12,
+                            ) ??
+                            AppTypography.caption(context).copyWith(
+                              color: colorScheme.onSurface.withOpacity(0.5),
+                              fontSize: 12,
+                            ),
                       ),
                     ],
                   ),
@@ -221,10 +228,8 @@ class _SearchSuggestionsWidgetState
 
   Widget _buildSuggestionItem(
     SearchSuggestion suggestion,
-    Color textPrimaryColor,
-    Color textSecondaryColor,
-    Color accentColor,
-    Color cardBackgroundColor,
+    ThemeData theme,
+    ColorScheme colorScheme,
   ) {
     return Material(
       color: Colors.transparent,
@@ -243,15 +248,15 @@ class _SearchSuggestionsWidgetState
                 height: 40,
                 decoration: BoxDecoration(
                   color: suggestion.isHistory
-                      ? accentColor.withOpacity(0.12)
-                      : cardBackgroundColor,
+                      ? colorScheme.primary.withOpacity(0.12)
+                      : theme.cardColor,
                   borderRadius: BorderRadius.circular(20),
                 ),
                 child: Icon(
                   suggestion.isHistory ? Icons.history : Icons.search,
                   color: suggestion.isHistory
-                      ? accentColor
-                      : textSecondaryColor,
+                      ? colorScheme.primary
+                      : colorScheme.onSurface.withOpacity(0.6),
                   size: 20,
                 ),
               ),
@@ -261,9 +266,14 @@ class _SearchSuggestionsWidgetState
               Expanded(
                 child: Text(
                   suggestion.text,
-                  style: AppTypography.songTitle(
-                    context,
-                  ).copyWith(color: textPrimaryColor, fontSize: 14),
+                  style:
+                      theme.textTheme.bodyLarge?.copyWith(
+                        color: colorScheme.onSurface,
+                        fontSize: 14,
+                      ) ??
+                      AppTypography.songTitle(
+                        context,
+                      ).copyWith(color: colorScheme.onSurface, fontSize: 14),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                 ),
@@ -272,7 +282,11 @@ class _SearchSuggestionsWidgetState
               // Actions
               if (suggestion.isHistory)
                 IconButton(
-                  icon: Icon(Icons.close, size: 18, color: textSecondaryColor),
+                  icon: Icon(
+                    Icons.close,
+                    size: 18,
+                    color: colorScheme.onSurface.withOpacity(0.6),
+                  ),
                   onPressed: () => _removeHistoryItem(suggestion.text),
                   splashRadius: 20,
                   padding: const EdgeInsets.all(8),
@@ -282,7 +296,7 @@ class _SearchSuggestionsWidgetState
                 Icon(
                   Icons.north_west,
                   size: 16,
-                  color: textSecondaryColor.withOpacity(0.6),
+                  color: colorScheme.onSurface.withOpacity(0.4),
                 ),
             ],
           ),
@@ -307,12 +321,12 @@ class CompactSearchSuggestions extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final cardBackgroundColor = ref.watch(themeCardBackgroundColorProvider);
+    final theme = Theme.of(context);
 
     return Container(
       constraints: const BoxConstraints(maxHeight: 400),
       decoration: BoxDecoration(
-        color: cardBackgroundColor,
+        color: theme.cardColor,
         borderRadius: BorderRadius.circular(12),
         boxShadow: [
           BoxShadow(

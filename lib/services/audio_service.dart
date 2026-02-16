@@ -1,17 +1,17 @@
+// lib/services/audio_service.dart
+// Fully fixed version: loopModeStream crash & null-safety
+
 import 'package:audio_service/audio_service.dart' as audio_service;
 import 'package:just_audio/just_audio.dart';
 import 'package:vibeflow/models/quick_picks_model.dart';
 import 'package:vibeflow/pages/player_page.dart';
 import 'package:vibeflow/services/bg_audio_handler.dart';
 
-/// Singleton service for managing background audio playback
 class AudioServices {
   static AudioServices? _instance;
   static BackgroundAudioHandler? _audioHandler;
 
   String? _currentStreamUrl;
-
-  // Getter for current audio URL
   String? get currentAudioUrl => _currentStreamUrl;
 
   AudioServices._();
@@ -20,21 +20,21 @@ class AudioServices {
     if (_instance == null) {
       _instance = AudioServices._();
 
-      // Initialize audio_service and get the handler
+      // ✅ Use existing app icon, avoid androidStopForegroundOnPause crash
       final handler = await audio_service.AudioService.init(
         builder: () => BackgroundAudioHandler(),
-        config: const audio_service.AudioServiceConfig(
+        config: audio_service.AudioServiceConfig(
           androidNotificationChannelId: 'com.vibeflow.audio',
           androidNotificationChannelName: 'VibeFlow Music',
-          androidNotificationOngoing: true,
-          androidNotificationIcon: 'mipmap/ic_launcher',
+          androidNotificationOngoing: false, // must be false
+          androidNotificationIcon: 'mipmap/ic_launcher', // use app icon
           androidShowNotificationBadge: true,
-          androidStopForegroundOnPause: true,
+          androidStopForegroundOnPause: false, // keep notification visible
         ),
       );
 
       _audioHandler = handler;
-      print('✅ [AudioService] Initialized');
+      print('✅ [AudioService] Initialized with app icon');
     }
     return _instance!;
   }
@@ -55,26 +55,20 @@ class AudioServices {
     return _audioHandler!;
   }
 
-  // ==================== PLAYBACK CONTROLS ====================
+  // ───────── Playback Controls ─────────
   Future<void> playSongFromRadio(QuickPick song) async {
-    final handler = getAudioHandler();
-    if (handler == null) return;
-
-    // Mark this as playing from existing radio (don't reload)
+    final handler = AudioServices.handler;
     await handler.playSongFromRadio(song);
   }
 
-  /// Play a single song
   Future<void> playSong(QuickPick song) async {
     await handler.playSong(song);
   }
 
-  /// Play a queue of songs
   Future<void> playQueue(List<QuickPick> songs, {int startIndex = 0}) async {
     await handler.playQueue(songs, startIndex: startIndex);
   }
 
-  /// Play/pause toggle
   Future<void> playPause() async {
     if (handler.isPlaying) {
       await handler.pause();
@@ -83,45 +77,14 @@ class AudioServices {
     }
   }
 
-  /// Pause playback
-  Future<void> pause() async {
-    await handler.pause();
-  }
-
-  /// Resume playback
-  Future<void> play() async {
-    await handler.play();
-  }
-
-  /// Stop playback
-  Future<void> stop() async {
-    await handler.stop();
-  }
-
-  /// Seek to position
-  Future<void> seek(Duration position) async {
-    await handler.seek(position);
-  }
-
-  /// Skip to next song - ADD THIS METHOD
-  Future<void> skipToNext() async {
-    await handler.skipToNext();
-  }
-
-  /// Skip to previous song - ADD THIS METHOD
-  Future<void> skipToPrevious() async {
-    await handler.skipToPrevious();
-  }
-
-  /// Fast forward 10 seconds
-  Future<void> fastForward() async {
-    await handler.fastForward();
-  }
-
-  /// Rewind 10 seconds
-  Future<void> rewind() async {
-    await handler.rewind();
-  }
+  Future<void> pause() async => await handler.pause();
+  Future<void> play() async => await handler.play();
+  Future<void> stop() async => await handler.stop();
+  Future<void> seek(Duration position) async => await handler.seek(position);
+  Future<void> skipToNext() async => await handler.skipToNext();
+  Future<void> skipToPrevious() async => await handler.skipToPrevious();
+  Future<void> fastForward() async => await handler.fastForward();
+  Future<void> rewind() async => await handler.rewind();
 
   Future<void> setLoopMode(LoopMode loopMode) async {
     await AudioServices.handler.customAction('set_loop_mode', {
@@ -129,37 +92,17 @@ class AudioServices {
     });
   }
 
-  Stream<LoopMode> get loopModeStream => handler.customState
-      .map<LoopMode>(
-        (state) => _getLoopModeFromState(state as Map<String, dynamic>?),
-      )
-      .distinct();
+  // ───────── Loop Mode Stream (FIXED) ─────────
+  Stream<LoopMode> get loopModeStream => handler.customState.stream.map((
+    state,
+  ) {
+    // Safe null-check + fallback to LoopMode.off
+    final index = (state as Map<String, dynamic>?)?['loop_mode'] as int? ?? 0;
+    if (index < 0 || index >= LoopMode.values.length) return LoopMode.off;
+    return LoopMode.values[index];
+  }).distinct(); // avoid duplicate rebuilds
 
-  LoopMode _getLoopModeFromState(Map<String, dynamic>? customState) {
-    if (customState == null) {
-      print('⚠️ [LoopMode] customState is null → LoopMode.off');
-      return LoopMode.off;
-    }
-
-    if (!customState.containsKey('loop_mode')) {
-      print('⚠️ [LoopMode] loop_mode key missing → LoopMode.off');
-      return LoopMode.off;
-    }
-
-    final index = customState['loop_mode'] as int;
-
-    // Safety check
-    if (index < 0 || index >= LoopMode.values.length) {
-      print('❌ [LoopMode] invalid index: $index → LoopMode.off');
-      return LoopMode.off;
-    }
-
-    final mode = LoopMode.values[index];
-    print('✅ [LoopMode] index=$index → $mode');
-    return mode;
-  }
-
-  /// Add a song to the queue
+  // ───────── Queue Helpers ─────────
   Future<void> addToQueue(QuickPick song) async {
     try {
       final mediaItem = audio_service.MediaItem(
@@ -193,16 +136,14 @@ class AudioServices {
     return Duration(minutes: minutes, seconds: seconds);
   }
 
-  // ==================== STREAMS ====================
-
+  // ───────── Streams ─────────
   Stream<audio_service.MediaItem?> get mediaItemStream => handler.mediaItem;
   Stream<audio_service.PlaybackState> get playbackStateStream =>
       handler.playbackState;
   Stream<Duration> get positionStream => handler.positionStream;
   Stream<Duration?> get durationStream => handler.durationStream;
 
-  // ==================== GETTERS ====================
-
+  // ───────── Getters ─────────
   bool get isPlaying => handler.isPlaying;
   Duration get position => handler.position;
   Duration? get duration => handler.duration;

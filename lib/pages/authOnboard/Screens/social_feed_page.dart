@@ -6,7 +6,6 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:vibeflow/api_base/db_actions.dart';
 import 'package:vibeflow/constants/app_spacing.dart';
 import 'package:vibeflow/constants/app_typography.dart';
-import 'package:vibeflow/constants/theme_colors.dart';
 import 'package:vibeflow/database/access_code_service.dart';
 import 'package:vibeflow/database/listening_activity_service.dart';
 import 'package:vibeflow/database/profile_service.dart';
@@ -16,13 +15,12 @@ import 'package:vibeflow/pages/authOnboard/Screens/edit_profile.dart';
 import 'package:vibeflow/pages/authOnboard/Screens/profiles_discovery_page.dart';
 import 'package:vibeflow/pages/authOnboard/listen_together/listen_together_home_screen.dart';
 import 'package:vibeflow/providers/realtime_activity_provider.dart';
-import 'package:vibeflow/utils/theme_provider.dart';
 import 'dart:async';
 
-// State provider for selected sidebar item
+import 'package:vibeflow/utils/theme_provider.dart';
+
 final socialSidebarIndexProvider = StateProvider<int>((ref) => 0);
 
-// Provider to get ONLY current user's latest activity (separate query)
 final currentUserLatestActivityProvider = StreamProvider<ListeningActivity?>((
   ref,
 ) {
@@ -37,13 +35,10 @@ final currentUserLatestActivityProvider = StreamProvider<ListeningActivity?>((
   bool isDisposed = false;
   RealtimeChannel? channel;
 
-  // Function to load current user's activity
   Future<void> loadCurrentUserActivity() async {
     if (isDisposed || controller.isClosed) return;
 
     try {
-      print('🔍 Fetching current user activity...');
-
       final response = await supabase
           .from('listening_activity')
           .select('*')
@@ -55,14 +50,12 @@ final currentUserLatestActivityProvider = StreamProvider<ListeningActivity?>((
       if (response != null) {
         final jsonData = Map<String, dynamic>.from(response);
 
-        // Parse timestamp as UTC
         if (jsonData['played_at'] is String) {
           jsonData['played_at'] = DateTime.parse(
             jsonData['played_at'] as String,
           ).toUtc().toIso8601String();
         }
 
-        // Add profile data
         final profile = await supabase
             .from('profiles')
             .select('userid, profile_pic_url')
@@ -81,30 +74,25 @@ final currentUserLatestActivityProvider = StreamProvider<ListeningActivity?>((
 
         if (!isDisposed && !controller.isClosed) {
           controller.add(activity);
-          print('✅ Current user activity loaded: ${activity.songTitle}');
         }
       } else {
         if (!isDisposed && !controller.isClosed) {
           controller.add(null);
-          print('ℹ️ No current user activity found');
         }
       }
     } catch (e) {
-      print('❌ Error loading current user activity: $e');
       if (!isDisposed && !controller.isClosed) {
         controller.add(null);
       }
     }
   }
 
-  // Initial load
   WidgetsBinding.instance.addPostFrameCallback((_) {
     if (!isDisposed) {
       loadCurrentUserActivity();
     }
   });
 
-  // Subscribe to real-time updates for current user
   channel = supabase
       .channel('current_user_activity_${currentUser.id}')
       .onPostgresChanges(
@@ -118,9 +106,6 @@ final currentUserLatestActivityProvider = StreamProvider<ListeningActivity?>((
         ),
         callback: (payload) async {
           if (isDisposed) return;
-
-          print('🔔 Current user activity changed');
-
           if (!isDisposed) {
             await loadCurrentUserActivity();
           }
@@ -128,11 +113,7 @@ final currentUserLatestActivityProvider = StreamProvider<ListeningActivity?>((
       )
       .subscribe();
 
-  print('📡 Subscribed to current user activity updates');
-
-  // Cleanup
   ref.onDispose(() {
-    print('🗑️ Disposing current user activity provider');
     isDisposed = true;
 
     try {
@@ -166,22 +147,17 @@ class _SocialScreenState extends ConsumerState<SocialScreen> {
   @override
   void initState() {
     super.initState();
-    // Only start auto-refresh after initial load
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _startAutoRefresh();
     });
   }
 
   void _startAutoRefresh() {
-    // Cancel existing timer if any
     _autoRefreshTimer?.cancel();
 
-    // Refresh every 30 seconds
     _autoRefreshTimer = Timer.periodic(const Duration(seconds: 30), (timer) {
-      // Only refresh if we're still on the Friends tab
       final selectedIndex = ref.read(socialSidebarIndexProvider);
       if (selectedIndex == 0 && mounted) {
-        print('🔄 Auto-refreshing social feed...');
         ref.invalidate(followingActivitiesProvider);
         ref.invalidate(currentUserLatestActivityProvider);
       }
@@ -196,23 +172,20 @@ class _SocialScreenState extends ConsumerState<SocialScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final themeData = Theme.of(context);
     final selectedIndex = ref.watch(socialSidebarIndexProvider);
-    final backgroundColor = ref.watch(themeBackgroundColorProvider);
 
     return Scaffold(
-      backgroundColor: backgroundColor,
+      backgroundColor: themeData.scaffoldBackgroundColor,
       body: SafeArea(
         child: Row(
           children: [
-            // LEFT SIDEBAR - Vertical Navigation
-            _buildSidebar(context, ref, selectedIndex),
-
-            // RIGHT CONTENT AREA
+            _buildSidebar(context, ref, selectedIndex, themeData),
             Expanded(
               child: Column(
                 children: [
                   const SizedBox(height: AppSpacing.xxxl),
-                  _buildTopBar(context, ref, selectedIndex),
+                  _buildTopBar(context, ref, selectedIndex, themeData),
                   Expanded(child: _buildContent(selectedIndex, ref)),
                 ],
               ),
@@ -223,22 +196,24 @@ class _SocialScreenState extends ConsumerState<SocialScreen> {
     );
   }
 
-  Widget _buildSidebar(BuildContext context, WidgetRef ref, int selectedIndex) {
+  Widget _buildSidebar(
+    BuildContext context,
+    WidgetRef ref,
+    int selectedIndex,
+    ThemeData themeData,
+  ) {
     final double availableHeight = MediaQuery.of(context).size.height;
-    final iconActiveColor = ref.watch(themeIconActiveColorProvider);
-    final iconInactiveColor = ref.watch(themeTextSecondaryColorProvider);
-    final sidebarLabelColor = ref.watch(themeTextPrimaryColorProvider);
-    final sidebarLabelActiveColor = ref.watch(themeIconActiveColorProvider);
+    final primaryColor = themeData.primaryColor;
+    final textSecondary =
+        themeData.textTheme.bodyMedium?.color ?? Colors.white70;
 
-    // Create theme-aware text styles
     final sidebarLabelStyle = AppTypography.sidebarLabel(
       context,
-    ).copyWith(color: sidebarLabelColor);
+    ).copyWith(color: textSecondary);
     final sidebarLabelActiveStyle = AppTypography.sidebarLabelActive(
       context,
-    ).copyWith(color: sidebarLabelActiveColor);
+    ).copyWith(color: primaryColor);
 
-    // Function to check if Jammer should be shown
     Future<bool> _shouldShowJammer() async {
       try {
         final currentUser = Supabase.instance.client.auth.currentUser;
@@ -248,38 +223,33 @@ class _SocialScreenState extends ConsumerState<SocialScreen> {
         final accessCodeService = AccessCodeService(supabase);
         final profileService = ProfileService(supabase);
 
-        // Check if user has access code
         final hasAccessCode = await accessCodeService.checkIfUserHasAccessCode(
           currentUser.id,
         );
         if (!hasAccessCode) return false;
 
-        // Get user profile
         final profile = await profileService.getUserProfileById(currentUser.id);
         if (profile == null) return false;
 
-        // Check if user is beta tester
         final isBetaTester = profile['is_beta_tester'] == true;
-
         return isBetaTester;
       } catch (e) {
-        print('Error checking Jammer access: $e');
         return false;
       }
     }
 
-    return SizedBox(
-      width: 65,
+    return Container(
+      width: 80,
       height: availableHeight,
+      alignment: Alignment.centerLeft,
       child: SingleChildScrollView(
         child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             const SizedBox(height: 200),
             _buildSidebarItem(
               label: 'Friends',
               isActive: selectedIndex == 0,
-              iconActiveColor: iconActiveColor,
-              iconInactiveColor: iconInactiveColor,
               labelStyle: selectedIndex == 0
                   ? sidebarLabelActiveStyle
                   : sidebarLabelStyle,
@@ -290,8 +260,6 @@ class _SocialScreenState extends ConsumerState<SocialScreen> {
             _buildSidebarItem(
               label: 'Profiles',
               isActive: selectedIndex == 1,
-              iconActiveColor: iconActiveColor,
-              iconInactiveColor: iconInactiveColor,
               labelStyle: selectedIndex == 1
                   ? sidebarLabelActiveStyle
                   : sidebarLabelStyle,
@@ -299,31 +267,23 @@ class _SocialScreenState extends ConsumerState<SocialScreen> {
                   ref.read(socialSidebarIndexProvider.notifier).state = 1,
             ),
             const SizedBox(height: 24),
-
-            // Conditional Jammer item
             FutureBuilder<bool>(
               future: _shouldShowJammer(),
               builder: (context, snapshot) {
-                // Show loading as empty space to maintain layout consistency
                 if (snapshot.connectionState == ConnectionState.waiting) {
-                  return const SizedBox(
-                    height: 56,
-                  ); // Match the height of a sidebar item
+                  return const SizedBox(height: 56);
                 }
 
-                // If error or shouldn't show, return empty
                 if (snapshot.hasError || !snapshot.hasData || !snapshot.data!) {
                   return const SizedBox.shrink();
                 }
 
-                // Show Jammer item
                 return Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     _buildSidebarItem(
                       label: 'Jammer',
                       isActive: selectedIndex == 3,
-                      iconActiveColor: iconActiveColor,
-                      iconInactiveColor: iconInactiveColor,
                       labelStyle: selectedIndex == 3
                           ? sidebarLabelActiveStyle
                           : sidebarLabelStyle,
@@ -334,33 +294,14 @@ class _SocialScreenState extends ConsumerState<SocialScreen> {
                         ),
                       ),
                     ),
-
-                    // _buildSidebarItem(
-                    //   label: 'Jammer',
-                    //   isActive: selectedIndex == 3,
-                    //   iconActiveColor: iconActiveColor,
-                    //   iconInactiveColor: iconInactiveColor,
-                    //   labelStyle: selectedIndex == 3
-                    //       ? sidebarLabelActiveStyle
-                    //       : sidebarLabelStyle,
-                    //   onTap: () => Navigator.push(
-                    //     context,
-                    //     MaterialPageRoute(
-                    //       builder: (_) => const ListenTogetherHomeScreen(),
-                    //     ),
-                    //   ),
-                    // ),
                     const SizedBox(height: 24),
                   ],
                 );
               },
             ),
-
             _buildSidebarItem(
               label: 'Edit Profile',
               isActive: selectedIndex == 2,
-              iconActiveColor: iconActiveColor,
-              iconInactiveColor: iconInactiveColor,
               labelStyle: selectedIndex == 2
                   ? sidebarLabelActiveStyle
                   : sidebarLabelStyle,
@@ -377,40 +318,39 @@ class _SocialScreenState extends ConsumerState<SocialScreen> {
   Widget _buildSidebarItem({
     required String label,
     bool isActive = false,
-    required Color iconActiveColor,
-    required Color iconInactiveColor,
     required TextStyle labelStyle,
     VoidCallback? onTap,
   }) {
     return GestureDetector(
       onTap: onTap,
-      child: SizedBox(
-        width: 72,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            RotatedBox(
-              quarterTurns: -1,
-              child: Text(
-                label,
-                textAlign: TextAlign.center,
-                style: labelStyle.copyWith(fontSize: 16),
-              ),
-            ),
-          ],
+      child: Container(
+        width: 80,
+        height: 100,
+        alignment: Alignment.center,
+        child: RotatedBox(
+          quarterTurns: -1,
+          child: Text(
+            label,
+            textAlign: TextAlign.center,
+            style: labelStyle.copyWith(fontSize: 15),
+          ),
         ),
       ),
     );
   }
 
-  Widget _buildTopBar(BuildContext context, WidgetRef ref, int selectedIndex) {
-    final textPrimaryColor = ref.watch(themeTextPrimaryColorProvider);
-    final iconActiveColor = ref.watch(themeIconActiveColorProvider);
-    final backgroundColor = ref.watch(themeBackgroundColorProvider);
+  Widget _buildTopBar(
+    BuildContext context,
+    WidgetRef ref,
+    int selectedIndex,
+    ThemeData themeData,
+  ) {
+    final textColor = themeData.textTheme.bodyLarge?.color ?? Colors.white;
+    final iconColor = themeData.iconTheme.color ?? Colors.white;
 
     final pageTitleStyle = AppTypography.pageTitle(
       context,
-    ).copyWith(color: textPrimaryColor);
+    ).copyWith(color: textColor);
 
     String pageTitle = '';
     switch (selectedIndex) {
@@ -427,24 +367,17 @@ class _SocialScreenState extends ConsumerState<SocialScreen> {
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-      color: backgroundColor,
+      color: themeData.scaffoldBackgroundColor,
       child: Row(
         children: [
-          // ⬅️ Back button (LEFT)
           IconButton(
             onPressed: () => Navigator.of(context).pop(),
-            icon: Icon(Icons.arrow_back, color: iconActiveColor, size: 28),
+            icon: Icon(Icons.arrow_back, color: iconColor, size: 28),
           ),
-
-          // pushes title to extreme right
           const Spacer(),
-
-          // Refresh button (only show on Friends tab)
-          // In _buildTopBar, add a cleanup action:
           if (selectedIndex == 0)
             IconButton(
               onPressed: () async {
-                // Cleanup stale activities
                 try {
                   final supabase = Supabase.instance.client;
                   final cutoffTime = DateTime.now().toUtc().subtract(
@@ -460,32 +393,32 @@ class _SocialScreenState extends ConsumerState<SocialScreen> {
                       .eq('is_currently_playing', true)
                       .lt('played_at', cutoffTime.toIso8601String());
 
-                  // Refresh
                   ref.invalidate(followingActivitiesProvider);
                   ref.invalidate(currentUserLatestActivityProvider);
 
                   ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
+                    const SnackBar(
                       content: Text('Cleaned up stale activities'),
-                      duration: const Duration(seconds: 2),
+                      duration: Duration(seconds: 2),
                     ),
                   );
                 } catch (e) {
                   print('Error cleaning activities: $e');
                 }
               },
-              icon: Icon(
-                Icons.cleaning_services,
-                color: iconActiveColor,
-                size: 24,
-              ),
+              icon: Icon(Icons.cleaning_services, color: iconColor, size: 24),
               tooltip: 'Cleanup',
             ),
-
           const SizedBox(width: 8),
-
-          // 📝 Title (RIGHT aligned)
-          Text(pageTitle, style: pageTitleStyle, textAlign: TextAlign.right),
+          Expanded(
+            child: Text(
+              pageTitle,
+              style: pageTitleStyle,
+              textAlign: TextAlign.right,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
         ],
       ),
     );
@@ -505,12 +438,11 @@ class _SocialScreenState extends ConsumerState<SocialScreen> {
   }
 }
 
-// Provider to check if user's listening activity is enabled
 final userListeningActivityEnabledProvider = StreamProvider<bool>((ref) {
   final currentUser = ref.watch(currentUserProvider);
 
   if (currentUser == null) {
-    return Stream.value(true); // Default to true if no user
+    return Stream.value(true);
   }
 
   final supabase = ref.watch(supabaseClientProvider);
@@ -525,10 +457,11 @@ final userListeningActivityEnabledProvider = StreamProvider<bool>((ref) {
       });
 });
 
-// UPDATED FRIENDS ACTIVITY CONTENT
 class _FriendsActivityContent extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final themeData = Theme.of(context);
+
     final activitiesAsync = ref.watch(followingActivitiesProvider);
     final currentUserActivityAsync = ref.watch(
       currentUserLatestActivityProvider,
@@ -537,15 +470,14 @@ class _FriendsActivityContent extends ConsumerWidget {
       userListeningActivityEnabledProvider,
     );
     final currentUser = ref.watch(currentUserProvider);
-    final textPrimaryColor = ref.watch(themeTextPrimaryColorProvider);
-    final textSecondaryColor = ref.watch(themeTextSecondaryColorProvider);
-    final iconActiveColor = ref.watch(themeIconActiveColorProvider);
-    final cardBackgroundColor = ref.watch(themeCardBackgroundColorProvider);
-    final backgroundColor = ref.watch(themeBackgroundColorProvider);
+
+    final textPrimary = themeData.textTheme.bodyLarge?.color ?? Colors.white;
+    final textSecondary =
+        themeData.textTheme.bodyMedium?.color ?? Colors.white70;
+    final primaryColor = themeData.primaryColor;
 
     return listeningActivityEnabledAsync.when(
       data: (isListeningActivityEnabled) {
-        // If listening activity is OFF, show overlay message
         if (!isListeningActivityEnabled) {
           return Center(
             child: Padding(
@@ -556,22 +488,21 @@ class _FriendsActivityContent extends ConsumerWidget {
                   Icon(
                     Icons.visibility_off,
                     size: 80,
-                    color: textSecondaryColor.withOpacity(0.5),
+                    color: textSecondary.withOpacity(0.5),
                   ),
                   const SizedBox(height: AppSpacing.lg),
                   Text(
                     'Listening Activity is Off',
-                    style: AppTypography.pageTitle(context).copyWith(
-                      color: textPrimaryColor,
-                      fontWeight: FontWeight.w600,
-                    ),
+                    style: AppTypography.pageTitle(
+                      context,
+                    ).copyWith(color: textPrimary, fontWeight: FontWeight.w600),
                   ),
                   const SizedBox(height: AppSpacing.sm),
                   Text(
                     'Enable "Show Listening Activity" in Edit Profile\nto see what your friends are listening to',
                     style: AppTypography.caption(
                       context,
-                    ).copyWith(color: textSecondaryColor),
+                    ).copyWith(color: textSecondary),
                     textAlign: TextAlign.center,
                   ),
                   const SizedBox(height: AppSpacing.xl),
@@ -581,28 +512,24 @@ class _FriendsActivityContent extends ConsumerWidget {
                       vertical: AppSpacing.md,
                     ),
                     decoration: BoxDecoration(
-                      color: iconActiveColor.withOpacity(0.1),
+                      color: primaryColor.withOpacity(0.1),
                       borderRadius: BorderRadius.circular(12),
                       border: Border.all(
-                        color: iconActiveColor.withOpacity(0.3),
+                        color: primaryColor.withOpacity(0.3),
                         width: 1.5,
                       ),
                     ),
                     child: Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        Icon(
-                          Icons.info_outline,
-                          size: 20,
-                          color: iconActiveColor,
-                        ),
+                        Icon(Icons.info_outline, size: 20, color: primaryColor),
                         const SizedBox(width: AppSpacing.sm),
                         Flexible(
                           child: Text(
                             'Your activity is also hidden from friends',
                             style: AppTypography.caption(
                               context,
-                            ).copyWith(color: textPrimaryColor, fontSize: 12),
+                            ).copyWith(color: textPrimary, fontSize: 12),
                           ),
                         ),
                       ],
@@ -614,7 +541,6 @@ class _FriendsActivityContent extends ConsumerWidget {
           );
         }
 
-        // Original content when listening activity is enabled
         return activitiesAsync.when(
           data: (friendsActivities) {
             final filteredFriendsActivities = friendsActivities
@@ -632,21 +558,19 @@ class _FriendsActivityContent extends ConsumerWidget {
               },
               child: CustomScrollView(
                 slivers: [
-                  // Current User's Activity at Top
                   SliverToBoxAdapter(
                     child: currentUserActivityAsync.when(
                       data: (currentUserActivity) {
                         if (currentUserActivity == null) {
-                          // Show placeholder when user hasn't listened to anything
                           return Padding(
                             padding: const EdgeInsets.all(AppSpacing.lg),
                             child: Container(
                               padding: const EdgeInsets.all(16),
                               decoration: BoxDecoration(
-                                color: iconActiveColor.withOpacity(0.05),
+                                color: primaryColor.withOpacity(0.05),
                                 borderRadius: BorderRadius.circular(16),
                                 border: Border.all(
-                                  color: iconActiveColor.withOpacity(0.2),
+                                  color: primaryColor.withOpacity(0.2),
                                   width: 1.5,
                                 ),
                               ),
@@ -654,7 +578,7 @@ class _FriendsActivityContent extends ConsumerWidget {
                                 children: [
                                   Icon(
                                     Icons.music_note,
-                                    color: textSecondaryColor.withOpacity(0.5),
+                                    color: textSecondary.withOpacity(0.5),
                                     size: 36,
                                   ),
                                   const SizedBox(width: 16),
@@ -667,7 +591,7 @@ class _FriendsActivityContent extends ConsumerWidget {
                                           'Start listening',
                                           style: AppTypography.subtitle(context)
                                               .copyWith(
-                                                color: textPrimaryColor,
+                                                color: textPrimary,
                                                 fontWeight: FontWeight.w600,
                                               ),
                                         ),
@@ -676,14 +600,14 @@ class _FriendsActivityContent extends ConsumerWidget {
                                           'Play a song to share with your friends',
                                           style: AppTypography.caption(
                                             context,
-                                          ).copyWith(color: textSecondaryColor),
+                                          ).copyWith(color: textSecondary),
                                         ),
                                       ],
                                     ),
                                   ),
                                   Icon(
                                     Icons.play_circle_fill,
-                                    color: iconActiveColor,
+                                    color: primaryColor,
                                     size: 32,
                                   ),
                                 ],
@@ -714,7 +638,7 @@ class _FriendsActivityContent extends ConsumerWidget {
                                               currentUserActivity
                                                   .isCurrentlyPlaying
                                               ? Colors.green
-                                              : textSecondaryColor,
+                                              : textSecondary,
                                           fontSize: 11,
                                           fontWeight: FontWeight.w600,
                                           letterSpacing: 0.5,
@@ -777,7 +701,7 @@ class _FriendsActivityContent extends ConsumerWidget {
                                 horizontal: AppSpacing.lg,
                               ),
                               child: Divider(
-                                color: textSecondaryColor.withOpacity(0.2),
+                                color: textSecondary.withOpacity(0.2),
                                 thickness: 1,
                               ),
                             ),
@@ -790,7 +714,7 @@ class _FriendsActivityContent extends ConsumerWidget {
                           child: SizedBox(
                             height: 40,
                             child: CircularProgressIndicator(
-                              color: iconActiveColor,
+                              color: primaryColor,
                               strokeWidth: 2,
                             ),
                           ),
@@ -810,7 +734,7 @@ class _FriendsActivityContent extends ConsumerWidget {
                           ),
                           child: Row(
                             children: [
-                              Icon(
+                              const Icon(
                                 Icons.error_outline,
                                 color: Colors.red,
                                 size: 24,
@@ -821,7 +745,7 @@ class _FriendsActivityContent extends ConsumerWidget {
                                   'Could not load your activity',
                                   style: AppTypography.caption(
                                     context,
-                                  ).copyWith(color: textPrimaryColor),
+                                  ).copyWith(color: textPrimary),
                                 ),
                               ),
                             ],
@@ -830,8 +754,6 @@ class _FriendsActivityContent extends ConsumerWidget {
                       ),
                     ),
                   ),
-
-                  // Friends Activity Header
                   SliverToBoxAdapter(
                     child: Padding(
                       padding: const EdgeInsets.fromLTRB(
@@ -843,16 +765,16 @@ class _FriendsActivityContent extends ConsumerWidget {
                       child: Text(
                         'Friends Activity',
                         style: AppTypography.caption(context).copyWith(
-                          color: textSecondaryColor,
+                          color: textSecondary,
                           fontSize: 11,
                           fontWeight: FontWeight.w600,
                           letterSpacing: 0.5,
                         ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
                       ),
                     ),
                   ),
-
-                  // Friends Activity List or Empty State
                   if (filteredFriendsActivities.isEmpty)
                     SliverFillRemaining(
                       child: Center(
@@ -862,21 +784,21 @@ class _FriendsActivityContent extends ConsumerWidget {
                             Icon(
                               Icons.people_outline,
                               size: 64,
-                              color: textSecondaryColor.withOpacity(0.5),
+                              color: textSecondary.withOpacity(0.5),
                             ),
                             const SizedBox(height: 16),
                             Text(
                               'No friend activity yet',
                               style: AppTypography.subtitle(
                                 context,
-                              ).copyWith(color: textPrimaryColor),
+                              ).copyWith(color: textPrimary),
                             ),
                             const SizedBox(height: 8),
                             Text(
                               'Your friends haven\'t listened to anything recently',
                               style: AppTypography.caption(
                                 context,
-                              ).copyWith(color: textSecondaryColor),
+                              ).copyWith(color: textSecondary),
                               textAlign: TextAlign.center,
                             ),
                           ],
@@ -904,11 +826,8 @@ class _FriendsActivityContent extends ConsumerWidget {
             );
           },
           loading: () =>
-              Center(child: CircularProgressIndicator(color: iconActiveColor)),
+              Center(child: CircularProgressIndicator(color: primaryColor)),
           error: (error, stack) {
-            print('❌ Error in followingActivitiesProvider: $error');
-            print('Stack trace: $stack');
-
             return Center(
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
@@ -916,14 +835,14 @@ class _FriendsActivityContent extends ConsumerWidget {
                   Icon(
                     Icons.error_outline,
                     size: 64,
-                    color: textSecondaryColor.withOpacity(0.5),
+                    color: textSecondary.withOpacity(0.5),
                   ),
                   const SizedBox(height: 16),
                   Text(
                     'Error loading activities',
                     style: AppTypography.subtitle(
                       context,
-                    ).copyWith(color: textPrimaryColor),
+                    ).copyWith(color: textPrimary),
                   ),
                   const SizedBox(height: 8),
                   Padding(
@@ -932,7 +851,7 @@ class _FriendsActivityContent extends ConsumerWidget {
                       error.toString(),
                       style: AppTypography.caption(
                         context,
-                      ).copyWith(color: textSecondaryColor),
+                      ).copyWith(color: textSecondary),
                       textAlign: TextAlign.center,
                     ),
                   ),
@@ -952,7 +871,7 @@ class _FriendsActivityContent extends ConsumerWidget {
         );
       },
       loading: () =>
-          Center(child: CircularProgressIndicator(color: iconActiveColor)),
+          Center(child: CircularProgressIndicator(color: primaryColor)),
       error: (error, stack) => Center(
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
@@ -960,14 +879,14 @@ class _FriendsActivityContent extends ConsumerWidget {
             Icon(
               Icons.error_outline,
               size: 64,
-              color: textSecondaryColor.withOpacity(0.5),
+              color: textSecondary.withOpacity(0.5),
             ),
             const SizedBox(height: 16),
             Text(
               'Error checking settings',
               style: AppTypography.subtitle(
                 context,
-              ).copyWith(color: textPrimaryColor),
+              ).copyWith(color: textPrimary),
             ),
           ],
         ),
@@ -976,7 +895,6 @@ class _FriendsActivityContent extends ConsumerWidget {
   }
 }
 
-// ACTIVITY CARD (Unchanged - keeping your original aesthetic)
 class _ActivityCard extends StatefulWidget {
   final ListeningActivity activity;
   final WidgetRef ref;
@@ -1056,17 +974,15 @@ class _ActivityCardState extends State<_ActivityCard> {
 
   @override
   Widget build(BuildContext context) {
+    final themeData = Theme.of(context);
+    final colorScheme = themeData.colorScheme;
     final statusText = _getStatusText();
     final artists = widget.activity.songArtists.join(', ');
 
-    final cardBackgroundColor = widget.ref.watch(
-      themeCardBackgroundColorProvider,
-    );
-    final textPrimaryColor = widget.ref.watch(themeTextPrimaryColorProvider);
-    final textSecondaryColor = widget.ref.watch(
-      themeTextSecondaryColorProvider,
-    );
-    final iconActiveColor = widget.ref.watch(themeIconActiveColorProvider);
+    final cardBg = themeData.cardColor;
+    final textPrimary = colorScheme.onSurface;
+    final textSecondary = colorScheme.onSurface.withOpacity(0.6);
+    final primaryColor = colorScheme.primary;
     final thumbnailRadius = widget.ref.watch(thumbnailRadiusProvider);
 
     final progressPercentage = widget.activity.realtimeProgressPercentage;
@@ -1075,31 +991,25 @@ class _ActivityCardState extends State<_ActivityCard> {
       margin: const EdgeInsets.only(bottom: 12),
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
       decoration: BoxDecoration(
-        color: widget.isCurrentUser
-            // ignore: deprecated_member_use
-            ? iconActiveColor.withOpacity(0.1)
-            : cardBackgroundColor,
+        color: widget.isCurrentUser ? primaryColor.withOpacity(0.1) : cardBg,
         borderRadius: BorderRadius.circular(16),
         border: Border.all(
           color: widget.activity.isCurrentlyPlaying
-              ? iconActiveColor.withOpacity(0.3)
+              ? primaryColor.withOpacity(0.3)
               : Colors.transparent,
           width: widget.activity.isCurrentlyPlaying ? 1.5 : 0,
         ),
-        boxShadow: widget.activity.isCurrentlyPlaying
-            ? [
-                BoxShadow(
-                  color: iconActiveColor.withOpacity(0.1),
-                  blurRadius: 10,
-                  spreadRadius: 2,
-                ),
-              ]
-            : null,
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.05),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
+        ],
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.center,
         children: [
-          // User Profile Picture with online indicator
           Stack(
             children: [
               ClipOval(
@@ -1114,10 +1024,10 @@ class _ActivityCardState extends State<_ActivityCard> {
                         errorBuilder: (_, __, ___) => Container(
                           width: 36,
                           height: 36,
-                          color: Colors.black,
+                          color: colorScheme.surface,
                           child: Icon(
                             Icons.person,
-                            color: textSecondaryColor,
+                            color: textSecondary,
                             size: 20,
                           ),
                         ),
@@ -1125,10 +1035,10 @@ class _ActivityCardState extends State<_ActivityCard> {
                     : Container(
                         width: 36,
                         height: 36,
-                        color: Colors.black,
+                        color: colorScheme.surface,
                         child: Icon(
                           Icons.person,
-                          color: textSecondaryColor,
+                          color: textSecondary,
                           size: 20,
                         ),
                       ),
@@ -1143,15 +1053,13 @@ class _ActivityCardState extends State<_ActivityCard> {
                     decoration: BoxDecoration(
                       color: Colors.green,
                       borderRadius: BorderRadius.circular(6),
-                      border: Border.all(color: cardBackgroundColor, width: 2),
+                      border: Border.all(color: cardBg, width: 2),
                     ),
                   ),
                 ),
             ],
           ),
           const SizedBox(width: 12),
-
-          // Song Thumbnail
           ClipRRect(
             borderRadius: BorderRadius.circular(54 * thumbnailRadius),
             child:
@@ -1167,10 +1075,10 @@ class _ActivityCardState extends State<_ActivityCard> {
                         errorBuilder: (_, __, ___) => Container(
                           width: 54,
                           height: 54,
-                          color: cardBackgroundColor,
+                          color: themeData.colorScheme.surface,
                           child: Icon(
                             Icons.music_note,
-                            color: textSecondaryColor,
+                            color: textSecondary,
                             size: 20,
                           ),
                         ),
@@ -1183,7 +1091,7 @@ class _ActivityCardState extends State<_ActivityCard> {
                           child: LinearProgressIndicator(
                             value: progressPercentage,
                             backgroundColor: Colors.black.withOpacity(0.3),
-                            valueColor: AlwaysStoppedAnimation<Color>(
+                            valueColor: const AlwaysStoppedAnimation<Color>(
                               Colors.green,
                             ),
                             minHeight: 3,
@@ -1194,17 +1102,15 @@ class _ActivityCardState extends State<_ActivityCard> {
                 : Container(
                     width: 54,
                     height: 54,
-                    color: Colors.black,
+                    color: themeData.colorScheme.surface,
                     child: Icon(
                       Icons.music_note,
-                      color: textSecondaryColor,
+                      color: textSecondary,
                       size: 20,
                     ),
                   ),
           ),
           const SizedBox(width: 12),
-
-          // Song Info
           Expanded(
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
@@ -1216,11 +1122,17 @@ class _ActivityCardState extends State<_ActivityCard> {
                     Expanded(
                       child: Text(
                         widget.activity.username,
-                        style: AppTypography.caption(context).copyWith(
-                          fontWeight: FontWeight.w600,
-                          color: textPrimaryColor,
-                          fontSize: 13,
-                        ),
+                        style:
+                            themeData.textTheme.labelSmall?.copyWith(
+                              fontWeight: FontWeight.w600,
+                              color: textPrimary,
+                              fontSize: 13,
+                            ) ??
+                            AppTypography.caption(context).copyWith(
+                              fontWeight: FontWeight.w600,
+                              color: textPrimary,
+                              fontSize: 13,
+                            ),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                       ),
@@ -1234,45 +1146,63 @@ class _ActivityCardState extends State<_ActivityCard> {
                       decoration: BoxDecoration(
                         color: widget.activity.isCurrentlyPlaying
                             ? Colors.green.withOpacity(0.2)
-                            : textSecondaryColor.withOpacity(0.1),
+                            : textSecondary.withOpacity(0.1),
                         borderRadius: BorderRadius.circular(12),
                       ),
                       child: Text(
                         widget.activity.isCurrentlyPlaying ? 'LIVE' : 'OFFLINE',
-                        style: AppTypography.caption(context).copyWith(
-                          color: widget.activity.isCurrentlyPlaying
-                              ? Colors.green
-                              : textSecondaryColor,
-                          fontSize: 10,
-                          fontWeight: FontWeight.w700,
-                          letterSpacing: 0.5,
-                        ),
+                        style:
+                            themeData.textTheme.labelSmall?.copyWith(
+                              color: widget.activity.isCurrentlyPlaying
+                                  ? Colors.green
+                                  : textSecondary,
+                              fontSize: 10,
+                              fontWeight: FontWeight.w700,
+                              letterSpacing: 0.5,
+                            ) ??
+                            AppTypography.caption(context).copyWith(
+                              color: widget.activity.isCurrentlyPlaying
+                                  ? Colors.green
+                                  : textSecondary,
+                              fontSize: 10,
+                              fontWeight: FontWeight.w700,
+                              letterSpacing: 0.5,
+                            ),
                       ),
                     ),
                   ],
                 ),
                 const SizedBox(height: 4),
-
                 Text(
                   widget.activity.songTitle,
-                  style: AppTypography.songTitle(context).copyWith(
-                    fontWeight: FontWeight.w600,
-                    color: textPrimaryColor,
-                    fontSize: 15,
-                  ),
+                  style:
+                      themeData.textTheme.bodyLarge?.copyWith(
+                        fontWeight: FontWeight.w600,
+                        color: textPrimary,
+                        fontSize: 15,
+                      ) ??
+                      AppTypography.songTitle(context).copyWith(
+                        fontWeight: FontWeight.w600,
+                        color: textPrimary,
+                        fontSize: 15,
+                      ),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                 ),
                 const SizedBox(height: 2),
-
                 Row(
                   children: [
                     Expanded(
                       child: Text(
                         artists,
-                        style: AppTypography.caption(
-                          context,
-                        ).copyWith(color: textSecondaryColor, fontSize: 12),
+                        style:
+                            themeData.textTheme.bodySmall?.copyWith(
+                              color: textSecondary,
+                              fontSize: 12,
+                            ) ??
+                            AppTypography.caption(
+                              context,
+                            ).copyWith(color: textSecondary, fontSize: 12),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                       ),
@@ -1280,21 +1210,30 @@ class _ActivityCardState extends State<_ActivityCard> {
                     const SizedBox(width: 8),
                     Text(
                       '• $statusText',
-                      style: AppTypography.caption(context).copyWith(
-                        color: widget.activity.isCurrentlyPlaying
-                            ? Colors.green
-                            : textSecondaryColor,
-                        fontSize: 11,
-                        fontWeight: widget.activity.isCurrentlyPlaying
-                            ? FontWeight.w600
-                            : FontWeight.normal,
-                      ),
+                      style:
+                          themeData.textTheme.labelSmall?.copyWith(
+                            color: widget.activity.isCurrentlyPlaying
+                                ? Colors.green
+                                : textSecondary,
+                            fontSize: 11,
+                            fontWeight: widget.activity.isCurrentlyPlaying
+                                ? FontWeight.w600
+                                : FontWeight.normal,
+                          ) ??
+                          AppTypography.caption(context).copyWith(
+                            color: widget.activity.isCurrentlyPlaying
+                                ? Colors.green
+                                : textSecondary,
+                            fontSize: 11,
+                            fontWeight: widget.activity.isCurrentlyPlaying
+                                ? FontWeight.w600
+                                : FontWeight.normal,
+                          ),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                     ),
                   ],
                 ),
-
                 if (widget.activity.isCurrentlyPlaying &&
                     widget.activity.durationMs > 0)
                   Column(
@@ -1302,10 +1241,8 @@ class _ActivityCardState extends State<_ActivityCard> {
                       const SizedBox(height: 8),
                       LinearProgressIndicator(
                         value: progressPercentage,
-                        backgroundColor: textSecondaryColor.withOpacity(0.1),
-                        valueColor: AlwaysStoppedAnimation<Color>(
-                          iconActiveColor,
-                        ),
+                        backgroundColor: textSecondary.withOpacity(0.1),
+                        valueColor: AlwaysStoppedAnimation<Color>(primaryColor),
                         minHeight: 3,
                         borderRadius: BorderRadius.circular(1.5),
                       ),
@@ -1317,15 +1254,25 @@ class _ActivityCardState extends State<_ActivityCard> {
                             _formatDuration(
                               widget.activity.realtimeCurrentPositionMs,
                             ),
-                            style: AppTypography.caption(
-                              context,
-                            ).copyWith(color: textSecondaryColor, fontSize: 10),
+                            style:
+                                themeData.textTheme.labelSmall?.copyWith(
+                                  color: textSecondary,
+                                  fontSize: 10,
+                                ) ??
+                                AppTypography.caption(
+                                  context,
+                                ).copyWith(color: textSecondary, fontSize: 10),
                           ),
                           Text(
                             _formatDuration(widget.activity.durationMs),
-                            style: AppTypography.caption(
-                              context,
-                            ).copyWith(color: textSecondaryColor, fontSize: 10),
+                            style:
+                                themeData.textTheme.labelSmall?.copyWith(
+                                  color: textSecondary,
+                                  fontSize: 10,
+                                ) ??
+                                AppTypography.caption(
+                                  context,
+                                ).copyWith(color: textSecondary, fontSize: 10),
                           ),
                         ],
                       ),
@@ -1346,7 +1293,6 @@ class _ActivityCardState extends State<_ActivityCard> {
   }
 }
 
-// Profiles Screen Content (without its own Scaffold)
 class ProfilesScreenContent extends StatelessWidget {
   const ProfilesScreenContent({Key? key}) : super(key: key);
 
@@ -1356,7 +1302,6 @@ class ProfilesScreenContent extends StatelessWidget {
   }
 }
 
-// Edit Profile Screen Content (without its own Scaffold)
 class EditProfileScreenContent extends StatelessWidget {
   const EditProfileScreenContent({Key? key}) : super(key: key);
 

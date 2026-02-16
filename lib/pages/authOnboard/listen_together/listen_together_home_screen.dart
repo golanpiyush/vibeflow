@@ -92,46 +92,51 @@ class _ListenTogetherHomeScreenState
 
   @override
   Widget build(BuildContext context) {
+    final themeData = Theme.of(context);
     final activeSession = ref.watch(activeSessionProvider);
     final invitations = ref.watch(invitationControllerProvider);
     final mutualFollowers = ref.watch(mutualFollowersProvider);
     final jammerStatus = ref.watch(jammerStatusProvider);
 
     return Scaffold(
-      backgroundColor: AppColors.background,
+      backgroundColor: themeData.scaffoldBackgroundColor,
       body: SafeArea(
         child: Column(
           children: [
-            // Top Bar
-            _buildTopBar(context),
-
-            // Main Content
+            _buildTopBar(context, themeData),
             Expanded(
               child: jammerStatus.when(
                 data: (isJammerOn) {
                   if (!isJammerOn) {
-                    // Show jammer disabled view
-                    return _buildJammerDisabledView();
+                    return _buildJammerDisabledView(themeData);
                   }
-
-                  // Normal content when jammer is enabled
                   return activeSession.when(
                     data: (session) {
                       if (session != null) {
-                        return _buildActiveSessionView(session);
+                        return _buildActiveSessionView(session, themeData);
                       }
-                      return _buildMainContent(invitations, mutualFollowers);
+                      return _buildMainContent(
+                        invitations,
+                        mutualFollowers,
+                        themeData,
+                      );
                     },
-                    loading: () => const Center(
-                      child: CircularProgressIndicator(color: AppColors.accent),
+                    loading: () => Center(
+                      child: CircularProgressIndicator(
+                        color: themeData.primaryColor,
+                      ),
                     ),
-                    error: (error, stack) => _buildErrorView(error.toString()),
+                    error: (error, stack) =>
+                        _buildErrorView(error.toString(), themeData),
                   );
                 },
-                loading: () => const Center(
-                  child: CircularProgressIndicator(color: AppColors.accent),
+                loading: () => Center(
+                  child: CircularProgressIndicator(
+                    color: themeData.primaryColor,
+                  ),
                 ),
-                error: (error, stack) => _buildErrorView(error.toString()),
+                error: (error, stack) =>
+                    _buildErrorView(error.toString(), themeData),
               ),
             ),
           ],
@@ -140,7 +145,38 @@ class _ListenTogetherHomeScreenState
     );
   }
 
-  Widget _buildJammerDisabledView() {
+  Widget _buildTopBar(BuildContext context, ThemeData themeData) {
+    final iconColor = themeData.iconTheme.color ?? Colors.white;
+    final textColor = themeData.textTheme.bodyLarge?.color ?? Colors.white;
+
+    return Container(
+      padding: const EdgeInsets.symmetric(
+        horizontal: AppSpacing.lg,
+        vertical: AppSpacing.md,
+      ),
+      child: Row(
+        children: [
+          IconButton(
+            onPressed: () => Navigator.pop(context),
+            icon: Icon(Icons.arrow_back, color: iconColor, size: 28),
+          ),
+          const Spacer(),
+          Text(
+            'Jammer',
+            style: AppTypography.pageTitle(context).copyWith(color: textColor),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildJammerDisabledView(ThemeData themeData) {
+    final primaryColor = themeData.primaryColor;
+    final textPrimary = themeData.textTheme.bodyLarge?.color ?? Colors.white;
+    final textSecondary =
+        themeData.textTheme.bodyMedium?.color ?? Colors.white70;
+    final surfaceColor = themeData.cardColor;
+
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(AppSpacing.xl),
@@ -156,14 +192,10 @@ class _ListenTogetherHomeScreenState
                   child: Container(
                     padding: const EdgeInsets.all(AppSpacing.xxl),
                     decoration: BoxDecoration(
-                      color: AppColors.accent.withOpacity(0.1),
+                      color: primaryColor.withOpacity(0.1),
                       shape: BoxShape.circle,
                     ),
-                    child: const Icon(
-                      Icons.music_off,
-                      size: 80,
-                      color: AppColors.accent,
-                    ),
+                    child: Icon(Icons.music_off, size: 80, color: primaryColor),
                   ),
                 );
               },
@@ -173,7 +205,7 @@ class _ListenTogetherHomeScreenState
               'Jammer Mode is Disabled',
               style: AppTypography.sectionHeader(
                 context,
-              ).copyWith(fontSize: 24),
+              ).copyWith(fontSize: 24, color: textPrimary),
               textAlign: TextAlign.center,
             ),
             const SizedBox(height: AppSpacing.md),
@@ -181,14 +213,14 @@ class _ListenTogetherHomeScreenState
               'Enable Jammer Mode to sync music\nwith your friends in real-time',
               style: AppTypography.subtitle(
                 context,
-              ).copyWith(color: AppColors.textSecondary),
+              ).copyWith(color: textSecondary),
               textAlign: TextAlign.center,
             ),
             const SizedBox(height: AppSpacing.xxl),
             Container(
               padding: const EdgeInsets.all(AppSpacing.lg),
               decoration: BoxDecoration(
-                color: AppColors.surface,
+                color: surfaceColor,
                 borderRadius: BorderRadius.circular(AppSpacing.radiusLarge),
               ),
               child: Column(
@@ -197,18 +229,21 @@ class _ListenTogetherHomeScreenState
                     icon: Icons.headphones,
                     title: 'Listen Together',
                     description: 'Sync playback with friends',
+                    themeData: themeData,
                   ),
                   const SizedBox(height: AppSpacing.md),
                   _buildFeatureRow(
                     icon: Icons.people,
                     title: 'Host or Join',
                     description: 'Create or join jam sessions',
+                    themeData: themeData,
                   ),
                   const SizedBox(height: AppSpacing.md),
                   _buildFeatureRow(
                     icon: Icons.sync,
                     title: 'Real-time Sync',
                     description: 'Everyone hears the same beat',
+                    themeData: themeData,
                   ),
                 ],
               ),
@@ -216,23 +251,20 @@ class _ListenTogetherHomeScreenState
             const SizedBox(height: AppSpacing.xxl),
             ElevatedButton.icon(
               onPressed: () async {
-                Navigator.pop(context); // Close dialog
-                Navigator.pop(context); // Go back from listen together screen
+                Navigator.pop(context);
+                Navigator.pop(context);
 
-                // Navigate to edit profile screen and wait
                 await Navigator.push(
                   context,
                   MaterialPageRoute(
                     builder: (context) => const EditProfileScreen(),
                   ),
                 );
-
-                // Note: Can't call _onReturnFromSettings here because context is disposed
               },
               icon: const Icon(Icons.settings, size: 18),
               label: const Text('Go to Settings'),
               style: ElevatedButton.styleFrom(
-                backgroundColor: AppColors.accent,
+                backgroundColor: primaryColor,
                 foregroundColor: Colors.white,
                 padding: const EdgeInsets.symmetric(
                   horizontal: AppSpacing.lg,
@@ -250,7 +282,7 @@ class _ListenTogetherHomeScreenState
                 'Go Back',
                 style: AppTypography.subtitle(
                   context,
-                ).copyWith(color: AppColors.textSecondary),
+                ).copyWith(color: textSecondary),
               ),
             ),
           ],
@@ -263,16 +295,22 @@ class _ListenTogetherHomeScreenState
     required IconData icon,
     required String title,
     required String description,
+    required ThemeData themeData,
   }) {
+    final primaryColor = themeData.primaryColor;
+    final textPrimary = themeData.textTheme.bodyLarge?.color ?? Colors.white;
+    final textSecondary =
+        themeData.textTheme.bodyMedium?.color ?? Colors.white70;
+
     return Row(
       children: [
         Container(
           padding: const EdgeInsets.all(AppSpacing.sm),
           decoration: BoxDecoration(
-            color: AppColors.accent.withOpacity(0.1),
+            color: primaryColor.withOpacity(0.1),
             borderRadius: BorderRadius.circular(AppSpacing.radiusSmall),
           ),
-          child: Icon(icon, color: AppColors.accent, size: 20),
+          child: Icon(icon, color: primaryColor, size: 20),
         ),
         const SizedBox(width: AppSpacing.md),
         Expanded(
@@ -281,16 +319,15 @@ class _ListenTogetherHomeScreenState
             children: [
               Text(
                 title,
-                style: AppTypography.subtitle(context).copyWith(
-                  color: AppColors.textPrimary,
-                  fontWeight: FontWeight.w600,
-                ),
+                style: AppTypography.subtitle(
+                  context,
+                ).copyWith(color: textPrimary, fontWeight: FontWeight.w600),
               ),
               Text(
                 description,
                 style: AppTypography.caption(
                   context,
-                ).copyWith(color: AppColors.textSecondary),
+                ).copyWith(color: textSecondary),
               ),
             ],
           ),
@@ -299,32 +336,10 @@ class _ListenTogetherHomeScreenState
     );
   }
 
-  Widget _buildTopBar(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(
-        horizontal: AppSpacing.lg,
-        vertical: AppSpacing.md,
-      ),
-      child: Row(
-        children: [
-          IconButton(
-            onPressed: () => Navigator.pop(context),
-            icon: const Icon(
-              Icons.arrow_back,
-              color: AppColors.iconActive,
-              size: 28,
-            ),
-          ),
-          const Spacer(),
-          Text('Jammer', style: AppTypography.pageTitle(context)),
-        ],
-      ),
-    );
-  }
-
   Widget _buildMainContent(
     List<SessionInvitation> invitations,
     AsyncValue<List<MutualFollower>> mutualFollowersAsync,
+    ThemeData themeData,
   ) {
     return SingleChildScrollView(
       padding: const EdgeInsets.all(AppSpacing.lg),
@@ -332,29 +347,34 @@ class _ListenTogetherHomeScreenState
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           // Hero Section
-          _buildHeroSection(),
+          _buildHeroSection(themeData),
 
           const SizedBox(height: AppSpacing.xxxl),
 
           // Pending Invitations
           if (invitations.isNotEmpty) ...[
-            _buildPendingInvitations(invitations),
+            _buildPendingInvitations(invitations, themeData),
             const SizedBox(height: AppSpacing.xxxl),
           ],
 
           // Host or Join Section
-          _buildHostOrJoinSection(mutualFollowersAsync),
+          _buildHostOrJoinSection(mutualFollowersAsync, themeData),
 
           const SizedBox(height: AppSpacing.xl),
 
           // How It Works
-          _buildHowItWorks(),
+          _buildHowItWorks(themeData),
         ],
       ),
     );
   }
 
-  Widget _buildHeroSection() {
+  Widget _buildHeroSection(ThemeData themeData) {
+    final primaryColor = themeData.primaryColor;
+    final textPrimary = themeData.textTheme.bodyLarge?.color ?? Colors.white;
+    final textSecondary =
+        themeData.textTheme.bodyMedium?.color ?? Colors.white70;
+
     return Container(
       padding: const EdgeInsets.all(AppSpacing.xl),
       decoration: BoxDecoration(
@@ -362,12 +382,12 @@ class _ListenTogetherHomeScreenState
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
           colors: [
-            AppColors.accent.withOpacity(0.2),
-            AppColors.accent.withOpacity(0.05),
+            primaryColor.withOpacity(0.2),
+            primaryColor.withOpacity(0.05),
           ],
         ),
         borderRadius: BorderRadius.circular(AppSpacing.radiusLarge),
-        border: Border.all(color: AppColors.accent.withOpacity(0.3), width: 1),
+        border: Border.all(color: primaryColor.withOpacity(0.3), width: 1),
       ),
       child: Column(
         children: [
@@ -380,14 +400,10 @@ class _ListenTogetherHomeScreenState
                 child: Container(
                   padding: const EdgeInsets.all(AppSpacing.lg),
                   decoration: BoxDecoration(
-                    color: AppColors.accent.withOpacity(0.2),
+                    color: primaryColor.withOpacity(0.2),
                     shape: BoxShape.circle,
                   ),
-                  child: const Icon(
-                    Icons.headphones,
-                    size: 64,
-                    color: AppColors.accent,
-                  ),
+                  child: Icon(Icons.headphones, size: 64, color: primaryColor),
                 ),
               );
             },
@@ -397,7 +413,7 @@ class _ListenTogetherHomeScreenState
             'Listen Together',
             style: AppTypography.sectionHeader(
               context,
-            ).copyWith(color: AppColors.textPrimary, fontSize: 28),
+            ).copyWith(color: textPrimary, fontSize: 28),
             textAlign: TextAlign.center,
           ),
           const SizedBox(height: AppSpacing.sm),
@@ -405,7 +421,7 @@ class _ListenTogetherHomeScreenState
             'Share your music experience in real-time\nwith friends nearby',
             style: AppTypography.subtitle(
               context,
-            ).copyWith(color: AppColors.textSecondary),
+            ).copyWith(color: textSecondary),
             textAlign: TextAlign.center,
           ),
         ],
@@ -413,29 +429,31 @@ class _ListenTogetherHomeScreenState
     );
   }
 
-  Widget _buildPendingInvitations(List<SessionInvitation> invitations) {
+  Widget _buildPendingInvitations(
+    List<SessionInvitation> invitations,
+    ThemeData themeData,
+  ) {
+    final primaryColor = themeData.primaryColor;
+    final textPrimary = themeData.textTheme.bodyLarge?.color ?? Colors.white;
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Row(
           children: [
-            const Icon(
-              Icons.notifications_active,
-              color: AppColors.accent,
-              size: 20,
-            ),
+            Icon(Icons.notifications_active, color: primaryColor, size: 20),
             const SizedBox(width: AppSpacing.sm),
             Text(
               'Pending Invitations',
               style: AppTypography.sectionHeader(
                 context,
-              ).copyWith(fontSize: 18),
+              ).copyWith(fontSize: 18, color: textPrimary),
             ),
             const SizedBox(width: AppSpacing.sm),
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
               decoration: BoxDecoration(
-                color: AppColors.accent,
+                color: primaryColor,
                 borderRadius: BorderRadius.circular(10),
               ),
               child: Text(
@@ -451,20 +469,31 @@ class _ListenTogetherHomeScreenState
         ),
         const SizedBox(height: AppSpacing.md),
         ...invitations.map((invitation) {
-          return _buildInvitationCard(invitation);
+          return _buildInvitationCard(invitation, themeData);
         }),
       ],
     );
   }
 
-  Widget _buildInvitationCard(SessionInvitation invitation) {
+  Widget _buildInvitationCard(
+    SessionInvitation invitation,
+    ThemeData themeData,
+  ) {
+    final primaryColor = themeData.primaryColor;
+    final surfaceColor = themeData.cardColor;
+    final textPrimary = themeData.textTheme.bodyLarge?.color ?? Colors.white;
+    final textSecondary =
+        themeData.textTheme.bodyMedium?.color ?? Colors.white70;
+    final textTertiary = themeData.textTheme.bodySmall?.color ?? Colors.white60;
+    final bgColor = themeData.scaffoldBackgroundColor;
+
     return Container(
       margin: const EdgeInsets.only(bottom: AppSpacing.md),
       padding: const EdgeInsets.all(AppSpacing.lg),
       decoration: BoxDecoration(
-        color: AppColors.surface,
+        color: surfaceColor,
         borderRadius: BorderRadius.circular(AppSpacing.radiusLarge),
-        border: Border.all(color: AppColors.accent.withOpacity(0.3), width: 1),
+        border: Border.all(color: primaryColor.withOpacity(0.3), width: 1),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -474,12 +503,12 @@ class _ListenTogetherHomeScreenState
               // Host Avatar
               CircleAvatar(
                 radius: 24,
-                backgroundColor: AppColors.surfaceLight,
+                backgroundColor: bgColor,
                 backgroundImage: invitation.hostProfilePic != null
                     ? NetworkImage(invitation.hostProfilePic!)
                     : null,
                 child: invitation.hostProfilePic == null
-                    ? const Icon(Icons.person, color: AppColors.iconInactive)
+                    ? Icon(Icons.person, color: textSecondary)
                     : null,
               ),
               const SizedBox(width: AppSpacing.md),
@@ -489,16 +518,17 @@ class _ListenTogetherHomeScreenState
                   children: [
                     Text(
                       invitation.hostUsername,
-                      style: AppTypography.songTitle(
-                        context,
-                      ).copyWith(fontWeight: FontWeight.w600),
+                      style: AppTypography.songTitle(context).copyWith(
+                        fontWeight: FontWeight.w600,
+                        color: textPrimary,
+                      ),
                     ),
                     const SizedBox(height: 2),
                     Text(
                       'invited you to jam',
                       style: AppTypography.caption(
                         context,
-                      ).copyWith(color: AppColors.textSecondary),
+                      ).copyWith(color: textSecondary),
                     ),
                   ],
                 ),
@@ -509,21 +539,17 @@ class _ListenTogetherHomeScreenState
                   vertical: 4,
                 ),
                 decoration: BoxDecoration(
-                  color: AppColors.success.withOpacity(0.2),
+                  color: Colors.green.withOpacity(0.2),
                   borderRadius: BorderRadius.circular(12),
                 ),
                 child: Row(
                   children: [
-                    const Icon(
-                      Icons.people,
-                      size: 14,
-                      color: AppColors.success,
-                    ),
+                    const Icon(Icons.people, size: 14, color: Colors.green),
                     const SizedBox(width: 4),
                     Text(
                       '${invitation.participantCount}',
                       style: AppTypography.caption(context).copyWith(
-                        color: AppColors.success,
+                        color: Colors.green,
                         fontWeight: FontWeight.bold,
                       ),
                     ),
@@ -537,16 +563,12 @@ class _ListenTogetherHomeScreenState
             Container(
               padding: const EdgeInsets.all(AppSpacing.md),
               decoration: BoxDecoration(
-                color: AppColors.background,
+                color: bgColor,
                 borderRadius: BorderRadius.circular(AppSpacing.radiusMedium),
               ),
               child: Row(
                 children: [
-                  const Icon(
-                    Icons.music_note,
-                    color: AppColors.accent,
-                    size: 20,
-                  ),
+                  Icon(Icons.music_note, color: primaryColor, size: 20),
                   const SizedBox(width: AppSpacing.sm),
                   Expanded(
                     child: Column(
@@ -554,15 +576,14 @@ class _ListenTogetherHomeScreenState
                       children: [
                         Text(
                           'Currently playing:',
-                          style: AppTypography.caption(context).copyWith(
-                            color: AppColors.textTertiary,
-                            fontSize: 10,
-                          ),
+                          style: AppTypography.caption(
+                            context,
+                          ).copyWith(color: textTertiary, fontSize: 10),
                         ),
                         Text(
                           invitation.currentSongTitle!,
                           style: AppTypography.caption(context).copyWith(
-                            color: AppColors.textPrimary,
+                            color: textPrimary,
                             fontWeight: FontWeight.w600,
                           ),
                           maxLines: 1,
@@ -571,10 +592,9 @@ class _ListenTogetherHomeScreenState
                         if (invitation.currentSongArtists != null)
                           Text(
                             invitation.currentSongArtists!.join(', '),
-                            style: AppTypography.caption(context).copyWith(
-                              color: AppColors.textSecondary,
-                              fontSize: 10,
-                            ),
+                            style: AppTypography.caption(
+                              context,
+                            ).copyWith(color: textSecondary, fontSize: 10),
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                           ),
@@ -592,7 +612,7 @@ class _ListenTogetherHomeScreenState
                 child: ElevatedButton(
                   onPressed: () => _acceptInvitation(invitation),
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: AppColors.accent,
+                    backgroundColor: primaryColor,
                     foregroundColor: Colors.white,
                     padding: const EdgeInsets.symmetric(vertical: 14),
                     shape: RoundedRectangleBorder(
@@ -608,8 +628,8 @@ class _ListenTogetherHomeScreenState
               ElevatedButton(
                 onPressed: () => _declineInvitation(invitation),
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: AppColors.surface,
-                  foregroundColor: AppColors.textSecondary,
+                  backgroundColor: surfaceColor,
+                  foregroundColor: textSecondary,
                   padding: const EdgeInsets.symmetric(
                     horizontal: AppSpacing.lg,
                     vertical: 14,
@@ -618,7 +638,7 @@ class _ListenTogetherHomeScreenState
                     borderRadius: BorderRadius.circular(
                       AppSpacing.radiusMedium,
                     ),
-                    side: BorderSide(color: AppColors.divider, width: 1),
+                    side: BorderSide(color: themeData.dividerColor, width: 1),
                   ),
                 ),
                 child: const Text('Decline'),
@@ -632,56 +652,67 @@ class _ListenTogetherHomeScreenState
 
   Widget _buildHostOrJoinSection(
     AsyncValue<List<MutualFollower>> mutualFollowersAsync,
+    ThemeData themeData,
   ) {
+    final textPrimary = themeData.textTheme.bodyLarge?.color ?? Colors.white;
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
           'Start or Join',
-          style: AppTypography.sectionHeader(context).copyWith(fontSize: 18),
+          style: AppTypography.sectionHeader(
+            context,
+          ).copyWith(fontSize: 18, color: textPrimary),
         ),
         const SizedBox(height: AppSpacing.md),
         Row(
           children: [
-            Expanded(child: _buildHostCard(mutualFollowersAsync)),
+            Expanded(child: _buildHostCard(mutualFollowersAsync, themeData)),
             const SizedBox(width: AppSpacing.md),
-            Expanded(child: _buildJoinCard()),
+            Expanded(child: _buildJoinCard(themeData)),
           ],
         ),
       ],
     );
   }
 
-  Widget _buildHostCard(AsyncValue<List<MutualFollower>> mutualFollowersAsync) {
+  Widget _buildHostCard(
+    AsyncValue<List<MutualFollower>> mutualFollowersAsync,
+    ThemeData themeData,
+  ) {
     final onlineCount = mutualFollowersAsync.when(
       data: (followers) => followers.where((f) => f.isOnline).length,
       loading: () => 0,
       error: (_, __) => 0,
     );
 
+    final primaryColor = themeData.primaryColor;
+    final surfaceColor = themeData.cardColor;
+    final textPrimary = themeData.textTheme.bodyLarge?.color ?? Colors.white;
+    final textSecondary =
+        themeData.textTheme.bodyMedium?.color ?? Colors.white70;
+
     return GestureDetector(
       onTap: () => _showCreateSessionDialog(mutualFollowersAsync),
       child: Container(
         padding: const EdgeInsets.all(AppSpacing.lg),
         decoration: BoxDecoration(
-          color: AppColors.surface,
+          color: surfaceColor,
           borderRadius: BorderRadius.circular(AppSpacing.radiusLarge),
-          border: Border.all(
-            color: AppColors.accent.withOpacity(0.3),
-            width: 1,
-          ),
+          border: Border.all(color: primaryColor.withOpacity(0.3), width: 1),
         ),
         child: Column(
           children: [
             Container(
               padding: const EdgeInsets.all(AppSpacing.md),
               decoration: BoxDecoration(
-                color: AppColors.accent.withOpacity(0.2),
+                color: primaryColor.withOpacity(0.2),
                 shape: BoxShape.circle,
               ),
-              child: const Icon(
+              child: Icon(
                 Icons.broadcast_on_personal,
-                color: AppColors.accent,
+                color: primaryColor,
                 size: 32,
               ),
             ),
@@ -690,14 +721,14 @@ class _ListenTogetherHomeScreenState
               'Host',
               style: AppTypography.songTitle(
                 context,
-              ).copyWith(fontWeight: FontWeight.w600),
+              ).copyWith(fontWeight: FontWeight.w600, color: textPrimary),
             ),
             const SizedBox(height: AppSpacing.xs),
             Text(
               'Start a session',
               style: AppTypography.caption(
                 context,
-              ).copyWith(color: AppColors.textSecondary),
+              ).copyWith(color: textSecondary),
               textAlign: TextAlign.center,
             ),
             if (onlineCount > 0) ...[
@@ -705,13 +736,13 @@ class _ListenTogetherHomeScreenState
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                 decoration: BoxDecoration(
-                  color: AppColors.success.withOpacity(0.2),
+                  color: Colors.green.withOpacity(0.2),
                   borderRadius: BorderRadius.circular(10),
                 ),
                 child: Text(
                   '$onlineCount online',
                   style: AppTypography.caption(context).copyWith(
-                    color: AppColors.success,
+                    color: Colors.green,
                     fontSize: 10,
                     fontWeight: FontWeight.bold,
                   ),
@@ -724,18 +755,25 @@ class _ListenTogetherHomeScreenState
     );
   }
 
-  Widget _buildJoinCard() {
+  Widget _buildJoinCard(ThemeData themeData) {
+    final primaryColor = themeData.primaryColor;
+    final surfaceColor = themeData.cardColor;
+    final textPrimary = themeData.textTheme.bodyLarge?.color ?? Colors.white;
+    final textSecondary =
+        themeData.textTheme.bodyMedium?.color ?? Colors.white70;
+    final iconColor = themeData.iconTheme.color ?? Colors.white;
+
     return GestureDetector(
       onTap: () => _startScanning(),
       child: Container(
         padding: const EdgeInsets.all(AppSpacing.lg),
         decoration: BoxDecoration(
-          color: AppColors.surface,
+          color: surfaceColor,
           borderRadius: BorderRadius.circular(AppSpacing.radiusLarge),
           border: Border.all(
             color: _isScanning
-                ? AppColors.success.withOpacity(0.5)
-                : AppColors.divider,
+                ? Colors.green.withOpacity(0.5)
+                : themeData.dividerColor,
             width: _isScanning ? 2 : 1,
           ),
         ),
@@ -745,8 +783,8 @@ class _ListenTogetherHomeScreenState
               padding: const EdgeInsets.all(AppSpacing.md),
               decoration: BoxDecoration(
                 color: _isScanning
-                    ? AppColors.success.withOpacity(0.2)
-                    : AppColors.surfaceLight,
+                    ? Colors.green.withOpacity(0.2)
+                    : primaryColor.withOpacity(0.1),
                 shape: BoxShape.circle,
               ),
               child: _isScanning
@@ -755,21 +793,17 @@ class _ListenTogetherHomeScreenState
                       height: 32,
                       child: CircularProgressIndicator(
                         strokeWidth: 3,
-                        color: AppColors.success,
+                        color: Colors.green,
                       ),
                     )
-                  : const Icon(
-                      Icons.radar,
-                      color: AppColors.iconActive,
-                      size: 32,
-                    ),
+                  : Icon(Icons.radar, color: iconColor, size: 32),
             ),
             const SizedBox(height: AppSpacing.md),
             Text(
               _isScanning ? 'Scanning...' : 'Join',
               style: AppTypography.songTitle(context).copyWith(
                 fontWeight: FontWeight.w600,
-                color: _isScanning ? AppColors.success : AppColors.textPrimary,
+                color: _isScanning ? Colors.green : textPrimary,
               ),
             ),
             const SizedBox(height: AppSpacing.xs),
@@ -777,7 +811,7 @@ class _ListenTogetherHomeScreenState
               _isScanning ? 'Looking nearby' : 'Find sessions',
               style: AppTypography.caption(
                 context,
-              ).copyWith(color: AppColors.textSecondary),
+              ).copyWith(color: textSecondary),
               textAlign: TextAlign.center,
             ),
           ],
@@ -786,11 +820,14 @@ class _ListenTogetherHomeScreenState
     );
   }
 
-  Widget _buildHowItWorks() {
+  Widget _buildHowItWorks(ThemeData themeData) {
+    final surfaceColor = themeData.cardColor;
+    final textPrimary = themeData.textTheme.bodyLarge?.color ?? Colors.white;
+
     return Container(
       padding: const EdgeInsets.all(AppSpacing.lg),
       decoration: BoxDecoration(
-        color: AppColors.surface,
+        color: surfaceColor,
         borderRadius: BorderRadius.circular(AppSpacing.radiusLarge),
       ),
       child: Column(
@@ -800,25 +837,28 @@ class _ListenTogetherHomeScreenState
             'How it works',
             style: AppTypography.songTitle(
               context,
-            ).copyWith(fontWeight: FontWeight.w600),
+            ).copyWith(fontWeight: FontWeight.w600, color: textPrimary),
           ),
           const SizedBox(height: AppSpacing.md),
           _buildHowItWorksStep(
             icon: Icons.group_add,
             title: 'Mutual followers only',
             description: 'Only friends who follow each other can jam together',
+            themeData: themeData,
           ),
           const SizedBox(height: AppSpacing.md),
           _buildHowItWorksStep(
             icon: Icons.headphones,
             title: 'Synchronized playback',
             description: 'Everyone hears the same thing at the same time',
+            themeData: themeData,
           ),
           const SizedBox(height: AppSpacing.md),
           _buildHowItWorksStep(
             icon: Icons.location_on,
             title: 'Works best nearby',
             description: 'For the best experience, be within 5 meters',
+            themeData: themeData,
           ),
         ],
       ),
@@ -829,17 +869,23 @@ class _ListenTogetherHomeScreenState
     required IconData icon,
     required String title,
     required String description,
+    required ThemeData themeData,
   }) {
+    final primaryColor = themeData.primaryColor;
+    final textPrimary = themeData.textTheme.bodyLarge?.color ?? Colors.white;
+    final textSecondary =
+        themeData.textTheme.bodyMedium?.color ?? Colors.white70;
+
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Container(
           padding: const EdgeInsets.all(8),
           decoration: BoxDecoration(
-            color: AppColors.accent.withOpacity(0.1),
+            color: primaryColor.withOpacity(0.1),
             borderRadius: BorderRadius.circular(8),
           ),
-          child: Icon(icon, color: AppColors.accent, size: 20),
+          child: Icon(icon, color: primaryColor, size: 20),
         ),
         const SizedBox(width: AppSpacing.md),
         Expanded(
@@ -848,17 +894,16 @@ class _ListenTogetherHomeScreenState
             children: [
               Text(
                 title,
-                style: AppTypography.subtitle(context).copyWith(
-                  color: AppColors.textPrimary,
-                  fontWeight: FontWeight.w600,
-                ),
+                style: AppTypography.subtitle(
+                  context,
+                ).copyWith(color: textPrimary, fontWeight: FontWeight.w600),
               ),
               const SizedBox(height: 2),
               Text(
                 description,
                 style: AppTypography.caption(
                   context,
-                ).copyWith(color: AppColors.textSecondary),
+                ).copyWith(color: textSecondary),
               ),
             ],
           ),
@@ -867,18 +912,28 @@ class _ListenTogetherHomeScreenState
     );
   }
 
-  Widget _buildActiveSessionView(ListeningSession session) {
+  Widget _buildActiveSessionView(
+    ListeningSession session,
+    ThemeData themeData,
+  ) {
+    final primaryColor = themeData.primaryColor;
+    final textPrimary = themeData.textTheme.bodyLarge?.color ?? Colors.white;
+    final textSecondary =
+        themeData.textTheme.bodyMedium?.color ?? Colors.white70;
+
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(AppSpacing.xl),
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            const Icon(Icons.celebration, color: AppColors.accent, size: 64),
+            Icon(Icons.celebration, color: primaryColor, size: 64),
             const SizedBox(height: AppSpacing.lg),
             Text(
               'You\'re in a session!',
-              style: AppTypography.sectionHeader(context),
+              style: AppTypography.sectionHeader(
+                context,
+              ).copyWith(color: textPrimary),
             ),
             const SizedBox(height: AppSpacing.sm),
             Text(
@@ -887,24 +942,18 @@ class _ListenTogetherHomeScreenState
                   : 'Hosted by ${session.hostUsername}',
               style: AppTypography.subtitle(
                 context,
-              ).copyWith(color: AppColors.textSecondary),
+              ).copyWith(color: textSecondary),
               textAlign: TextAlign.center,
             ),
             const SizedBox(height: AppSpacing.xl),
             ElevatedButton.icon(
               onPressed: () {
                 // TODO: Navigate to active session screen
-                // Navigator.push(
-                //   context,
-                //   MaterialPageRoute(
-                //     builder: (context) => ActiveSessionScreen(sessionId: session.id),
-                //   ),
-                // );
               },
               icon: const Icon(Icons.headphones),
               label: const Text('Go to Session'),
               style: ElevatedButton.styleFrom(
-                backgroundColor: AppColors.accent,
+                backgroundColor: primaryColor,
                 foregroundColor: Colors.white,
                 padding: const EdgeInsets.symmetric(
                   horizontal: AppSpacing.xl,
@@ -921,22 +970,32 @@ class _ListenTogetherHomeScreenState
     );
   }
 
-  Widget _buildErrorView(String error) {
+  Widget _buildErrorView(String error, ThemeData themeData) {
+    final textPrimary = themeData.textTheme.bodyLarge?.color ?? Colors.white;
+    final textSecondary =
+        themeData.textTheme.bodyMedium?.color ?? Colors.white70;
+    final errorColor = themeData.colorScheme.error;
+
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(AppSpacing.xl),
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            const Icon(Icons.error_outline, color: AppColors.error, size: 64),
+            Icon(Icons.error_outline, color: errorColor, size: 64),
             const SizedBox(height: AppSpacing.lg),
-            Text('Oops!', style: AppTypography.sectionHeader(context)),
+            Text(
+              'Oops!',
+              style: AppTypography.sectionHeader(
+                context,
+              ).copyWith(color: textPrimary),
+            ),
             const SizedBox(height: AppSpacing.sm),
             Text(
               error,
               style: AppTypography.caption(
                 context,
-              ).copyWith(color: AppColors.textSecondary),
+              ).copyWith(color: textSecondary),
               textAlign: TextAlign.center,
             ),
             const SizedBox(height: AppSpacing.xl),
@@ -951,7 +1010,6 @@ class _ListenTogetherHomeScreenState
       ),
     );
   }
-
   // Actions
 
   void _showCreateSessionDialog(

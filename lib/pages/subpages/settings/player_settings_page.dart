@@ -30,6 +30,10 @@ final audioHandlerProvider = Provider<BackgroundAudioHandler?>((ref) {
 // Add this StateProvider to track settings
 final resumePlaybackEnabledProvider = StateProvider<bool>((ref) => false);
 final persistentQueueEnabledProvider = StateProvider<bool>((ref) => false);
+final loudnessNormalizationEnabledProvider = StateProvider<bool>(
+  (ref) => false,
+);
+final lineByLineLyricsEnabledProvider = StateProvider<bool>((ref) => false);
 
 // Update the PlayerSettingsPage widget:
 class PlayerSettingsPage extends ConsumerStatefulWidget {
@@ -59,7 +63,8 @@ class _PlayerSettingsPageState extends ConsumerState<PlayerSettingsPage> {
             handler.persistentQueueEnabled;
         ref.read(loudnessNormalizationEnabledProvider.notifier).state =
             handler.loudnessNormalizationEnabled;
-
+        ref.read(lineByLineLyricsEnabledProvider.notifier).state =
+            handler.lineByLineLyricsEnabled;
         print(
           '✅ [UI] Settings loaded - Resume: ${handler.resumePlaybackEnabled}, Normalization: ${handler.loudnessNormalizationEnabled}',
         );
@@ -86,15 +91,21 @@ class _PlayerSettingsPageState extends ConsumerState<PlayerSettingsPage> {
 
   @override
   Widget build(BuildContext context) {
+    final themeData = Theme.of(context);
+    final colorScheme = themeData.colorScheme;
     final resumePlaybackEnabled = ref.watch(resumePlaybackEnabledProvider);
     final loudnessNormalizationEnabled = ref.watch(
       loudnessNormalizationEnabledProvider,
     );
     final persistentQueueEnabled = ref.watch(persistentQueueEnabledProvider);
+    final iconActiveColor = colorScheme.primary;
+    final textPrimaryColor = colorScheme.onSurface;
+    final textSecondaryColor = colorScheme.onSurface.withOpacity(0.6);
 
     return _SettingsPageTemplate(
-      title: 'Player',
+      title: 'Players',
       currentIndex: 0,
+      themeData: themeData,
       content: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -102,28 +113,13 @@ class _PlayerSettingsPageState extends ConsumerState<PlayerSettingsPage> {
           Text(
             'PLAYER',
             style: AppTypography.caption(context).copyWith(
-              color: ref.watch(themeIconActiveColorProvider),
+              color: iconActiveColor,
               fontWeight: FontWeight.w600,
               letterSpacing: 1.2,
             ),
           ),
           const SizedBox(height: AppSpacing.lg),
 
-          // _buildToggleItem(
-          //   ref,
-          //   'Persistent queue',
-          //   'Save and restore playing songs',
-          //   true,
-          //   () {},
-          // ),
-          // const SizedBox(height: AppSpacing.lg),
-          // _buildToggleItem(
-          //   ref,
-          //   'Resume playback',
-          //   'When a wired or Bluetooth device is connected',
-          //   false,
-          //   () {},
-          // ),
           ComingSoonToggleItem(
             title: 'Persistent queue',
             subtitle: 'Save and restore playing songs',
@@ -132,13 +128,7 @@ class _PlayerSettingsPageState extends ConsumerState<PlayerSettingsPage> {
 
           const SizedBox(height: AppSpacing.lg),
 
-          // ComingSoonToggleItem(
-          //   title: 'Resume playback',
-          //   subtitle: 'When a wired or Bluetooth device is connected',
-          //   value: false,
-          // ),
           _buildToggleItem(
-            ref,
             'Resume playback',
             'When a wired or Bluetooth device is connected',
             resumePlaybackEnabled,
@@ -150,12 +140,10 @@ class _PlayerSettingsPageState extends ConsumerState<PlayerSettingsPage> {
               }
 
               final notifier = ref.read(resumePlaybackEnabledProvider.notifier);
-
               final newValue = !notifier.state;
 
               try {
                 await handler.setResumePlaybackEnabled(newValue);
-
                 notifier.state = newValue;
 
                 if (!mounted) return;
@@ -181,6 +169,9 @@ class _PlayerSettingsPageState extends ConsumerState<PlayerSettingsPage> {
                 );
               }
             },
+            textPrimaryColor: textPrimaryColor,
+            textSecondaryColor: textSecondaryColor,
+            iconActiveColor: iconActiveColor,
           ),
 
           const SizedBox(height: AppSpacing.xl),
@@ -189,32 +180,14 @@ class _PlayerSettingsPageState extends ConsumerState<PlayerSettingsPage> {
           Text(
             'AUDIO',
             style: AppTypography.caption(context).copyWith(
-              color: ref.watch(themeIconActiveColorProvider),
+              color: iconActiveColor,
               fontWeight: FontWeight.w600,
               letterSpacing: 1.2,
             ),
           ),
           const SizedBox(height: AppSpacing.lg),
 
-          // _buildToggleItem(
-          //   ref,
-          //   'Loudness normalization',
-          //   'Normalize volume across tracks',
-          //   false,
-          //   () {},
-          // ),
-          // const SizedBox(height: AppSpacing.lg),
-          // _buildNavigationItem(
-          //   ref,
-          //   context,
-          //   'Equalizer',
-          //   'Adjust sound frequencies',
-          //   () {
-          //     // Navigate to EQ page
-          //   },
-          // ),
           _buildToggleItem(
-            ref,
             'Loudness normalization',
             'Normalize volume across tracks',
             loudnessNormalizationEnabled,
@@ -259,16 +232,14 @@ class _PlayerSettingsPageState extends ConsumerState<PlayerSettingsPage> {
                 );
               }
             },
+            textPrimaryColor: textPrimaryColor,
+            textSecondaryColor: textSecondaryColor,
+            iconActiveColor: iconActiveColor,
           ),
 
           const SizedBox(height: AppSpacing.lg),
 
-          // ComingSoonNavigationItem(
-          //   title: 'Equalizer',
-          //   subtitle: 'Adjust sound frequencies',
-          // ),
           _buildNavigationItem(
-            ref,
             context,
             'Equalizer',
             'Adjust sound frequencies',
@@ -277,6 +248,9 @@ class _PlayerSettingsPageState extends ConsumerState<PlayerSettingsPage> {
                 context,
               ).pushMaterialFadeThrough(const AudioEqualizerPage());
             },
+            textPrimaryColor: textPrimaryColor,
+            textSecondaryColor: textSecondaryColor,
+            iconInactiveColor: textSecondaryColor,
           ),
 
           const SizedBox(height: AppSpacing.xl),
@@ -285,7 +259,7 @@ class _PlayerSettingsPageState extends ConsumerState<PlayerSettingsPage> {
           Text(
             'PLAYBACK',
             style: AppTypography.caption(context).copyWith(
-              color: ref.watch(themeIconActiveColorProvider),
+              color: iconActiveColor,
               fontWeight: FontWeight.w600,
               letterSpacing: 1.2,
             ),
@@ -302,7 +276,12 @@ class _PlayerSettingsPageState extends ConsumerState<PlayerSettingsPage> {
                 ),
               );
             },
-            child: _buildSettingItem(ref, 'Audio quality', 'Auto'),
+            child: _buildSettingItem(
+              'Audio quality',
+              'Auto',
+              textPrimaryColor: textPrimaryColor,
+              textSecondaryColor: textSecondaryColor,
+            ),
           ),
           const SizedBox(height: AppSpacing.lg),
 
@@ -315,7 +294,7 @@ class _PlayerSettingsPageState extends ConsumerState<PlayerSettingsPage> {
             Text(
               'BETA MODE',
               style: AppTypography.caption(context).copyWith(
-                color: ref.watch(themeIconActiveColorProvider),
+                color: iconActiveColor,
                 fontWeight: FontWeight.w600,
                 letterSpacing: 1.2,
               ),
@@ -345,9 +324,7 @@ class _PlayerSettingsPageState extends ConsumerState<PlayerSettingsPage> {
                                 isBetaEnabled: isBetaEnabled,
                                 onPressed: () =>
                                     _toggleBetaTester(context, ref),
-                                accentColor: ref.watch(
-                                  themeIconActiveColorProvider,
-                                ),
+                                accentColor: iconActiveColor,
                               ),
                             ),
                             const SizedBox(height: AppSpacing.lg),
@@ -379,15 +356,69 @@ class _PlayerSettingsPageState extends ConsumerState<PlayerSettingsPage> {
                   error: (_, __) => const SizedBox.shrink(),
                 ),
           ],
+          const SizedBox(height: AppSpacing.lg),
+
+          // Line-by-line lyrics toggle
+          _buildToggleItem(
+            'Line-by-line lyrics',
+            'Spotify-style synchronized lyrics',
+            ref.watch(lineByLineLyricsEnabledProvider),
+            () async {
+              final handler = getAudioHandler();
+              if (handler == null) {
+                HapticFeedbackService().vibratingForNotAllowed();
+                return;
+              }
+
+              final notifier = ref.read(
+                lineByLineLyricsEnabledProvider.notifier,
+              );
+              final newValue = !notifier.state;
+
+              try {
+                await handler.setLineByLineLyricsEnabled(newValue);
+                notifier.state = newValue;
+
+                if (!mounted) return;
+
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text(
+                      newValue
+                          ? 'Line-by-line lyrics enabled'
+                          : 'Line-by-line lyrics disabled',
+                    ),
+                    behavior: SnackBarBehavior.floating,
+                    duration: const Duration(seconds: 2),
+                  ),
+                );
+              } catch (e) {
+                HapticFeedbackService().vibrateAudioError();
+
+                if (!mounted) return;
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('Failed to update setting'),
+                    backgroundColor: Colors.red,
+                  ),
+                );
+              }
+            },
+            textPrimaryColor: textPrimaryColor,
+            textSecondaryColor: textSecondaryColor,
+            iconActiveColor: iconActiveColor,
+          ),
         ],
       ),
     );
   }
 
-  Widget _buildSettingItem(WidgetRef ref, String title, String value) {
-    final textPrimaryColor = ref.watch(themeTextPrimaryColorProvider);
-    final textSecondaryColor = ref.watch(themeTextSecondaryColorProvider);
-
+  Widget _buildSettingItem(
+    String title,
+    String value, {
+    required Color textPrimaryColor,
+    required Color textSecondaryColor,
+  }) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -409,16 +440,14 @@ class _PlayerSettingsPageState extends ConsumerState<PlayerSettingsPage> {
   }
 
   Widget _buildToggleItem(
-    WidgetRef ref,
     String title,
     String subtitle,
     bool value,
-    VoidCallback onChanged,
-  ) {
-    final textPrimaryColor = ref.watch(themeTextPrimaryColorProvider);
-    final textSecondaryColor = ref.watch(themeTextSecondaryColorProvider);
-    final iconActiveColor = ref.watch(themeIconActiveColorProvider);
-
+    VoidCallback onChanged, {
+    required Color textPrimaryColor,
+    required Color textSecondaryColor,
+    required Color iconActiveColor,
+  }) {
     return Row(
       children: [
         Expanded(
@@ -452,16 +481,14 @@ class _PlayerSettingsPageState extends ConsumerState<PlayerSettingsPage> {
   }
 
   Widget _buildNavigationItem(
-    WidgetRef ref,
     BuildContext context,
     String title,
     String subtitle,
-    VoidCallback onTap,
-  ) {
-    final textPrimaryColor = ref.watch(themeTextPrimaryColorProvider);
-    final textSecondaryColor = ref.watch(themeTextSecondaryColorProvider);
-    final iconInactiveColor = ref.watch(themeTextSecondaryColorProvider);
-
+    VoidCallback onTap, {
+    required Color textPrimaryColor,
+    required Color textSecondaryColor,
+    required Color iconInactiveColor,
+  }) {
     return GestureDetector(
       onTap: onTap,
       child: Row(
@@ -539,37 +566,37 @@ class _PlayerSettingsPageState extends ConsumerState<PlayerSettingsPage> {
   }
 }
 
-// In player_settings_page.dart, add this provider after the existing ones:
-final loudnessNormalizationEnabledProvider = StateProvider<bool>(
-  (ref) => false,
-);
-
 // Template for settings pages
 class _SettingsPageTemplate extends ConsumerWidget {
   final String title;
   final int currentIndex;
   final Widget content;
+  final ThemeData themeData;
 
   const _SettingsPageTemplate({
     required this.title,
     required this.currentIndex,
     required this.content,
+    required this.themeData,
   });
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final backgroundColor = ref.watch(themeBackgroundColorProvider);
+    final colorScheme = themeData.colorScheme;
+    final backgroundColor = colorScheme.background;
 
     return Scaffold(
       backgroundColor: backgroundColor,
       body: SafeArea(
         child: Column(
           children: [
-            _buildTopBar(context, ref),
+            const SizedBox(height: AppSpacing.xxxl),
+
+            _buildTopBar(context, colorScheme),
             Expanded(
               child: Row(
                 children: [
-                  _buildSidebar(context, ref),
+                  _buildSidebar(context, colorScheme),
                   Expanded(
                     child: SingleChildScrollView(
                       padding: const EdgeInsets.all(AppSpacing.lg),
@@ -588,8 +615,8 @@ class _SettingsPageTemplate extends ConsumerWidget {
     );
   }
 
-  Widget _buildTopBar(BuildContext context, WidgetRef ref) {
-    final textPrimaryColor = ref.watch(themeTextPrimaryColorProvider);
+  Widget _buildTopBar(BuildContext context, ColorScheme colorScheme) {
+    final textPrimaryColor = colorScheme.onSurface;
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
@@ -615,12 +642,12 @@ class _SettingsPageTemplate extends ConsumerWidget {
     );
   }
 
-  Widget _buildSidebar(BuildContext context, WidgetRef ref) {
+  Widget _buildSidebar(BuildContext context, ColorScheme colorScheme) {
     final double availableHeight = MediaQuery.of(context).size.height;
-    final iconActiveColor = ref.watch(themeIconActiveColorProvider);
-    final iconInactiveColor = ref.watch(themeTextSecondaryColorProvider);
-    final sidebarLabelColor = ref.watch(themeTextPrimaryColorProvider);
-    final sidebarLabelActiveColor = ref.watch(themeIconActiveColorProvider);
+    final iconActiveColor = colorScheme.primary;
+    final iconInactiveColor = colorScheme.onSurface.withOpacity(0.6);
+    final sidebarLabelColor = colorScheme.onSurface;
+    final sidebarLabelActiveColor = colorScheme.primary;
 
     final sidebarLabelStyle = AppTypography.sidebarLabel(
       context,

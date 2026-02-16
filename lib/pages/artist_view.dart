@@ -261,11 +261,12 @@ class _ArtistPageState extends ConsumerState<ArtistPage> {
 
   @override
   Widget build(BuildContext context) {
-    final backgroundColor = ref.watch(themeBackgroundColorProvider);
-    final textPrimaryColor = ref.watch(themeTextPrimaryColorProvider);
-    final iconActiveColor = ref.watch(themeIconActiveColorProvider);
-    final iconInactiveColor = ref.watch(themeTextSecondaryColorProvider);
-    final cardBackgroundColor = ref.watch(themeCardBackgroundColorProvider);
+    final themeData = Theme.of(context);
+    final backgroundColor = themeData.scaffoldBackgroundColor;
+    final textPrimaryColor = themeData.colorScheme.onSurface;
+    final iconActiveColor = themeData.colorScheme.primary;
+    final iconInactiveColor = themeData.colorScheme.onSurfaceVariant;
+    final cardBackgroundColor = themeData.colorScheme.surfaceVariant;
 
     return Scaffold(
       backgroundColor: backgroundColor,
@@ -298,9 +299,8 @@ class _ArtistPageState extends ConsumerState<ArtistPage> {
                           ] else if (selectedTab == 'Albums') ...[
                             _buildAlbumsGrid(ref),
                           ] else if (selectedTab == 'Singles') ...[
-                            _buildSinglesGrid(ref), // Added singles grid
+                            _buildSinglesGrid(ref),
                           ],
-
                           const SizedBox(height: 100),
                         ],
                       ),
@@ -316,11 +316,12 @@ class _ArtistPageState extends ConsumerState<ArtistPage> {
   }
 
   Widget _buildSidebar(BuildContext context, WidgetRef ref) {
+    final themeData = Theme.of(context);
     final double availableHeight = MediaQuery.of(context).size.height;
     final tabs = ['Overview', 'Songs', 'Albums', 'Singles', 'Library'];
-    final iconActiveColor = ref.watch(themeIconActiveColorProvider);
-    final sidebarLabelColor = ref.watch(themeTextPrimaryColorProvider);
-    final sidebarLabelActiveColor = ref.watch(themeIconActiveColorProvider);
+    final iconActiveColor = themeData.colorScheme.primary;
+    final sidebarLabelColor = themeData.colorScheme.onSurface;
+    final sidebarLabelActiveColor = themeData.colorScheme.primary;
 
     final sidebarLabelStyle = AppTypography.sidebarLabel(
       context,
@@ -354,6 +355,46 @@ class _ArtistPageState extends ConsumerState<ArtistPage> {
               );
             }).toList(),
             const SizedBox(height: 40),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildHeader(WidgetRef ref) {
+    final themeData = Theme.of(context);
+    final textPrimaryColor = themeData.colorScheme.onSurface;
+
+    return Padding(
+      padding: const EdgeInsets.only(top: 60),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        child: Row(
+          children: [
+            IconButton(
+              icon: Icon(Icons.arrow_back, color: textPrimaryColor),
+              onPressed: () => Navigator.pop(context),
+            ),
+            const SizedBox(width: 16),
+            Expanded(
+              child: Text(
+                widget.artist.name,
+                style: AppTypography.pageTitle(
+                  context,
+                ).copyWith(color: textPrimaryColor),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+            IconButton(
+              icon: Icon(Icons.bookmark_border, color: textPrimaryColor),
+              onPressed: () {},
+            ),
+            const SizedBox(width: 8),
+            IconButton(
+              icon: Icon(Icons.share, color: textPrimaryColor),
+              onPressed: () {},
+            ),
           ],
         ),
       ),
@@ -398,47 +439,6 @@ class _ArtistPageState extends ConsumerState<ArtistPage> {
     );
   }
 
-  Widget _buildHeader(WidgetRef ref) {
-    final textPrimaryColor = ref.watch(themeTextPrimaryColorProvider);
-
-    return Padding(
-      padding: const EdgeInsets.only(top: 60), // Add top padding of 60
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-        child: Row(
-          children: [
-            IconButton(
-              icon: Icon(Icons.arrow_back, color: textPrimaryColor),
-              onPressed: () => Navigator.pop(context),
-            ),
-            const SizedBox(
-              width: 16,
-            ), // Spacing between back button and artist name
-            Expanded(
-              child: Text(
-                widget.artist.name,
-                style: AppTypography.pageTitle(
-                  context,
-                ).copyWith(color: textPrimaryColor),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-              ),
-            ),
-            IconButton(
-              icon: Icon(Icons.bookmark_border, color: textPrimaryColor),
-              onPressed: () {},
-            ),
-            const SizedBox(width: 8),
-            IconButton(
-              icon: Icon(Icons.share, color: textPrimaryColor),
-              onPressed: () {},
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
   Widget _buildArtistInfo(WidgetRef ref) {
     final artist = artistDetails?.artist ?? widget.artist;
     final cardBackgroundColor = ref.watch(themeCardBackgroundColorProvider);
@@ -450,20 +450,27 @@ class _ArtistPageState extends ConsumerState<ArtistPage> {
       children: [
         // Shuffle button
         Center(
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-            decoration: BoxDecoration(
-              color: cardBackgroundColor,
-              borderRadius: BorderRadius.circular(24),
+          child: FilledButton(
+            style: FilledButton.styleFrom(
+              backgroundColor: cardBackgroundColor,
+              foregroundColor: textPrimaryColor,
+              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(24),
+              ),
             ),
+            onPressed: () {
+              // TODO: shuffle logic
+            },
             child: Text(
               'Shuffle',
               style: AppTypography.subtitle(
                 context,
-              ).copyWith(color: textPrimaryColor, fontWeight: FontWeight.w600),
+              ).copyWith(fontWeight: FontWeight.w600),
             ),
           ),
         ),
+
         const SizedBox(height: AppSpacing.xl),
 
         // Artist profile image with shimmer
@@ -642,9 +649,20 @@ class _ArtistPageState extends ConsumerState<ArtistPage> {
                         fit: BoxFit.cover,
                         loadingBuilder: (context, child, loadingProgress) {
                           if (loadingProgress == null) return child;
+                          final theme = Theme.of(context);
+
+                          final shimmerBase =
+                              theme.colorScheme.surfaceContainerHighest;
+                          final shimmerHighlight = theme
+                              .colorScheme
+                              .surfaceContainerHighest
+                              .withOpacity(
+                                theme.brightness == Brightness.dark ? 0.4 : 0.7,
+                              );
+
                           return ShimmerWidget(
-                            baseColor: cardBackgroundColor,
-                            highlightColor: iconActiveColor.withOpacity(0.3),
+                            baseColor: shimmerBase,
+                            highlightColor: shimmerHighlight,
                             child: Container(
                               width: 140,
                               height: 140,
@@ -696,6 +714,13 @@ class _ArtistPageState extends ConsumerState<ArtistPage> {
     final iconActiveColor = ref.watch(themeIconActiveColorProvider);
 
     if (isLoading) {
+      final theme = Theme.of(context);
+
+      final shimmerBase = theme.colorScheme.surfaceContainerHighest;
+      final shimmerHighlight = shimmerBase.withOpacity(
+        theme.brightness == Brightness.dark ? 0.4 : 0.7,
+      );
+
       return GridView.builder(
         shrinkWrap: true,
         physics: const NeverScrollableScrollPhysics(),
@@ -707,36 +732,34 @@ class _ArtistPageState extends ConsumerState<ArtistPage> {
         ),
         itemCount: 6,
         itemBuilder: (context, index) {
-          return Container(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                ShimmerWidget(
-                  baseColor: cardBackgroundColor,
-                  highlightColor: iconActiveColor.withOpacity(0.3),
-                  child: Container(
-                    height: 160,
-                    decoration: BoxDecoration(
-                      color: cardBackgroundColor,
-                      borderRadius: BorderRadius.circular(8),
-                    ),
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              ShimmerWidget(
+                baseColor: shimmerBase,
+                highlightColor: shimmerHighlight,
+                child: Container(
+                  height: 160,
+                  decoration: BoxDecoration(
+                    color: shimmerBase,
+                    borderRadius: BorderRadius.circular(8),
                   ),
                 ),
-                const SizedBox(height: 8),
-                ShimmerWidget(
-                  baseColor: cardBackgroundColor,
-                  highlightColor: iconActiveColor.withOpacity(0.3),
-                  child: Container(
-                    width: 120,
-                    height: 14,
-                    decoration: BoxDecoration(
-                      color: cardBackgroundColor,
-                      borderRadius: BorderRadius.circular(4),
-                    ),
+              ),
+              const SizedBox(height: 8),
+              ShimmerWidget(
+                baseColor: shimmerBase,
+                highlightColor: shimmerHighlight,
+                child: Container(
+                  width: 120,
+                  height: 14,
+                  decoration: BoxDecoration(
+                    color: shimmerBase,
+                    borderRadius: BorderRadius.circular(4),
                   ),
                 ),
-              ],
-            ),
+              ),
+            ],
           );
         },
       );

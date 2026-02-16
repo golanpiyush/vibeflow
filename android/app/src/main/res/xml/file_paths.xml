@@ -1,7 +1,42 @@
 <?xml version="1.0" encoding="utf-8"?>
 <paths xmlns:android="http://schemas.android.com/apk/res/android">
-    <external-path name="external_files" path="." />
-    <external-cache-path name="external_cache" path="." />
-    <cache-path name="cache" path="." />
-    <files-path name="files" path="." />
+    <!-- ✅ KEEP: External storage (for APK downloads) -->
+    <external-path 
+        name="external_files" 
+        path="."/>
+    
+    <!-- ✅ ADD: Specific Download folder (for update APKs) -->
+    <external-path 
+        name="downloads" 
+        path="Download/"/>
+    
+    <!-- ✅ ADD: App-specific external directory (Android/data/...) -->
+    <external-files-path 
+        name="app_external_files" 
+        path="."/>
+    
+    <!-- ✅ KEEP: External cache (temporary files) -->
+    <external-cache-path 
+        name="external_cache" 
+        path="."/>
+    
+    <!-- ✅ KEEP: Internal cache -->
+    <cache-path 
+        name="cache" 
+        path="."/>
+    
+    <!-- ✅ KEEP: Internal files -->
+    <files-path 
+        name="files" 
+        path="."/>
+    
+    <!-- ✅ ADD: Music downloads directory (for offline songs) -->
+    <external-files-path 
+        name="music_downloads" 
+        path="Music/"/>
+    
+    <!-- ✅ ADD: Temporary update directory -->
+    <cache-path 
+        name="temp_updates" 
+        path="updates/"/>
 </paths>

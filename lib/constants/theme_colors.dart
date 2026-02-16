@@ -41,9 +41,14 @@ final themeTextPrimaryColorProvider = Provider<Color>((ref) {
   switch (themeState.themeType) {
     case ThemeType.light:
       return Colors.black;
+
     case ThemeType.material:
-      final theme = ref.watch(lightThemeProvider);
-      return theme.colorScheme.onSurface;
+      final brightness = themeState.systemThemeMode == AppThemeMode.light
+          ? Brightness.light
+          : Brightness.dark;
+
+      return brightness == Brightness.light ? Colors.black : Colors.white;
+
     case ThemeType.pureBlack:
       return Colors.white;
   }
@@ -55,11 +60,18 @@ final themeTextSecondaryColorProvider = Provider<Color>((ref) {
   switch (themeState.themeType) {
     case ThemeType.light:
       return Colors.black.withOpacity(0.6);
+
     case ThemeType.material:
-      final theme = ref.watch(lightThemeProvider);
-      return theme.colorScheme.onSurface.withOpacity(0.6);
+      final brightness = themeState.systemThemeMode == AppThemeMode.light
+          ? Brightness.light
+          : Brightness.dark;
+
+      return brightness == Brightness.light
+          ? Colors.black.withOpacity(0.6)
+          : Colors.white.withOpacity(0.6);
+
     case ThemeType.pureBlack:
-      return const Color(0x99FFFFFF);
+      return Colors.white.withOpacity(0.6);
   }
 });
 

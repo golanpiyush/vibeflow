@@ -172,31 +172,80 @@ class _DatabasePageState extends State<DatabasePage> {
       // Show success dialog with share option
       final shouldShare = await showDialog<bool>(
         context: context,
-        builder: (context) => AlertDialog(
-          title: const Text('Backup Created'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text('Database backed up successfully!'),
-              const SizedBox(height: 12),
-              Text(
-                'Location:\n$backupPath',
-                style: const TextStyle(fontSize: 12, color: Colors.grey),
+        builder: (context) {
+          final colorScheme = Theme.of(context).colorScheme;
+
+          return AlertDialog(
+            backgroundColor: colorScheme.surface,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(16),
+            ),
+            title: Text(
+              'Backup Created',
+              style: AppTypography.subtitle(context).copyWith(
+                color: colorScheme.onSurface,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Database backed up successfully!',
+                  style: AppTypography.body(
+                    context,
+                  ).copyWith(color: colorScheme.onSurface),
+                ),
+                const SizedBox(height: 12),
+
+                /// Location Box (cleaner look)
+                Container(
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: colorScheme.surfaceVariant.withOpacity(0.4),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: SelectableText(
+                    backupPath,
+                    style: AppTypography.caption(
+                      context,
+                    ).copyWith(color: colorScheme.onSurface.withOpacity(0.7)),
+                  ),
+                ),
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: Text(
+                  'OK',
+                  style: AppTypography.subtitle(context).copyWith(
+                    color: colorScheme.primary,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ),
+              ElevatedButton(
+                onPressed: () => Navigator.pop(context, true),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: colorScheme.primary,
+                  foregroundColor: colorScheme.onPrimary,
+                  elevation: 0,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                ),
+                child: Text(
+                  'Share',
+                  style: AppTypography.subtitle(
+                    context,
+                  ).copyWith(fontWeight: FontWeight.w600),
+                ),
               ),
             ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context, false),
-              child: const Text('OK'),
-            ),
-            ElevatedButton(
-              onPressed: () => Navigator.pop(context, true),
-              child: const Text('Share'),
-            ),
-          ],
-        ),
+          );
+        },
       );
 
       if (shouldShare == true) {
@@ -223,28 +272,44 @@ class _DatabasePageState extends State<DatabasePage> {
   }
 
   Future<void> _restoreDatabase() async {
+    final theme = Theme.of(context);
+
     // Show warning dialog first
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('⚠️ Warning'),
-        content: const Text(
+        backgroundColor: theme.dialogBackgroundColor,
+        title: Text('⚠️ Warning', style: theme.textTheme.titleMedium),
+        content: Text(
           'Restoring from backup will:\n\n'
           '• Overwrite all existing data\n'
           '• Replace your current library\n'
           '• Cannot be undone\n\n'
           'The app will restart after restoration.\n\n'
           'Are you sure you want to continue?',
+          style: theme.textTheme.bodyMedium,
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancel'),
+            child: Text(
+              'Cancel',
+              style: theme.textTheme.labelLarge?.copyWith(
+                color: theme.colorScheme.primary,
+              ),
+            ),
           ),
           ElevatedButton(
             onPressed: () => Navigator.pop(context, true),
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
-            child: const Text('Restore'),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: theme.colorScheme.error,
+            ),
+            child: Text(
+              'Restore',
+              style: theme.textTheme.labelLarge?.copyWith(
+                color: theme.colorScheme.onError,
+              ),
+            ),
           ),
         ],
       ),
@@ -273,30 +338,28 @@ class _DatabasePageState extends State<DatabasePage> {
         throw Exception('Backup file not found');
       }
 
-      // Verify it's a valid database
       final isValid = await _verifyDatabaseFile(backupFilePath);
       if (!isValid) {
         throw Exception('Invalid or corrupted backup file');
       }
 
-      // Get current database path
       final db = await DatabaseService().database;
       final dbPath = db.path;
 
-      // Close database
       await db.close();
 
-      // Create backup of current database (just in case)
+      // Create emergency backup
       final currentDbFile = File(dbPath);
       final emergencyBackupPath = '$dbPath.emergency_backup';
       await currentDbFile.copy(emergencyBackupPath);
-      // After successful restore:
+
       try {
         await File(emergencyBackupPath).delete();
       } catch (e) {
         print('Could not delete emergency backup: $e');
       }
-      // Restore from backup
+
+      // Restore
       await backupFile.copy(dbPath);
 
       // Save restore metadata
@@ -314,18 +377,25 @@ class _DatabasePageState extends State<DatabasePage> {
         context: context,
         barrierDismissible: false,
         builder: (context) => AlertDialog(
-          title: const Text('✓ Restore Complete'),
-          content: const Text(
+          backgroundColor: theme.dialogBackgroundColor,
+          title: Text('✓ Restore Complete', style: theme.textTheme.titleMedium),
+          content: Text(
             'Database restored successfully!\n\n'
             'The app will now restart to apply changes.',
+            style: theme.textTheme.bodyMedium,
           ),
           actions: [
             ElevatedButton(
               onPressed: () {
-                // Close app - user will need to restart manually
                 SystemNavigator.pop();
               },
-              child: const Text('Close App'),
+              style: ElevatedButton.styleFrom(backgroundColor: Colors.amber),
+              child: Text(
+                'Close App',
+                style: theme.textTheme.labelLarge?.copyWith(
+                  color: theme.colorScheme.onPrimary,
+                ),
+              ),
             ),
           ],
         ),
@@ -338,8 +408,13 @@ class _DatabasePageState extends State<DatabasePage> {
 
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('Restore failed: ${e.toString()}'),
-          backgroundColor: Colors.red,
+          content: Text(
+            'Restore failed: ${e.toString()}',
+            style: theme.textTheme.bodyMedium?.copyWith(
+              color: theme.colorScheme.onError,
+            ),
+          ),
+          backgroundColor: theme.colorScheme.error,
           behavior: SnackBarBehavior.floating,
           duration: const Duration(seconds: 4),
         ),
@@ -578,6 +653,8 @@ class _SettingsPageTemplate extends ConsumerWidget {
       body: SafeArea(
         child: Column(
           children: [
+            const SizedBox(height: AppSpacing.xxxl),
+
             _buildTopBar(context, colorScheme),
             Expanded(
               child: Row(

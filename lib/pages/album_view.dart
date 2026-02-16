@@ -160,7 +160,8 @@ class _AlbumPageState extends ConsumerState<AlbumPage> {
 
   @override
   Widget build(BuildContext context) {
-    final backgroundColor = ref.watch(themeBackgroundColorProvider);
+    final themeData = Theme.of(context);
+    final backgroundColor = themeData.scaffoldBackgroundColor;
 
     return Scaffold(
       backgroundColor: backgroundColor,
@@ -184,7 +185,6 @@ class _AlbumPageState extends ConsumerState<AlbumPage> {
                         children: [
                           _buildAlbumInfo(ref),
                           const SizedBox(height: AppSpacing.xl),
-                          // Show either songs or versions based on toggle
                           _showVersions
                               ? _buildVersionsGrid(ref)
                               : _buildSongsList(ref),
@@ -203,10 +203,11 @@ class _AlbumPageState extends ConsumerState<AlbumPage> {
   }
 
   Widget _buildSidebar(BuildContext context, WidgetRef ref) {
+    final themeData = Theme.of(context);
     final double availableHeight = MediaQuery.of(context).size.height;
-    final iconActiveColor = ref.watch(themeIconActiveColorProvider);
-    final sidebarLabelColor = ref.watch(themeTextPrimaryColorProvider);
-    final sidebarLabelActiveColor = ref.watch(themeIconActiveColorProvider);
+    final iconActiveColor = themeData.colorScheme.primary;
+    final sidebarLabelColor = themeData.colorScheme.onSurface;
+    final sidebarLabelActiveColor = themeData.colorScheme.primary;
 
     final sidebarLabelStyle = AppTypography.sidebarLabel(
       context,
@@ -247,7 +248,6 @@ class _AlbumPageState extends ConsumerState<AlbumPage> {
                 setState(() {
                   _showVersions = true;
                 });
-                // Load versions if not already loaded
                 if (_versions.isEmpty && !_isLoadingVersions) {
                   _loadVersions();
                 }
@@ -256,6 +256,40 @@ class _AlbumPageState extends ConsumerState<AlbumPage> {
             const SizedBox(height: 40),
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _buildHeader(WidgetRef ref) {
+    final themeData = Theme.of(context);
+    final textPrimaryColor = themeData.colorScheme.onSurface;
+
+    return Container(
+      padding: const EdgeInsets.only(left: 16, right: 16, top: 60, bottom: 12),
+      child: Row(
+        children: [
+          GestureDetector(
+            onTap: () => Navigator.pop(context),
+            child: Icon(Icons.chevron_left, color: textPrimaryColor, size: 28),
+          ),
+          Expanded(
+            child: Align(
+              alignment: Alignment.centerRight,
+              child: Text(
+                widget.album.title,
+                style: AppTypography.pageTitle(
+                  context,
+                ).copyWith(color: textPrimaryColor),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+          ),
+          IconButton(
+            icon: Icon(Icons.bookmark_border, color: textPrimaryColor),
+            onPressed: () {},
+          ),
+        ],
       ),
     );
   }
@@ -298,45 +332,6 @@ class _AlbumPageState extends ConsumerState<AlbumPage> {
     );
   }
 
-  Widget _buildHeader(WidgetRef ref) {
-    final textPrimaryColor = ref.watch(themeTextPrimaryColorProvider);
-
-    return Container(
-      padding: const EdgeInsets.only(left: 16, right: 16, top: 60, bottom: 12),
-      child: Row(
-        children: [
-          // Back button
-          GestureDetector(
-            onTap: () => Navigator.pop(context),
-            child: Icon(Icons.chevron_left, color: textPrimaryColor, size: 28),
-          ),
-
-          Expanded(
-            child: Align(
-              alignment: Alignment.centerRight,
-              child: Text(
-                widget.album.title,
-                style: AppTypography.pageTitle(
-                  context,
-                ).copyWith(color: textPrimaryColor),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-              ),
-            ),
-          ),
-
-          // Bookmark button
-          IconButton(
-            icon: Icon(Icons.bookmark_border, color: textPrimaryColor),
-            onPressed: () {
-              // TODO: Implement bookmark
-            },
-          ),
-        ],
-      ),
-    );
-  }
-
   Widget _buildAlbumInfo(WidgetRef ref) {
     final cardBackgroundColor = ref.watch(themeCardBackgroundColorProvider);
     final textPrimaryColor = ref.watch(themeTextPrimaryColorProvider);
@@ -350,36 +345,36 @@ class _AlbumPageState extends ConsumerState<AlbumPage> {
     return Column(
       children: [
         // Enqueue button
-        Center(
-          child: GestureDetector(
-            onTap: () {
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(
-                  content: Text(
-                    'Enqueue feature coming soon',
-                    style: TextStyle(color: textPrimaryColor),
-                  ),
-                  backgroundColor: cardBackgroundColor,
-                  duration: const Duration(seconds: 1),
-                ),
-              );
-            },
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-              decoration: BoxDecoration(
-                color: cardBackgroundColor,
-                borderRadius: BorderRadius.circular(24),
-              ),
-              child: Text(
-                'Enqueue',
-                style: AppTypography.subtitle(context).copyWith(
-                  color: textPrimaryColor,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-            ),
-          ),
-        ),
+        // Center(
+        //   child: GestureDetector(
+        //     onTap: () {
+        //       ScaffoldMessenger.of(context).showSnackBar(
+        //         SnackBar(
+        //           content: Text(
+        //             'Enqueue feature coming soon',
+        //             style: TextStyle(color: textPrimaryColor),
+        //           ),
+        //           backgroundColor: cardBackgroundColor,
+        //           duration: const Duration(seconds: 1),
+        //         ),
+        //       );
+        //     },
+        //     // child: Container(
+        //     //   padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+        //     //   decoration: BoxDecoration(
+        //     //     color: cardBackgroundColor,
+        //     //     borderRadius: BorderRadius.circular(24),
+        //     //   ),
+        //     //   // child: Text(
+        //     //   //   'Enqueue',
+        //     //   //   style: AppTypography.subtitle(context).copyWith(
+        //     //   //     color: textPrimaryColor,
+        //     //   //     fontWeight: FontWeight.w600,
+        //     //   //   ),
+        //     //   // ),
+        //     // ),
+        //   ),
+        // ),
         const SizedBox(height: AppSpacing.lg),
 
         // Album cover with shimmer

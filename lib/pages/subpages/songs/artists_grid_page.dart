@@ -229,7 +229,10 @@ class _ArtistsGridPageState extends ConsumerState<ArtistsGridPage> {
 
   @override
   Widget build(BuildContext context) {
-    final backgroundColor = ref.watch(themeBackgroundColorProvider);
+    final themeData = Theme.of(context);
+    final backgroundColor = themeData.scaffoldBackgroundColor;
+    final iconActiveColor = themeData.colorScheme.primary;
+    final iconColor = themeData.colorScheme.onPrimary;
 
     return Scaffold(
       backgroundColor: backgroundColor,
@@ -254,7 +257,7 @@ class _ArtistsGridPageState extends ConsumerState<ArtistsGridPage> {
         ),
       ),
       floatingActionButton: Padding(
-        padding: const EdgeInsets.only(bottom: 40.0),
+        padding: const EdgeInsets.only(bottom: 95),
         child: FloatingActionButton(
           onPressed: () {
             setState(() {
@@ -268,22 +271,21 @@ class _ArtistsGridPageState extends ConsumerState<ArtistsGridPage> {
               }
             });
           },
-          backgroundColor: ref.watch(themeIconActiveColorProvider),
-          child: Icon(
-            isSearchMode ? Icons.close : Icons.search,
-            color: backgroundColor,
-          ),
+          backgroundColor: iconActiveColor,
+          foregroundColor: iconColor,
+          child: Icon(isSearchMode ? Icons.close : Icons.search),
         ),
       ),
     );
   }
 
   Widget _buildSidebar(BuildContext context) {
+    final themeData = Theme.of(context);
     final double availableHeight = MediaQuery.of(context).size.height;
-    final iconActiveColor = ref.watch(themeIconActiveColorProvider);
-    final iconInactiveColor = ref.watch(themeTextSecondaryColorProvider);
-    final sidebarLabelColor = ref.watch(themeTextPrimaryColorProvider);
-    final sidebarLabelActiveColor = ref.watch(themeIconActiveColorProvider);
+    final iconActiveColor = themeData.colorScheme.primary;
+    final iconInactiveColor = themeData.colorScheme.onSurfaceVariant;
+    final sidebarLabelColor = themeData.colorScheme.onSurface;
+    final sidebarLabelActiveColor = themeData.colorScheme.primary;
 
     final sidebarLabelStyle = AppTypography.sidebarLabel(
       context,
@@ -313,6 +315,7 @@ class _ArtistsGridPageState extends ConsumerState<ArtistsGridPage> {
             const SizedBox(height: 32),
             _buildSidebarItem(
               label: 'Quick picks',
+              isActive: false,
               iconActiveColor: iconActiveColor,
               iconInactiveColor: iconInactiveColor,
               labelStyle: sidebarLabelStyle,
@@ -323,6 +326,7 @@ class _ArtistsGridPageState extends ConsumerState<ArtistsGridPage> {
             const SizedBox(height: 24),
             _buildSidebarItem(
               label: 'Songs',
+              isActive: false,
               iconActiveColor: iconActiveColor,
               iconInactiveColor: iconInactiveColor,
               labelStyle: sidebarLabelStyle,
@@ -337,6 +341,7 @@ class _ArtistsGridPageState extends ConsumerState<ArtistsGridPage> {
             const SizedBox(height: 24),
             _buildSidebarItem(
               label: 'Playlists',
+              isActive: false,
               iconActiveColor: iconActiveColor,
               iconInactiveColor: iconInactiveColor,
               labelStyle: sidebarLabelStyle,
@@ -360,6 +365,7 @@ class _ArtistsGridPageState extends ConsumerState<ArtistsGridPage> {
             const SizedBox(height: 24),
             _buildSidebarItem(
               label: 'Albums',
+              isActive: false,
               iconActiveColor: iconActiveColor,
               iconInactiveColor: iconInactiveColor,
               labelStyle: sidebarLabelStyle,
@@ -387,6 +393,7 @@ class _ArtistsGridPageState extends ConsumerState<ArtistsGridPage> {
   }) {
     return GestureDetector(
       onTap: onTap,
+      behavior: HitTestBehavior.opaque,
       child: SizedBox(
         width: 72,
         child: Column(
@@ -405,7 +412,10 @@ class _ArtistsGridPageState extends ConsumerState<ArtistsGridPage> {
               child: Text(
                 label,
                 textAlign: TextAlign.center,
-                style: labelStyle.copyWith(fontSize: 16),
+                style: labelStyle.copyWith(
+                  fontSize: 16,
+                  fontWeight: isActive ? FontWeight.w600 : FontWeight.w400,
+                ),
               ),
             ),
           ],
@@ -415,9 +425,12 @@ class _ArtistsGridPageState extends ConsumerState<ArtistsGridPage> {
   }
 
   Widget _buildTopBar(WidgetRef ref) {
-    final textPrimaryColor = ref.watch(themeTextPrimaryColorProvider);
-    final textSecondaryColor = ref.watch(themeTextSecondaryColorProvider);
-    final iconActiveColor = ref.watch(themeIconActiveColorProvider);
+    final themeData = Theme.of(context);
+    final textPrimaryColor = themeData.colorScheme.onSurface;
+    final textSecondaryColor = themeData.colorScheme.onSurfaceVariant;
+    final iconActiveColor = themeData.colorScheme.primary;
+    final backgroundColor = themeData.scaffoldBackgroundColor;
+    final cursorColor = themeData.colorScheme.primary;
 
     final pageTitleStyle = AppTypography.pageTitle(
       context,
@@ -428,6 +441,7 @@ class _ArtistsGridPageState extends ConsumerState<ArtistsGridPage> {
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      color: backgroundColor,
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
@@ -455,6 +469,7 @@ class _ArtistsGridPageState extends ConsumerState<ArtistsGridPage> {
                     focusNode: _searchFocusNode,
                     textAlign: TextAlign.right,
                     style: pageTitleStyle,
+                    cursorColor: cursorColor,
                     decoration: InputDecoration(
                       hintText: 'Search artists...',
                       hintStyle: hintStyle,
@@ -504,7 +519,9 @@ class _ArtistsGridPageState extends ConsumerState<ArtistsGridPage> {
   }
 
   Widget _buildArtistsGrid() {
-    final textSecondaryColor = ref.watch(themeTextSecondaryColorProvider);
+    final themeData = Theme.of(context);
+    final textPrimaryColor = themeData.colorScheme.onSurface;
+    final textSecondaryColor = themeData.colorScheme.onSurfaceVariant;
 
     if (filteredArtists.isEmpty && !isLoadingArtists && !isSearching) {
       return Center(
@@ -528,7 +545,7 @@ class _ArtistsGridPageState extends ConsumerState<ArtistsGridPage> {
                 isSearchMode ? 'No artists found' : 'No artists available',
                 style: AppTypography.subtitle(
                   context,
-                ).copyWith(color: textSecondaryColor),
+                ).copyWith(color: textPrimaryColor),
               ),
               if (isSearchMode) ...[
                 const SizedBox(height: 8),
@@ -558,13 +575,14 @@ class _ArtistsGridPageState extends ConsumerState<ArtistsGridPage> {
           filteredArtists.length + ((isLoadingMore || isSearching) ? 2 : 0),
       itemBuilder: (context, index) {
         if (index >= filteredArtists.length) {
+          final themeData = Theme.of(context);
           return Center(
             child: Padding(
               padding: const EdgeInsets.all(16.0),
               child: CircularProgressIndicator(
                 strokeWidth: 2,
                 valueColor: AlwaysStoppedAnimation<Color>(
-                  ref.watch(themeIconActiveColorProvider),
+                  themeData.colorScheme.primary,
                 ),
               ),
             ),
@@ -576,10 +594,11 @@ class _ArtistsGridPageState extends ConsumerState<ArtistsGridPage> {
   }
 
   Widget _buildArtistCard(Artist artist) {
-    final cardBackgroundColor = ref.watch(themeCardBackgroundColorProvider);
-    final iconInactiveColor = ref.watch(themeTextSecondaryColorProvider);
-    final textPrimaryColor = ref.watch(themeTextPrimaryColorProvider);
-    final textSecondaryColor = ref.watch(themeTextSecondaryColorProvider);
+    final themeData = Theme.of(context);
+    final cardBackgroundColor = themeData.colorScheme.surfaceVariant;
+    final iconInactiveColor = themeData.colorScheme.onSurfaceVariant;
+    final textPrimaryColor = themeData.colorScheme.onSurface;
+    final textSecondaryColor = themeData.colorScheme.onSurfaceVariant;
 
     return GestureDetector(
       onTap: () {

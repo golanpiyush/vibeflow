@@ -15,6 +15,7 @@ class AppSpacing {
   static const double xl = baseUnit * 3; // 24
   static const double xxl = baseUnit * 4; // 32
   static const double xxxl = baseUnit * 6; // 48
+  static const double fourxxxl = baseUnit * 8; // 52
 
   // Spacing Scale (without padding - slightly reduced)
   static const double xsNoPadding = baseUnit * 0.375; // 3
@@ -37,6 +38,57 @@ class AppSpacing {
   static const double radiusMedium = 8.0;
   static const double radiusLarge = 12.0;
   static const double radiusCircle = 1000.0;
+}
+
+class ResponsiveSpacing {
+  static double albumArtSize(BuildContext context) {
+    final w = MediaQuery.of(context).size.width;
+    if (w < 360) return 46.0;
+    if (w < 400) return 50.0;
+    return 54.0; // was 64 — too big
+  }
+
+  static double listItemHeight(BuildContext context) {
+    final w = MediaQuery.of(context).size.width;
+    if (w < 360) return 64.0;
+    if (w < 400) return 68.0;
+    return 72.0; // was 80 — too tall
+  }
+
+  static double albumCardSize(BuildContext context) {
+    final w = MediaQuery.of(context).size.width;
+    if (w < 360) return 110.0;
+    if (w < 400) return 120.0;
+    return 130.0; // was 160 — way too big
+  }
+
+  static double artistImageSize(BuildContext context) {
+    final w = MediaQuery.of(context).size.width;
+    if (w < 360) return 88.0;
+    if (w < 400) return 96.0;
+    return 104.0; // was 120 — too big
+  }
+
+  static double artistCardWidth(BuildContext context) {
+    final w = MediaQuery.of(context).size.width;
+    if (w < 360) return 100.0;
+    if (w < 400) return 110.0;
+    return 120.0; // was 145 — too wide
+  }
+
+  static double sectionHeaderFontSize(BuildContext context) {
+    final w = MediaQuery.of(context).size.width;
+    if (w < 360) return 17.0;
+    if (w < 400) return 18.0;
+    return 19.0;
+  }
+
+  static double pageTitleFontSize(BuildContext context) {
+    final w = MediaQuery.of(context).size.width;
+    if (w < 360) return 24.0;
+    if (w < 400) return 26.0;
+    return 28.0;
+  }
 }
 
 // Providers for dynamic spacing based on font padding setting

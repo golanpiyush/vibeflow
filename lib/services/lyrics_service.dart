@@ -56,6 +56,7 @@ class LyricsService {
     required String artist,
     int duration = -1,
     bool forceRefresh = false,
+    bool requestTranslation = false,
   }) async {
     final cacheKey = _getCacheKey(title, artist);
 

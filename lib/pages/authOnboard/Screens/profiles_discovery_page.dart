@@ -6,7 +6,6 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:shimmer/shimmer.dart';
 import 'package:lottie/lottie.dart';
 import 'package:vibeflow/constants/app_typography.dart';
-import 'package:vibeflow/constants/theme_colors.dart';
 import 'package:vibeflow/database/following_service.dart';
 
 /// =======================
@@ -61,8 +60,6 @@ class _ProfilesScreenState extends ConsumerState<ProfilesScreen> {
     super.dispose();
   }
 
-  // Updated _toggleFollow method with snackbars
-
   Future<void> _toggleFollow(String userId, bool isCurrentlyFollowing) async {
     final currentUser = Supabase.instance.client.auth.currentUser;
     if (currentUser == null) {
@@ -91,7 +88,6 @@ class _ProfilesScreenState extends ConsumerState<ProfilesScreen> {
         await followService.unfollowUser(currentUser.id, userId);
         print('✅ Unfollowed user: $userId');
 
-        // Show unfollow success snackbar
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
@@ -116,7 +112,6 @@ class _ProfilesScreenState extends ConsumerState<ProfilesScreen> {
         await followService.followUser(currentUser.id, userId);
         print('✅ Followed user: $userId');
 
-        // Show follow success snackbar
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
@@ -135,18 +130,15 @@ class _ProfilesScreenState extends ConsumerState<ProfilesScreen> {
         }
       }
 
-      // Refresh the following status
       ref.invalidate(isFollowingProvider(userId));
     } catch (e) {
       print('❌ Error toggling follow: $e');
 
-      // Revert UI on error
       followStates.state = {
         ...followStates.state,
         userId: isCurrentlyFollowing,
       };
 
-      // Show error snackbar
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -177,18 +169,18 @@ class _ProfilesScreenState extends ConsumerState<ProfilesScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final themeData = Theme.of(context);
     final usersAsync = ref.watch(allUsersProvider);
 
-    final bgColor = ref.watch(themeBackgroundColorProvider);
-    final textPrimary = ref.watch(themeTextPrimaryColorProvider);
-    final cardColor = ref.watch(themeCardColorProvider);
-    final accentColor = ref.watch(themeAccentColorProvider);
+    final bgColor = themeData.scaffoldBackgroundColor;
+    final textPrimary = themeData.textTheme.bodyLarge?.color ?? Colors.white;
+    final cardColor = themeData.cardColor;
+    final accentColor = themeData.primaryColor;
 
     final keyboardOpen = MediaQuery.of(context).viewInsets.bottom > 0;
 
     return Scaffold(
       backgroundColor: bgColor,
-
       body: SafeArea(
         child: Column(
           children: [
@@ -218,8 +210,6 @@ class _ProfilesScreenState extends ConsumerState<ProfilesScreen> {
             Expanded(
               child: usersAsync.when(
                 data: (users) {
-                  print('📊 Total users: ${users.length}');
-
                   final filteredUsers = users.where((u) {
                     final name = (u['userid'] as String? ?? '').toLowerCase();
                     final email = (u['email'] as String? ?? '').toLowerCase();
@@ -227,9 +217,6 @@ class _ProfilesScreenState extends ConsumerState<ProfilesScreen> {
                         email.contains(_searchQuery);
                   }).toList();
 
-                  print('📊 Filtered users: ${filteredUsers.length}');
-
-                  /// NO USERS STATE
                   if (filteredUsers.isEmpty) {
                     return SingleChildScrollView(
                       physics: const NeverScrollableScrollPhysics(),
@@ -274,7 +261,6 @@ class _ProfilesScreenState extends ConsumerState<ProfilesScreen> {
                     );
                   }
 
-                  /// USERS LIST
                   return RefreshIndicator(
                     onRefresh: () async {
                       ref.invalidate(allUsersProvider);
@@ -292,10 +278,10 @@ class _ProfilesScreenState extends ConsumerState<ProfilesScreen> {
                 loading: () => ListView.builder(
                   padding: const EdgeInsets.symmetric(horizontal: 16),
                   itemCount: 6,
-                  itemBuilder: (_, __) => const _UserCardShimmer(),
+                  itemBuilder: (_, __) =>
+                      _UserCardShimmer(themeData: themeData),
                 ),
                 error: (error, stack) {
-                  print('❌ Error loading users: $error');
                   return Center(
                     child: Column(
                       mainAxisAlignment: MainAxisAlignment.center,
@@ -340,19 +326,22 @@ class _UserCard extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final cardColor = ref.watch(themeCardColorProvider);
-    final accentColor = ref.watch(themeAccentColorProvider);
-    final textPrimary = ref.watch(themeTextPrimaryColorProvider);
+    final themeData = Theme.of(context);
+    final colorScheme = themeData.colorScheme;
+
+    final cardColor = themeData.colorScheme.surface;
+    final accentColor = colorScheme.primary;
+    final textPrimary = colorScheme.onSurface;
 
     final userId = user['id'] as String;
     final username = user['userid'] as String? ?? 'Unknown';
-    final email = user['email'] as String? ?? '';
     final profilePic = user['profile_pic_url'] as String?;
-    // Validate profile picture URL
+
     final hasValidProfilePic =
         profilePic != null &&
         profilePic.isNotEmpty &&
         profilePic.startsWith('http');
+
     final isFollowingAsync = ref.watch(isFollowingProvider(userId));
     final followStates = ref.watch(followStatesProvider);
 
@@ -360,19 +349,19 @@ class _UserCard extends ConsumerWidget {
       margin: const EdgeInsets.only(bottom: 12),
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        color: const Color.fromARGB(0, 244, 67, 54),
+        color: cardColor,
         borderRadius: BorderRadius.circular(12),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.1),
-            blurRadius: 4,
+            color: Colors.black.withOpacity(0.05),
+            blurRadius: 8,
             offset: const Offset(0, 2),
           ),
         ],
       ),
       child: Row(
         children: [
-          /// PROFILE PICTURE WITH ERROR HANDLING
+          /// PROFILE PICTURE
           CircleAvatar(
             radius: 28,
             backgroundColor: accentColor.withOpacity(0.2),
@@ -384,7 +373,6 @@ class _UserCard extends ConsumerWidget {
                       height: 56,
                       fit: BoxFit.cover,
                       errorBuilder: (context, error, stackTrace) {
-                        // Fallback to initial if image fails to load
                         return Center(
                           child: Text(
                             username.isNotEmpty
@@ -430,36 +418,32 @@ class _UserCard extends ConsumerWidget {
 
           /// USER INFO
           Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  username,
-                  style: TextStyle(
-                    color: textPrimary,
-                    fontWeight: FontWeight.bold,
-                    fontSize: 16,
-                  ),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ],
+            child: Text(
+              username,
+              style: themeData.textTheme.bodyLarge?.copyWith(
+                color: textPrimary,
+                fontWeight: FontWeight.bold,
+                fontSize: 16,
+              ),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
             ),
           ),
 
           /// FOLLOW BUTTON
           isFollowingAsync.when(
             data: (isFollowing) {
-              // Use local state if available, otherwise use fetched state
               final displayFollowing = followStates[userId] ?? isFollowing;
 
               return ElevatedButton(
                 onPressed: () => onToggleFollow(userId, displayFollowing),
                 style: ElevatedButton.styleFrom(
                   backgroundColor: displayFollowing
-                      ? Colors.grey[800]
+                      ? themeData.colorScheme.surface
                       : accentColor,
-                  foregroundColor: Colors.white,
+                  foregroundColor: displayFollowing
+                      ? colorScheme.onSurface
+                      : colorScheme.onPrimary,
                   padding: const EdgeInsets.symmetric(
                     horizontal: 20,
                     vertical: 10,
@@ -471,28 +455,31 @@ class _UserCard extends ConsumerWidget {
                 ),
                 child: Text(
                   displayFollowing ? 'Following' : 'Follow',
-                  style: const TextStyle(
+                  style: themeData.textTheme.labelLarge?.copyWith(
                     fontWeight: FontWeight.w600,
                     fontSize: 14,
                   ),
                 ),
               );
             },
-            loading: () => const SizedBox(
+            loading: () => SizedBox(
               width: 24,
               height: 24,
-              child: CircularProgressIndicator(strokeWidth: 2),
+              child: CircularProgressIndicator(
+                strokeWidth: 2,
+                color: accentColor,
+              ),
             ),
             error: (_, __) => ElevatedButton(
               onPressed: () => ref.invalidate(isFollowingProvider(userId)),
               style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.grey[800],
+                backgroundColor: themeData.colorScheme.surface,
                 padding: const EdgeInsets.symmetric(
                   horizontal: 20,
                   vertical: 10,
                 ),
               ),
-              child: const Text('Retry'),
+              child: Text('Retry', style: themeData.textTheme.labelLarge),
             ),
           ),
         ],
@@ -506,18 +493,22 @@ class _UserCard extends ConsumerWidget {
 /// =======================
 
 class _UserCardShimmer extends StatelessWidget {
-  const _UserCardShimmer();
+  final ThemeData themeData;
+
+  const _UserCardShimmer({required this.themeData});
 
   @override
   Widget build(BuildContext context) {
+    final isDark = themeData.brightness == Brightness.dark;
+
     return Shimmer.fromColors(
-      baseColor: Colors.grey[800]!,
-      highlightColor: Colors.grey[700]!,
+      baseColor: isDark ? Colors.grey[800]! : Colors.grey[300]!,
+      highlightColor: isDark ? Colors.grey[700]! : Colors.grey[100]!,
       child: Container(
         margin: const EdgeInsets.only(bottom: 12),
         height: 80,
         decoration: BoxDecoration(
-          color: Colors.grey[900],
+          color: isDark ? Colors.grey[900] : Colors.grey[400],
           borderRadius: BorderRadius.circular(12),
         ),
       ),

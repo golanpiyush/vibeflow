@@ -1,6 +1,8 @@
 // lib/services/spotify_import_service.dart
 // Uses: Backend API (yt-dlp) for Spotify → YouTube conversion
+// ✨ IMPROVED: Real-time progressive loading with live track updates
 
+import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
@@ -69,6 +71,7 @@ enum SpotifyImportError {
   parseError,
   serverUnavailable,
   unknown,
+  invalidUrl,
 }
 
 class SpotifyImportException implements Exception {
@@ -118,16 +121,9 @@ class SpotifyImportService {
         'That link is an artist page, not a playlist.',
       );
     }
-    if (!input.contains('spotify.com/playlist/') &&
-        !input.contains('spotify:playlist:')) {
-      throw const SpotifyImportException(
-        SpotifyImportError.invalidLink,
-        'Invalid Spotify link. Paste a link like:\nhttps://open.spotify.com/playlist/...',
-      );
-    }
   }
 
-  // ── Main Import ─────────────────────────────────────────────────────────
+  // ── Main Import with PROGRESSIVE LOADING ─────────────────────────────────
 
   Future<SpotifyPlaylistData> importPlaylist(
     String link, {
@@ -135,12 +131,37 @@ class SpotifyImportService {
   }) async {
     _validateLink(link);
 
+    // ✨ NEW: Check if user pasted a YouTube Music link
+    if (_isYouTubeMusicLink(link)) {
+      throw const SpotifyImportException(
+        SpotifyImportError.invalidUrl,
+        'This is a YouTube Music playlist link. Please use the YouTube Music import button instead.',
+      );
+    }
+
     debugPrint('🎵 Importing playlist via backend: $link');
     debugPrint('🌐 Backend URL: $_apiBaseUrl');
 
+    Timer? slowConnectionTimer;
+    Timer? verySlowConnectionTimer;
+    Timer? vverySlowConnectionTimer;
+
     try {
       // Show initial progress
-      onProgress?.call(0, 100, 'Connecting to server...');
+      onProgress?.call(0, 0, 'Connecting to server...');
+
+      // Set up timers for slow connection messages
+      slowConnectionTimer = Timer(const Duration(seconds: 5), () {
+        onProgress?.call(0, 0, 'Fetching playlist data...');
+      });
+
+      verySlowConnectionTimer = Timer(const Duration(seconds: 12), () {
+        onProgress?.call(0, 0, 'Taking longer than expected...');
+      });
+
+      vverySlowConnectionTimer = Timer(const Duration(seconds: 20), () {
+        onProgress?.call(0, 0, 'Just a little longer son...');
+      });
 
       // Send Spotify URL to backend
       final response = await http
@@ -150,14 +171,19 @@ class SpotifyImportService {
             body: jsonEncode({'url': link}),
           )
           .timeout(
-            const Duration(seconds: 120), // 2 minute timeout
+            const Duration(seconds: 180),
             onTimeout: () {
               throw const SpotifyImportException(
                 SpotifyImportError.serverUnavailable,
-                'Request timed out. The server may be waking up (Render free tier cold start). Please wait 30 seconds and try again.',
+                'Request timed out. The server may be busy or the playlist is very large. Please try again.',
               );
             },
           );
+
+      // Cancel timers once we get a response
+      slowConnectionTimer.cancel();
+      verySlowConnectionTimer.cancel();
+      vverySlowConnectionTimer.cancel();
 
       debugPrint('📡 Response status: ${response.statusCode}');
 
@@ -193,6 +219,9 @@ class SpotifyImportService {
         );
       }
 
+      // ✨ Update: Parsing response
+      onProgress?.call(0, 0, 'Processing playlist...');
+
       final data = jsonDecode(response.body) as Map<String, dynamic>;
 
       // Check if there was an error
@@ -223,6 +252,20 @@ class SpotifyImportService {
       final tracksList = <SpotifyTrackData>[];
       int skippedCount = 0;
 
+      if (results.isEmpty) {
+        throw const SpotifyImportException(
+          SpotifyImportError.parseError,
+          'No tracks found in playlist.',
+        );
+      }
+
+      // ✨ Update: Show total count
+      onProgress?.call(0, results.length, 'Found ${results.length} tracks');
+
+      // Small delay to show the count
+      await Future.delayed(const Duration(milliseconds: 300));
+
+      // ✨ PROGRESSIVE LOADING: Process tracks one by one with live updates
       for (int i = 0; i < results.length; i++) {
         final result = results[i] as Map<String, dynamic>;
 
@@ -230,8 +273,26 @@ class SpotifyImportService {
         final artists =
             (result['artists'] as List?)?.cast<String>() ?? ['Unknown Artist'];
 
+        // ✨ Dynamic status messages based on progress
+        String statusMessage;
+        if (i == 0) {
+          statusMessage = 'Starting conversion...';
+        } else if (i < 5) {
+          statusMessage = title;
+        } else if (i % 10 == 0) {
+          // Every 10 tracks, show encouraging message
+          final percent = ((i / results.length) * 100).toInt();
+          statusMessage = '$percent% complete - $title';
+        } else if (i == results.length - 1) {
+          statusMessage = 'Almost done - $title';
+        } else {
+          statusMessage = title;
+        }
+
+        // ✨ Report progress for THIS specific track
+        onProgress?.call(i + 1, results.length, statusMessage);
+
         // Extract YouTube video ID from backend response
-        // The backend should return 'videoId' or 'youtubeId'
         String? youtubeId = result['videoId'] as String?;
         youtubeId ??= result['youtubeId'] as String?;
 
@@ -264,7 +325,9 @@ class SpotifyImportService {
           continue;
         }
 
-        debugPrint('✅ Track ${i + 1}: $title -> YT:$youtubeId');
+        debugPrint(
+          '✅ Track ${i + 1}/${results.length}: $title -> YT:$youtubeId',
+        );
 
         tracksList.add(
           SpotifyTrackData(
@@ -282,12 +345,17 @@ class SpotifyImportService {
             trackNumber: i + 1,
           ),
         );
+
+        // ✨ Small delay to make progress visible (optional, can remove if too slow)
+        if (i % 5 == 0 && i > 0) {
+          await Future.delayed(const Duration(milliseconds: 50));
+        }
       }
 
       if (tracksList.isEmpty) {
         throw SpotifyImportException(
           SpotifyImportError.parseError,
-          'No tracks could be converted to YouTube videos. Backend may not be returning valid video IDs. Total tracks: ${results.length}, Skipped: $skippedCount',
+          'No tracks could be converted to YouTube videos. Total tracks: ${results.length}, Skipped: $skippedCount',
         );
       }
 
@@ -298,6 +366,17 @@ class SpotifyImportService {
       debugPrint(
         '✅ Import complete: $successful/$total tracks (skipped: $skippedCount)',
       );
+
+      // ✨ Final progress update - show completion with summary
+      final successRate = ((tracksList.length / results.length) * 100).toInt();
+      onProgress?.call(
+        results.length,
+        results.length,
+        'Complete! ${tracksList.length} songs ready ($successRate% success)',
+      );
+
+      // Small delay to show completion message
+      await Future.delayed(const Duration(milliseconds: 500));
 
       final totalDuration = tracksList.fold<Duration>(
         Duration.zero,
@@ -327,9 +406,20 @@ class SpotifyImportService {
         SpotifyImportError.networkError,
         'Failed to import playlist: ${e.toString()}',
       );
+    } finally {
+      // ✨ Clean up timers
+      slowConnectionTimer?.cancel();
+      verySlowConnectionTimer?.cancel();
+      vverySlowConnectionTimer?.cancel();
     }
   }
 
-  // No cleanup needed (no YoutubeExplode instance)
+  /// Check if the input is a YouTube Music link
+  bool _isYouTubeMusicLink(String input) {
+    return input.contains('music.youtube.com') ||
+        input.contains('youtube.com/playlist') ||
+        input.contains('youtu.be');
+  }
+
   void dispose() {}
 }

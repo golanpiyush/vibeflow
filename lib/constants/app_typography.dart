@@ -12,6 +12,13 @@ class AppTypography {
     );
   }
 
+  // Standard body text
+  static TextStyle body(BuildContext context) {
+    return Theme.of(
+      context,
+    ).textTheme.bodyMedium!.copyWith(fontSize: 14, fontWeight: FontWeight.w400);
+  }
+
   // Section Headers
   static TextStyle sectionHeader(BuildContext context) {
     return Theme.of(

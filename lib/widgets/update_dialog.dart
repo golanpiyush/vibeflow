@@ -1,28 +1,62 @@
-// lib/widgets/update_dialog.dart - WITH RESUME & NO BACK DURING DOWNLOAD
+// lib/widgets/update_dialog.dart - WITH AUTO-DOWNLOAD AND AUTO-INSTALL SUPPORT
 import 'dart:async';
 import 'dart:io';
 import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:lottie/lottie.dart';
 import 'package:vibeflow/installer_services/apk_installer_service.dart';
 import 'package:vibeflow/installer_services/update_manager_service.dart';
 import 'package:vibeflow/services/haptic_feedback_service.dart';
 
 class UpdateDialog extends StatefulWidget {
   final UpdateInfo updateInfo;
+  final bool autoDownload;
+  final bool autoInstall;
 
-  const UpdateDialog({Key? key, required this.updateInfo}) : super(key: key);
+  const UpdateDialog({
+    Key? key,
+    required this.updateInfo,
+    this.autoDownload = false,
+    this.autoInstall = false,
+  }) : super(key: key);
 
   @override
   State<UpdateDialog> createState() => _UpdateDialogState();
 
-  /// Show the update dialog
+  /// Show the update dialog (normal)
   static Future<void> show(BuildContext context, UpdateInfo updateInfo) {
     return showDialog(
       context: context,
       barrierDismissible: false,
       builder: (context) => UpdateDialog(updateInfo: updateInfo),
+    );
+  }
+
+  /// Show the update dialog with auto-download triggered
+  static Future<void> showWithAutoDownload(
+    BuildContext context,
+    UpdateInfo updateInfo,
+  ) {
+    return showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) =>
+          UpdateDialog(updateInfo: updateInfo, autoDownload: true),
+    );
+  }
+
+  /// Show the update dialog with auto-install triggered (if already downloaded)
+  static Future<void> showWithAutoInstall(
+    BuildContext context,
+    UpdateInfo updateInfo,
+  ) {
+    return showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) =>
+          UpdateDialog(updateInfo: updateInfo, autoInstall: true),
     );
   }
 }
@@ -50,7 +84,16 @@ class _UpdateDialogState extends State<UpdateDialog>
 
     // Call after frame is rendered
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      _checkForCachedDownload();
+      _checkForCachedDownload().then((_) {
+        // Auto-trigger download or install based on flags
+        if (widget.autoDownload && !_isDownloading) {
+          _downloadAndInstall();
+        } else if (widget.autoInstall &&
+            _hasCachedDownload &&
+            _cachedBytes >= widget.updateInfo.fileSize) {
+          _downloadAndInstall(); // Will auto-install if already downloaded
+        }
+      });
     });
 
     // Listen for permission granted callback
@@ -118,13 +161,25 @@ class _UpdateDialogState extends State<UpdateDialog>
 
   String _parseReleaseNotes(String notes) {
     return notes
-        .replaceAll(RegExp(r'^#{1,6}\s+'), '') // Remove markdown headers
+        .replaceAll(
+          RegExp(r'^#{1,6}\s+', multiLine: true),
+          '',
+        ) // Remove markdown headers
         .replaceAll(
           RegExp(r'\*{1,2}([^*]+)\*{1,2}'),
           r'$1',
         ) // Remove bold/italic
         .replaceAll(RegExp(r'`([^`]+)`'), r'$1') // Remove code blocks
         .replaceAll(RegExp(r'~~([^~]+)~~'), r'$1') // Remove strikethrough
+        .replaceAll(
+          RegExp(r'\$(\d+)'),
+          r'[\$1]',
+        ) // Fix $1 issue by wrapping in brackets
+        .replaceAll(
+          RegExp(r'- '),
+          '• ',
+        ) // Convert markdown bullets to proper bullets
+        .replaceAll(RegExp(r'\n\n+'), '\n\n') // Normalize multiple newlines
         .replaceAll('  ', '\n') // Double space to newline
         .trim();
   }
@@ -165,16 +220,16 @@ class _UpdateDialogState extends State<UpdateDialog>
               gradient: LinearGradient(
                 begin: Alignment.topLeft,
                 end: Alignment.bottomRight,
-                colors: [const Color(0xFF121212), const Color(0xFF0A0A0A)],
+                colors: [const Color(0xFF0A1929), const Color(0xFF05090F)],
               ),
               borderRadius: BorderRadius.circular(28),
               border: Border.all(
-                color: const Color(0xFF9C27B0).withOpacity(0.2),
+                color: const Color(0xFF2196F3).withOpacity(0.3),
                 width: 1.5,
               ),
               boxShadow: [
                 BoxShadow(
-                  color: const Color(0xFF9C27B0).withOpacity(0.3),
+                  color: const Color(0xFF2196F3).withOpacity(0.3),
                   blurRadius: 40,
                   spreadRadius: 0,
                 ),
@@ -183,7 +238,7 @@ class _UpdateDialogState extends State<UpdateDialog>
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                // Header with animated icon
+                // Header with animated Lottie icon
                 Container(
                   padding: const EdgeInsets.all(32),
                   decoration: BoxDecoration(
@@ -191,8 +246,8 @@ class _UpdateDialogState extends State<UpdateDialog>
                       begin: Alignment.topLeft,
                       end: Alignment.bottomRight,
                       colors: [
-                        const Color(0xFF9C27B0).withOpacity(0.15),
-                        const Color(0xFF673AB7).withOpacity(0.05),
+                        const Color(0xFF2196F3).withOpacity(0.15),
+                        const Color(0xFF1976D2).withOpacity(0.05),
                       ],
                     ),
                     borderRadius: const BorderRadius.only(
@@ -202,47 +257,36 @@ class _UpdateDialogState extends State<UpdateDialog>
                   ),
                   child: Column(
                     children: [
-                      TweenAnimationBuilder<double>(
-                        tween: Tween(begin: 0.0, end: 1.0),
-                        duration: const Duration(milliseconds: 800),
-                        curve: Curves.elasticOut,
-                        builder: (context, value, child) {
-                          return Transform.scale(
-                            scale: value,
-                            child: Container(
-                              padding: const EdgeInsets.all(20),
-                              decoration: BoxDecoration(
-                                gradient: LinearGradient(
-                                  begin: Alignment.topLeft,
-                                  end: Alignment.bottomRight,
-                                  colors: [
-                                    const Color(0xFF9C27B0).withOpacity(0.3),
-                                    const Color(0xFF673AB7).withOpacity(0.2),
-                                  ],
-                                ),
-                                shape: BoxShape.circle,
-                                boxShadow: [
-                                  BoxShadow(
-                                    color: const Color(
-                                      0xFF9C27B0,
-                                    ).withOpacity(0.4),
-                                    blurRadius: 20,
-                                    spreadRadius: 2,
-                                  ),
-                                ],
-                              ),
-                              child: const Icon(
-                                Icons.system_update_rounded,
-                                color: Color(0xFFE1BEE7),
-                                size: 48,
-                              ),
+                      Container(
+                        width: 120,
+                        height: 120,
+                        decoration: BoxDecoration(
+                          gradient: LinearGradient(
+                            begin: Alignment.topLeft,
+                            end: Alignment.bottomRight,
+                            colors: [
+                              const Color(0xFF2196F3).withOpacity(0.2),
+                              const Color(0xFF1976D2).withOpacity(0.1),
+                            ],
+                          ),
+                          shape: BoxShape.circle,
+                          boxShadow: [
+                            BoxShadow(
+                              color: const Color(0xFF2196F3).withOpacity(0.4),
+                              blurRadius: 30,
+                              spreadRadius: 5,
                             ),
-                          );
-                        },
+                          ],
+                        ),
+                        child: Lottie.asset(
+                          'assets/animations/pepe_listen.json',
+                          fit: BoxFit.contain,
+                          repeat: true,
+                        ),
                       ),
                       const SizedBox(height: 20),
                       Text(
-                        'Update Available',
+                        _isDownloading ? 'Updating to...' : 'Update Available',
                         style: GoogleFonts.inter(
                           fontSize: 26,
                           fontWeight: FontWeight.bold,
@@ -257,10 +301,10 @@ class _UpdateDialogState extends State<UpdateDialog>
                           vertical: 6,
                         ),
                         decoration: BoxDecoration(
-                          color: const Color(0xFF9C27B0).withOpacity(0.2),
+                          color: const Color(0xFF2196F3).withOpacity(0.2),
                           borderRadius: BorderRadius.circular(20),
                           border: Border.all(
-                            color: const Color(0xFF9C27B0).withOpacity(0.3),
+                            color: const Color(0xFF2196F3).withOpacity(0.3),
                           ),
                         ),
                         child: Text(
@@ -268,7 +312,7 @@ class _UpdateDialogState extends State<UpdateDialog>
                           style: GoogleFonts.jetBrainsMono(
                             fontSize: 16,
                             fontWeight: FontWeight.w600,
-                            color: const Color(0xFFE1BEE7),
+                            color: const Color(0xFFBBDEFB),
                           ),
                         ),
                       ),
@@ -277,350 +321,373 @@ class _UpdateDialogState extends State<UpdateDialog>
                 ),
 
                 // Content
-                Padding(
-                  padding: const EdgeInsets.all(28),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      // Show info cards only when not downloading
-                      if (!_showDownloadDetails) ...[
-                        // Version Info Cards - HORIZONTAL GRID
-                        Row(
-                          children: [
-                            Expanded(
-                              child: _buildInfoCard(
-                                icon: Icons.info_outline_rounded,
-                                label: 'Current',
-                                value: widget.updateInfo.currentVersion,
-                                color: Colors.white.withOpacity(0.6),
-                              ),
-                            ),
-                            const SizedBox(width: 8),
-                            Expanded(
-                              child: _buildInfoCard(
-                                icon: Icons.new_releases_outlined,
-                                label: 'Latest',
-                                value: widget.updateInfo.latestVersion,
-                                color: const Color(0xFF4CAF50),
-                              ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 8),
-                        _buildInfoCard(
-                          icon: Icons.cloud_download_outlined,
-                          label: 'Download Size',
-                          value: widget.updateInfo.fileSizeFormatted,
-                          color: const Color(0xFF2196F3),
-                        ),
-
-                        // Cache indicator
-                        if (_hasCachedDownload) ...[
-                          const SizedBox(height: 12),
-                          Container(
-                            padding: const EdgeInsets.all(12),
-                            decoration: BoxDecoration(
-                              color: const Color(0xFF4CAF50).withOpacity(0.1),
-                              borderRadius: BorderRadius.circular(12),
-                              border: Border.all(
-                                color: const Color(0xFF4CAF50).withOpacity(0.3),
-                              ),
-                            ),
-                            child: Row(
+                Flexible(
+                  child: SingleChildScrollView(
+                    child: Padding(
+                      padding: const EdgeInsets.all(28),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          // Show info cards only when not downloading
+                          if (!_showDownloadDetails) ...[
+                            // Version Info Cards - HORIZONTAL GRID
+                            Row(
                               children: [
-                                Container(
-                                  padding: const EdgeInsets.all(6),
-                                  decoration: BoxDecoration(
-                                    color: const Color(
-                                      0xFF4CAF50,
-                                    ).withOpacity(0.2),
-                                    borderRadius: BorderRadius.circular(8),
-                                  ),
-                                  child: const Icon(
-                                    Icons.cached_rounded,
-                                    size: 16,
-                                    color: Color(0xFF4CAF50),
-                                  ),
-                                ),
-                                const SizedBox(width: 10),
                                 Expanded(
-                                  child: Column(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.start,
-                                    children: [
-                                      Text(
-                                        _cachedBytes >=
-                                                widget.updateInfo.fileSize
-                                            ? 'Ready to Install'
-                                            : 'Download in Progress',
-                                        style: GoogleFonts.inter(
-                                          fontSize: 12,
-                                          color: const Color(0xFF4CAF50),
-                                          fontWeight: FontWeight.w600,
-                                        ),
-                                      ),
-                                      const SizedBox(height: 2),
-                                      Text(
-                                        _cachedBytes >=
-                                                widget.updateInfo.fileSize
-                                            ? 'App already downloaded'
-                                            : '${UpdateManagerService.formatFileSize(_cachedBytes)} downloaded',
-                                        style: GoogleFonts.inter(
-                                          fontSize: 10,
-                                          color: Colors.white.withOpacity(0.5),
-                                        ),
-                                      ),
-                                    ],
+                                  child: _buildInfoCard(
+                                    icon: Icons.info_outline_rounded,
+                                    label: 'Current',
+                                    value: widget.updateInfo.currentVersion,
+                                    color: Colors.white.withOpacity(0.6),
                                   ),
                                 ),
-                                TextButton(
-                                  onPressed: _clearCache,
-                                  style: TextButton.styleFrom(
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 8,
-                                      vertical: 4,
-                                    ),
-                                    minimumSize: Size.zero,
-                                    tapTargetSize:
-                                        MaterialTapTargetSize.shrinkWrap,
-                                  ),
-                                  child: Text(
-                                    'Clear',
-                                    style: GoogleFonts.inter(
-                                      fontSize: 11,
-                                      color: const Color(0xFF4CAF50),
-                                      fontWeight: FontWeight.w600,
-                                    ),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: _buildInfoCard(
+                                    icon: Icons.new_releases_outlined,
+                                    label: 'Latest',
+                                    value: widget.updateInfo.latestVersion,
+                                    color: const Color(0xFF4CAF50),
                                   ),
                                 ),
                               ],
                             ),
-                          ),
-                        ],
+                            const SizedBox(height: 8),
+                            _buildInfoCard(
+                              icon: Icons.cloud_download_outlined,
+                              label: 'Download Size',
+                              value: widget.updateInfo.fileSizeFormatted,
+                              color: const Color(0xFF2196F3),
+                            ),
 
-                        // Release Notes
-                        if (widget.updateInfo.releaseNotes.isNotEmpty &&
-                            !_isDownloading &&
-                            _errorMessage == null) ...[
-                          const SizedBox(height: 24),
-                          Row(
-                            children: [
+                            // Cache indicator
+                            if (_hasCachedDownload) ...[
+                              const SizedBox(height: 12),
                               Container(
-                                width: 4,
-                                height: 20,
+                                padding: const EdgeInsets.all(12),
                                 decoration: BoxDecoration(
-                                  gradient: LinearGradient(
-                                    colors: [
-                                      const Color(0xFF9C27B0),
-                                      const Color(0xFF673AB7),
-                                    ],
+                                  color: const Color(
+                                    0xFF4CAF50,
+                                  ).withOpacity(0.1),
+                                  borderRadius: BorderRadius.circular(12),
+                                  border: Border.all(
+                                    color: const Color(
+                                      0xFF4CAF50,
+                                    ).withOpacity(0.3),
                                   ),
-                                  borderRadius: BorderRadius.circular(2),
                                 ),
-                              ),
-                              const SizedBox(width: 12),
-                              Text(
-                                'What\'s New',
-                                style: GoogleFonts.inter(
-                                  fontSize: 16,
-                                  fontWeight: FontWeight.bold,
-                                  color: Colors.white,
-                                ),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 12),
-                          Container(
-                            constraints: const BoxConstraints(maxHeight: 160),
-                            padding: const EdgeInsets.all(16),
-                            decoration: BoxDecoration(
-                              color: Colors.white.withOpacity(0.03),
-                              borderRadius: BorderRadius.circular(16),
-                              border: Border.all(
-                                color: Colors.white.withOpacity(0.08),
-                              ),
-                            ),
-                            child: SingleChildScrollView(
-                              child: Text(
-                                _parseReleaseNotes(
-                                  widget.updateInfo.releaseNotes,
-                                ),
-                                style: GoogleFonts.inter(
-                                  fontSize: 13,
-                                  color: Colors.white.withOpacity(0.8),
-                                  height: 1.6,
-                                ),
-                              ),
-                            ),
-                          ),
-                        ],
-                      ],
-
-                      // Download Progress - shown when downloading
-                      if (_showDownloadDetails) ...[
-                        const SizedBox(height: 8),
-                        Column(
-                          children: [
-                            ClipRRect(
-                              borderRadius: BorderRadius.circular(12),
-                              child: Stack(
-                                children: [
-                                  Container(
-                                    height: 12,
-                                    decoration: BoxDecoration(
-                                      color: Colors.white.withOpacity(0.1),
-                                      borderRadius: BorderRadius.circular(12),
-                                    ),
-                                  ),
-                                  FractionallySizedBox(
-                                    widthFactor: _downloadProgress,
-                                    child: Container(
-                                      height: 12,
+                                child: Row(
+                                  children: [
+                                    Container(
+                                      padding: const EdgeInsets.all(6),
                                       decoration: BoxDecoration(
-                                        gradient: LinearGradient(
-                                          colors: [
-                                            const Color(0xFF9C27B0),
-                                            const Color(0xFF673AB7),
-                                          ],
-                                        ),
-                                        borderRadius: BorderRadius.circular(12),
-                                        boxShadow: [
-                                          BoxShadow(
-                                            color: const Color(
-                                              0xFF9C27B0,
-                                            ).withOpacity(0.5),
-                                            blurRadius: 8,
-                                            spreadRadius: 0,
+                                        color: const Color(
+                                          0xFF4CAF50,
+                                        ).withOpacity(0.2),
+                                        borderRadius: BorderRadius.circular(8),
+                                      ),
+                                      child: const Icon(
+                                        Icons.cached_rounded,
+                                        size: 16,
+                                        color: Color(0xFF4CAF50),
+                                      ),
+                                    ),
+                                    const SizedBox(width: 10),
+                                    Expanded(
+                                      child: Column(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
+                                        children: [
+                                          Text(
+                                            _cachedBytes >=
+                                                    widget.updateInfo.fileSize
+                                                ? 'Ready to Install'
+                                                : 'Download in Progress',
+                                            style: GoogleFonts.inter(
+                                              fontSize: 12,
+                                              color: const Color(0xFF4CAF50),
+                                              fontWeight: FontWeight.w600,
+                                            ),
+                                          ),
+                                          const SizedBox(height: 2),
+                                          Text(
+                                            _cachedBytes >=
+                                                    widget.updateInfo.fileSize
+                                                ? 'App already downloaded'
+                                                : '${UpdateManagerService.formatFileSize(_cachedBytes)} downloaded',
+                                            style: GoogleFonts.inter(
+                                              fontSize: 10,
+                                              color: Colors.white.withOpacity(
+                                                0.5,
+                                              ),
+                                            ),
+                                            overflow: TextOverflow.ellipsis,
                                           ),
                                         ],
                                       ),
+                                    ),
+                                    TextButton(
+                                      onPressed: _clearCache,
+                                      style: TextButton.styleFrom(
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: 8,
+                                          vertical: 4,
+                                        ),
+                                        minimumSize: Size.zero,
+                                        tapTargetSize:
+                                            MaterialTapTargetSize.shrinkWrap,
+                                      ),
+                                      child: Text(
+                                        'Clear',
+                                        style: GoogleFonts.inter(
+                                          fontSize: 11,
+                                          color: const Color(0xFF4CAF50),
+                                          fontWeight: FontWeight.w600,
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ],
+
+                            // Release Notes
+                            if (widget.updateInfo.releaseNotes.isNotEmpty &&
+                                !_isDownloading &&
+                                _errorMessage == null) ...[
+                              const SizedBox(height: 24),
+                              Row(
+                                children: [
+                                  Container(
+                                    width: 4,
+                                    height: 20,
+                                    decoration: BoxDecoration(
+                                      gradient: LinearGradient(
+                                        colors: [
+                                          const Color(0xFF2196F3),
+                                          const Color(0xFF1976D2),
+                                        ],
+                                      ),
+                                      borderRadius: BorderRadius.circular(2),
+                                    ),
+                                  ),
+                                  const SizedBox(width: 12),
+                                  Text(
+                                    'What\'s New',
+                                    style: GoogleFonts.inter(
+                                      fontSize: 16,
+                                      fontWeight: FontWeight.bold,
+                                      color: Colors.white,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 12),
+                              Container(
+                                constraints: const BoxConstraints(
+                                  maxHeight: 160,
+                                ),
+                                padding: const EdgeInsets.all(16),
+                                decoration: BoxDecoration(
+                                  color: Colors.white.withOpacity(0.03),
+                                  borderRadius: BorderRadius.circular(16),
+                                  border: Border.all(
+                                    color: Colors.white.withOpacity(0.08),
+                                  ),
+                                ),
+                                child: SingleChildScrollView(
+                                  child: Text(
+                                    _parseReleaseNotes(
+                                      widget.updateInfo.releaseNotes,
+                                    ),
+                                    style: GoogleFonts.inter(
+                                      fontSize: 13,
+                                      color: Colors.white.withOpacity(0.8),
+                                      height: 1.6,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ],
+
+                          // Download Progress - shown when downloading
+                          if (_showDownloadDetails) ...[
+                            const SizedBox(height: 8),
+                            Column(
+                              children: [
+                                ClipRRect(
+                                  borderRadius: BorderRadius.circular(12),
+                                  child: Stack(
+                                    children: [
+                                      Container(
+                                        height: 12,
+                                        decoration: BoxDecoration(
+                                          color: Colors.white.withOpacity(0.1),
+                                          borderRadius: BorderRadius.circular(
+                                            12,
+                                          ),
+                                        ),
+                                      ),
+                                      FractionallySizedBox(
+                                        widthFactor: _downloadProgress,
+                                        child: Container(
+                                          height: 12,
+                                          decoration: BoxDecoration(
+                                            gradient: LinearGradient(
+                                              colors: [
+                                                const Color(0xFF2196F3),
+                                                const Color(0xFF1976D2),
+                                              ],
+                                            ),
+                                            borderRadius: BorderRadius.circular(
+                                              12,
+                                            ),
+                                            boxShadow: [
+                                              BoxShadow(
+                                                color: const Color(
+                                                  0xFF2196F3,
+                                                ).withOpacity(0.5),
+                                                blurRadius: 8,
+                                                spreadRadius: 0,
+                                              ),
+                                            ],
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                const SizedBox(height: 16),
+                                Row(
+                                  mainAxisAlignment:
+                                      MainAxisAlignment.spaceBetween,
+                                  children: [
+                                    Text(
+                                      '${(_downloadProgress * 100).toStringAsFixed(0)}%',
+                                      style: GoogleFonts.jetBrainsMono(
+                                        fontSize: 32,
+                                        color: const Color(0xFF2196F3),
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
+                                    if (_downloadSpeed.isNotEmpty)
+                                      Text(
+                                        _downloadSpeed,
+                                        style: GoogleFonts.jetBrainsMono(
+                                          fontSize: 16,
+                                          color: Colors.white.withOpacity(0.7),
+                                          fontWeight: FontWeight.w600,
+                                        ),
+                                      ),
+                                  ],
+                                ),
+                                const SizedBox(height: 12),
+                                Text(
+                                  _downloadStatus,
+                                  style: GoogleFonts.inter(
+                                    fontSize: 14,
+                                    color: Colors.white.withOpacity(0.6),
+                                    fontWeight: FontWeight.w500,
+                                  ),
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ],
+                            ),
+                          ],
+
+                          // Error Message
+                          if (_errorMessage != null) ...[
+                            const SizedBox(height: 16),
+                            Container(
+                              padding: const EdgeInsets.all(16),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFFFF4458).withOpacity(0.1),
+                                borderRadius: BorderRadius.circular(16),
+                                border: Border.all(
+                                  color: const Color(
+                                    0xFFFF4458,
+                                  ).withOpacity(0.3),
+                                ),
+                              ),
+                              child: Row(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Icon(
+                                    Icons.error_outline_rounded,
+                                    color: const Color(0xFFFF4458),
+                                    size: 22,
+                                  ),
+                                  const SizedBox(width: 12),
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                          _errorMessage!,
+                                          style: GoogleFonts.inter(
+                                            fontSize: 13,
+                                            color: const Color(0xFFFF4458),
+                                            fontWeight: FontWeight.w500,
+                                          ),
+                                        ),
+                                        const SizedBox(height: 8),
+                                        if (_errorMessage!.contains(
+                                          'Installation permission required',
+                                        ))
+                                          TextButton.icon(
+                                            onPressed: () async {
+                                              try {
+                                                await ApkInstallerService.openInstallPermissionSettings();
+                                              } catch (e) {
+                                                debugPrint(
+                                                  '⚠️ Could not open settings: $e',
+                                                );
+                                              }
+                                            },
+                                            icon: const Icon(
+                                              Icons.settings,
+                                              size: 16,
+                                            ),
+                                            label: Text(
+                                              'Tap To Go to Settings',
+                                              style: GoogleFonts.inter(
+                                                fontSize: 12,
+                                                fontWeight: FontWeight.w600,
+                                              ),
+                                            ),
+                                            style: TextButton.styleFrom(
+                                              foregroundColor: const Color(
+                                                0xFFFF4458,
+                                              ),
+                                              padding: EdgeInsets.zero,
+                                              minimumSize: Size.zero,
+                                              tapTargetSize:
+                                                  MaterialTapTargetSize
+                                                      .shrinkWrap,
+                                            ),
+                                          )
+                                        else
+                                          Text(
+                                            'Tap "Retry" to try again',
+                                            style: GoogleFonts.inter(
+                                              fontSize: 11,
+                                              color: const Color(
+                                                0xFFFF4458,
+                                              ).withOpacity(0.7),
+                                            ),
+                                          ),
+                                      ],
                                     ),
                                   ),
                                 ],
                               ),
                             ),
-                            const SizedBox(height: 16),
-                            Row(
-                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                              children: [
-                                Text(
-                                  '${(_downloadProgress * 100).toStringAsFixed(0)}%',
-                                  style: GoogleFonts.jetBrainsMono(
-                                    fontSize: 32,
-                                    color: const Color(0xFF9C27B0),
-                                    fontWeight: FontWeight.bold,
-                                  ),
-                                ),
-                                if (_downloadSpeed.isNotEmpty)
-                                  Text(
-                                    _downloadSpeed,
-                                    style: GoogleFonts.jetBrainsMono(
-                                      fontSize: 16,
-                                      color: Colors.white.withOpacity(0.7),
-                                      fontWeight: FontWeight.w600,
-                                    ),
-                                  ),
-                              ],
-                            ),
-                            const SizedBox(height: 12),
-                            Text(
-                              _downloadStatus,
-                              style: GoogleFonts.inter(
-                                fontSize: 14,
-                                color: Colors.white.withOpacity(0.6),
-                                fontWeight: FontWeight.w500,
-                              ),
-                            ),
                           ],
-                        ),
-                      ],
-
-                      // Error Message
-                      if (_errorMessage != null) ...[
-                        const SizedBox(height: 16),
-                        Container(
-                          padding: const EdgeInsets.all(16),
-                          decoration: BoxDecoration(
-                            color: const Color(0xFFFF4458).withOpacity(0.1),
-                            borderRadius: BorderRadius.circular(16),
-                            border: Border.all(
-                              color: const Color(0xFFFF4458).withOpacity(0.3),
-                            ),
-                          ),
-                          child: Row(
-                            children: [
-                              Icon(
-                                Icons.error_outline_rounded,
-                                color: const Color(0xFFFF4458),
-                                size: 22,
-                              ),
-                              const SizedBox(width: 12),
-                              Expanded(
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Text(
-                                      _errorMessage!,
-                                      style: GoogleFonts.inter(
-                                        fontSize: 13,
-                                        color: const Color(0xFFFF4458),
-                                        fontWeight: FontWeight.w500,
-                                      ),
-                                    ),
-                                    const SizedBox(height: 8),
-                                    if (_errorMessage!.contains(
-                                      'Installation permission required',
-                                    ))
-                                      TextButton.icon(
-                                        onPressed: () async {
-                                          try {
-                                            await ApkInstallerService.openInstallPermissionSettings();
-                                          } catch (e) {
-                                            debugPrint(
-                                              '⚠️ Could not open settings: $e',
-                                            );
-                                          }
-                                        },
-                                        icon: const Icon(
-                                          Icons.settings,
-                                          size: 16,
-                                        ),
-
-                                        label: Text(
-                                          'Tap To Go to Settings',
-                                          style: GoogleFonts.inter(
-                                            fontSize: 12,
-                                            fontWeight: FontWeight.w600,
-                                          ),
-                                        ),
-                                        style: TextButton.styleFrom(
-                                          foregroundColor: const Color(
-                                            0xFFFF4458,
-                                          ),
-                                          padding: EdgeInsets.zero,
-                                          minimumSize: Size.zero,
-                                          tapTargetSize:
-                                              MaterialTapTargetSize.shrinkWrap,
-                                        ),
-                                      )
-                                    else
-                                      Text(
-                                        'Tap "Retry" to try again',
-                                        style: GoogleFonts.inter(
-                                          fontSize: 11,
-                                          color: const Color(
-                                            0xFFFF4458,
-                                          ).withOpacity(0.7),
-                                        ),
-                                      ),
-                                  ],
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ],
-                    ],
+                        ],
+                      ),
+                    ),
                   ),
                 ),
 
@@ -702,10 +769,10 @@ class _UpdateDialogState extends State<UpdateDialog>
                                 }
                               : _downloadAndInstall,
                           style: ElevatedButton.styleFrom(
-                            backgroundColor: const Color(0xFF9C27B0),
+                            backgroundColor: const Color(0xFF2196F3),
                             foregroundColor: Colors.white,
                             disabledBackgroundColor: const Color(
-                              0xFF9C27B0,
+                              0xFF2196F3,
                             ).withOpacity(0.4),
                             padding: const EdgeInsets.symmetric(vertical: 16),
                             shape: RoundedRectangleBorder(
@@ -713,12 +780,13 @@ class _UpdateDialogState extends State<UpdateDialog>
                             ),
                             elevation: 0,
                             shadowColor: const Color(
-                              0xFF9C27B0,
+                              0xFF2196F3,
                             ).withOpacity(0.5),
                           ),
                           child: _isDownloading
                               ? Row(
                                   mainAxisAlignment: MainAxisAlignment.center,
+                                  mainAxisSize: MainAxisSize.min,
                                   children: [
                                     SizedBox(
                                       width: 18,
@@ -732,17 +800,21 @@ class _UpdateDialogState extends State<UpdateDialog>
                                       ),
                                     ),
                                     const SizedBox(width: 10),
-                                    Text(
-                                      'Downloading...',
-                                      style: GoogleFonts.inter(
-                                        fontSize: 15,
-                                        fontWeight: FontWeight.w600,
+                                    Flexible(
+                                      child: Text(
+                                        'Downloading...',
+                                        style: GoogleFonts.inter(
+                                          fontSize: 15,
+                                          fontWeight: FontWeight.w600,
+                                        ),
+                                        overflow: TextOverflow.ellipsis,
                                       ),
                                     ),
                                   ],
                                 )
                               : Row(
                                   mainAxisAlignment: MainAxisAlignment.center,
+                                  mainAxisSize: MainAxisSize.min,
                                   children: [
                                     Icon(
                                       (_errorMessage != null &&
@@ -760,22 +832,27 @@ class _UpdateDialogState extends State<UpdateDialog>
                                       size: 20,
                                     ),
                                     const SizedBox(width: 8),
-                                    Text(
-                                      (_errorMessage != null &&
-                                              _errorMessage!.contains(
-                                                'Installation permission required',
-                                              ))
-                                          ? 'Open Settings'
-                                          : _errorMessage != null
-                                          ? 'Retry'
-                                          : (_hasCachedDownload &&
-                                                _cachedBytes >=
-                                                    widget.updateInfo.fileSize)
-                                          ? 'Install Now'
-                                          : 'Update Now',
-                                      style: GoogleFonts.inter(
-                                        fontSize: 15,
-                                        fontWeight: FontWeight.w600,
+                                    Flexible(
+                                      child: Text(
+                                        (_errorMessage != null &&
+                                                _errorMessage!.contains(
+                                                  'Installation permission required',
+                                                ))
+                                            ? 'Open Settings'
+                                            : _errorMessage != null
+                                            ? 'Retry'
+                                            : (_hasCachedDownload &&
+                                                  _cachedBytes >=
+                                                      widget
+                                                          .updateInfo
+                                                          .fileSize)
+                                            ? 'Install Now'
+                                            : 'Update Now',
+                                        style: GoogleFonts.inter(
+                                          fontSize: 15,
+                                          fontWeight: FontWeight.w600,
+                                        ),
+                                        overflow: TextOverflow.ellipsis,
                                       ),
                                     ),
                                   ],

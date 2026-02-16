@@ -11,6 +11,7 @@ import 'package:vibeflow/api_base/vibeflowcore.dart';
 import 'package:auto_size_text/auto_size_text.dart';
 import 'package:vibeflow/constants/theme_colors.dart';
 import 'package:vibeflow/database/song_sharingService.dart';
+import 'package:vibeflow/main.dart';
 import 'package:vibeflow/managers/download_manager.dart';
 import 'package:vibeflow/models/DBSong.dart';
 import 'package:vibeflow/models/quick_picks_model.dart';
@@ -69,6 +70,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
   @override
   void initState() {
     super.initState();
+    isMiniplayerVisible.value = false;
 
     _albumArtController = AnimationController(
       duration: const Duration(milliseconds: 1200),
@@ -140,58 +142,6 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
     }
   }
 
-  // Future<void> _playInitialSong() async {
-  //   try {
-  //     print('🎵 [PlayerScreen] Checking current playback state...');
-
-  //     // Check if this song is already playing
-  //     final currentMedia = await _audioService.mediaItemStream.first;
-
-  //     if (currentMedia != null && currentMedia.id == widget.song.videoId) {
-  //       print(
-  //         '✅ [PlayerScreen] Song already loaded/playing: ${currentMedia.title}',
-  //       );
-
-  //       // Check if it's paused and we should resume
-  //       final playbackState = await _audioService.playbackStateStream.first;
-  //       final isPlaying = playbackState.playing;
-
-  //       if (!isPlaying) {
-  //         print('▶️ [PlayerScreen] Resuming paused song');
-  //         // Don't call playSong() - just resume
-  //         // The user can manually press play if they want
-  //       }
-
-  //       return; // Don't re-initialize playback
-  //     }
-
-  //     // Only play if it's a different song
-  //     print('🎵 [PlayerScreen] Playing new song: ${widget.song.title}');
-  //     await _audioService.playSong(widget.song);
-
-  //     print('✅ [PlayerScreen] Song started successfully');
-  //   } catch (e, stackTrace) {
-  //     print('❌ [PlayerScreen] Playback error: $e');
-
-  //     // 📳 VIBRATE: Triple pattern for critical error
-  //     await HapticFeedbackService().vibrateCriticalError();
-
-  //     // Show error overlay
-  //     setState(() {
-  //       _hasAudioError = true;
-  //       _errorMessage = 'Playback Error';
-  //       _detailedError =
-  //           'An error occurred while trying to play "${widget.song.title}".\n\n'
-  //           'Error Details:\n'
-  //           '${e.toString()}\n\n'
-  //           'Video ID: ${widget.song.videoId}\n\n'
-  //           'Stack Trace:\n'
-  //           '${stackTrace.toString().split('\n').take(5).join('\n')}';
-  //     });
-  //     _errorOverlayController.forward();
-  //   }
-  // }
-
   String _formatDuration(Duration? duration) {
     if (duration == null) return '0:00';
     final minutes = duration.inMinutes;
@@ -247,10 +197,6 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
       return null;
     }
   }
-
-  // Simplified PlayerScreen - Remove all notification-related code
-
-  // In the _handleSaveToggle method, replace the entire implementation with:
 
   Future<void> _handleSaveToggle() async {
     if (_isDownloading) return;
@@ -353,6 +299,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
     MediaItem? currentMedia,
     bool isPlaying,
   ) {
+    final themeData = Theme.of(context);
     final blurContainerSize = 340.0;
     final actualAlbumSize = 340.0;
     final artworkUrl =
@@ -504,7 +451,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
                           ),
                           boxShadow: [
                             BoxShadow(
-                              color: Colors.black.withOpacity(0.4),
+                              color: themeData.shadowColor.withOpacity(0.4),
                               blurRadius: 30,
                               spreadRadius: 5,
                             ),
@@ -530,14 +477,18 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
 
                               // Dimming overlay when error occurs
                               if (_hasAudioError)
-                                Container(color: Colors.black.withOpacity(0.6)),
+                                Container(
+                                  color: themeData.shadowColor.withOpacity(0.6),
+                                ),
 
                               // Pause Overlay (when not playing and no error)
                               if (!isPlaying && !_hasAudioError)
                                 FadeTransition(
                                   opacity: _pauseOverlayController,
                                   child: Container(
-                                    color: Colors.black.withOpacity(0.4),
+                                    color: themeData.shadowColor.withOpacity(
+                                      0.4,
+                                    ),
                                   ),
                                 ),
                             ],
@@ -566,6 +517,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
   }
 
   Widget _buildLyricsOverlay(double size, String songTitle) {
+    final themeData = Theme.of(context);
     final radiusMultiplier = ref.watch(thumbnailRadiusProvider);
     final actualAlbumSize = 340.0;
 
@@ -590,9 +542,13 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
               begin: Alignment.topCenter,
               end: Alignment.bottomCenter,
               colors: [
-                (_albumPalette?.vibrant ?? Colors.purple).withOpacity(0.98),
-                (_albumPalette?.dominant ?? Colors.blue).withOpacity(0.98),
-                (_albumPalette?.muted ?? Colors.grey).withOpacity(0.98),
+                (_albumPalette?.vibrant ?? themeData.colorScheme.primary)
+                    .withOpacity(0.98),
+                (_albumPalette?.dominant ?? themeData.colorScheme.secondary)
+                    .withOpacity(0.98),
+                (_albumPalette?.muted ?? themeData.disabledColor).withOpacity(
+                  0.98,
+                ),
               ],
             ),
           ),
@@ -602,7 +558,11 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
                 top: 8,
                 right: 8,
                 child: IconButton(
-                  icon: const Icon(Icons.close, color: Colors.white, size: 20),
+                  icon: Icon(
+                    Icons.close,
+                    color: themeData.colorScheme.onPrimary,
+                    size: 20,
+                  ),
                   onPressed: () {
                     setState(() {
                       _showLyrics = false;
@@ -622,7 +582,9 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
                     duration: widget.song.duration != null
                         ? int.tryParse(widget.song.duration!) ?? -1
                         : -1,
-                    accentColor: _albumPalette?.vibrant ?? Colors.white,
+                    accentColor:
+                        _albumPalette?.vibrant ??
+                        themeData.colorScheme.onPrimary,
                   ),
                 ),
               ),
@@ -634,6 +596,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
   }
 
   Widget _buildErrorOverlay(double size) {
+    final themeData = Theme.of(context);
     final radiusMultiplier = ref.watch(thumbnailRadiusProvider);
 
     return AnimatedBuilder(
@@ -646,7 +609,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
             height: size,
             decoration: BoxDecoration(
               borderRadius: BorderRadius.circular(size * radiusMultiplier),
-              color: Colors.black.withOpacity(0.85),
+              color: themeData.shadowColor.withOpacity(0.85),
             ),
             child: Padding(
               padding: const EdgeInsets.all(24.0),
@@ -657,17 +620,15 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
                   Icon(
                     Icons.error_outline_rounded,
                     size: 64,
-                    color: const Color(0xFFFF4458),
+                    color: themeData.colorScheme.error,
                   ),
                   const SizedBox(height: 16),
 
                   // Error Message
                   Text(
                     _errorMessage ?? 'Playback Error',
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 18,
-                      fontWeight: FontWeight.w600,
+                    style: themeData.textTheme.titleLarge?.copyWith(
+                      color: themeData.colorScheme.onPrimary,
                     ),
                     textAlign: TextAlign.center,
                   ),
@@ -676,9 +637,8 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
                   // Simple description
                   Text(
                     'Unable to load audio source',
-                    style: TextStyle(
-                      color: Colors.white.withOpacity(0.7),
-                      fontSize: 14,
+                    style: themeData.textTheme.bodyMedium?.copyWith(
+                      color: themeData.colorScheme.onPrimary.withOpacity(0.7),
                     ),
                     textAlign: TextAlign.center,
                   ),
@@ -693,18 +653,22 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
                         onPressed: () {
                           _showDetailedErrorDialog();
                         },
-                        icon: const Icon(
+                        icon: Icon(
                           Icons.info_outline_rounded,
                           size: 18,
-                          color: Colors.white,
+                          color: themeData.colorScheme.onPrimary,
                         ),
-                        label: const Text(
+                        label: Text(
                           'More Info',
-                          style: TextStyle(color: Colors.white),
+                          style: TextStyle(
+                            color: themeData.colorScheme.onPrimary,
+                          ),
                         ),
                         style: OutlinedButton.styleFrom(
                           side: BorderSide(
-                            color: Colors.white.withOpacity(0.3),
+                            color: themeData.colorScheme.onPrimary.withOpacity(
+                              0.3,
+                            ),
                           ),
                           shape: RoundedRectangleBorder(
                             borderRadius: BorderRadius.circular(8),
@@ -727,8 +691,8 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
                         icon: const Icon(Icons.refresh_rounded, size: 18),
                         label: const Text('Retry'),
                         style: ElevatedButton.styleFrom(
-                          backgroundColor: const Color(0xFFFF4458),
-                          foregroundColor: Colors.white,
+                          backgroundColor: themeData.colorScheme.error,
+                          foregroundColor: themeData.colorScheme.onPrimary,
                           shape: RoundedRectangleBorder(
                             borderRadius: BorderRadius.circular(8),
                           ),
@@ -746,15 +710,17 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
   }
 
   Widget _buildColorGradient() {
+    final themeData = Theme.of(context);
+
     return Container(
       decoration: BoxDecoration(
         gradient: LinearGradient(
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
           colors: [
-            _albumPalette?.vibrant ?? const Color(0xFF6B4CE8),
-            _albumPalette?.dominant ?? const Color(0xFF2D1B69),
-            _albumPalette?.muted ?? const Color(0xFF1A1A2E),
+            _albumPalette?.vibrant ?? themeData.colorScheme.primary,
+            _albumPalette?.dominant ?? themeData.colorScheme.secondary,
+            _albumPalette?.muted ?? themeData.disabledColor,
           ],
         ),
       ),
@@ -763,9 +729,11 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
 
   @override
   Widget build(BuildContext context) {
-    final backgroundColor = ref.watch(themeBackgroundColorProvider);
-    final iconActiveColor = ref.watch(themeIconActiveColorProvider);
-    final iconInactiveColor = ref.watch(themeTextSecondaryColorProvider);
+    final themeData = Theme.of(context);
+    final backgroundColor = themeData.scaffoldBackgroundColor;
+    final iconActiveColor =
+        themeData.iconTheme.color ?? themeData.colorScheme.primary;
+    final iconInactiveColor = themeData.disabledColor;
 
     return Scaffold(
       backgroundColor: backgroundColor,
@@ -808,9 +776,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
                                   icon: Icon(
                                     Icons.keyboard_arrow_down_rounded,
                                     size: 32,
-                                    color: ref.watch(
-                                      themeTextPrimaryColorProvider,
-                                    ),
+                                    color: themeData.textTheme.bodyLarge?.color,
                                   ),
                                   onPressed: () => Navigator.pop(context),
                                 ),
@@ -822,9 +788,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
                                   icon: Icon(
                                     Icons.more_horiz_rounded,
                                     size: 28,
-                                    color: ref.watch(
-                                      themeTextPrimaryColorProvider,
-                                    ),
+                                    color: themeData.textTheme.bodyLarge?.color,
                                   ),
                                   onPressed: _showMoreOptions,
                                 ),
@@ -858,9 +822,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
                                   fontSize: 24,
                                   fontWeight: FontWeight.w400,
                                   letterSpacing: 0.6,
-                                  color: ref.watch(
-                                    themeTextPrimaryColorProvider,
-                                  ),
+                                  color: themeData.textTheme.bodyLarge?.color,
                                 ),
                               ),
                               const SizedBox(height: 6),
@@ -872,9 +834,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
                                   fontSize: 16,
                                   fontWeight: FontWeight.w800,
                                   letterSpacing: 0.7,
-                                  color: ref.watch(
-                                    themeTextSecondaryColorProvider,
-                                  ),
+                                  color: themeData.textTheme.bodyMedium?.color,
                                 ),
                               ),
                             ],
@@ -961,9 +921,10 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
                           mainAxisAlignment: MainAxisAlignment.center,
                           children: [
                             IconButton(
-                              icon: const Icon(
+                              icon: Icon(
                                 Icons.skip_previous_rounded,
                                 size: 38,
+                                color: iconActiveColor,
                               ),
                               onPressed: _audioService.skipToPrevious,
                             ),
@@ -994,9 +955,10 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
                             ),
                             const SizedBox(width: 20),
                             IconButton(
-                              icon: const Icon(
+                              icon: Icon(
                                 Icons.skip_next_rounded,
                                 size: 38,
+                                color: iconActiveColor,
                               ),
                               onPressed: _audioService.skipToNext,
                             ),
@@ -1043,7 +1005,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
                                     ? Icons.favorite_rounded
                                     : Icons.favorite_border_rounded,
                                 color: widget.song.isFavorite
-                                    ? Colors.red
+                                    ? themeData.colorScheme.error
                                     : iconInactiveColor,
                               ),
                               onPressed: () {
@@ -1057,7 +1019,10 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
 
                             // RADIO
                             IconButton(
-                              icon: const Icon(Icons.radio_rounded),
+                              icon: Icon(
+                                Icons.radio_rounded,
+                                color: iconActiveColor,
+                              ),
                               onPressed: _showRadioBottomSheet,
                             ),
                           ],
@@ -1077,12 +1042,14 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
   }
 
   void _showMoreOptions() {
+    final themeData = Theme.of(context);
+
     showModalBottomSheet(
       context: context,
       backgroundColor: Colors.transparent,
       builder: (context) => Container(
         decoration: BoxDecoration(
-          color: const Color(0xFF1A1A1A),
+          color: themeData.cardColor,
           borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
         ),
         child: SafeArea(
@@ -1095,7 +1062,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
                 width: 40,
                 height: 4,
                 decoration: BoxDecoration(
-                  color: Colors.white.withOpacity(0.3),
+                  color: themeData.disabledColor.withOpacity(0.3),
                   borderRadius: BorderRadius.circular(2),
                 ),
               ),
@@ -1107,19 +1074,19 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
                   width: 40,
                   height: 40,
                   decoration: BoxDecoration(
-                    color: Colors.white.withOpacity(0.1),
+                    color: themeData.disabledColor.withOpacity(0.1),
                     borderRadius: BorderRadius.circular(10),
                   ),
-                  child: const Icon(
+                  child: Icon(
                     Icons.equalizer_rounded,
-                    color: Colors.white,
+                    color: themeData.iconTheme.color,
                     size: 22,
                   ),
                 ),
                 title: Text(
                   'Equalizer',
                   style: GoogleFonts.inter(
-                    color: Colors.white,
+                    color: themeData.textTheme.bodyLarge?.color,
                     fontSize: 16,
                     fontWeight: FontWeight.w500,
                   ),
@@ -1127,13 +1094,15 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
                 subtitle: Text(
                   'Adjust audio settings',
                   style: GoogleFonts.inter(
-                    color: Colors.white.withOpacity(0.6),
+                    color: themeData.textTheme.bodyMedium?.color?.withOpacity(
+                      0.6,
+                    ),
                     fontSize: 13,
                   ),
                 ),
                 trailing: Icon(
                   Icons.arrow_forward_ios,
-                  color: Colors.white.withOpacity(0.4),
+                  color: themeData.disabledColor.withOpacity(0.4),
                   size: 16,
                 ),
                 onTap: () {
@@ -1143,7 +1112,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
               ),
 
               Divider(
-                color: Colors.white.withOpacity(0.1),
+                color: themeData.dividerColor,
                 height: 1,
                 indent: 20,
                 endIndent: 20,
@@ -1155,19 +1124,19 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
                   width: 40,
                   height: 40,
                   decoration: BoxDecoration(
-                    color: Colors.white.withOpacity(0.1),
+                    color: themeData.disabledColor.withOpacity(0.1),
                     borderRadius: BorderRadius.circular(10),
                   ),
-                  child: const Icon(
+                  child: Icon(
                     Icons.playlist_add_rounded,
-                    color: Colors.white,
+                    color: themeData.iconTheme.color,
                     size: 22,
                   ),
                 ),
                 title: Text(
                   'Add to Playlist',
                   style: GoogleFonts.inter(
-                    color: Colors.white,
+                    color: themeData.textTheme.bodyLarge?.color,
                     fontSize: 16,
                     fontWeight: FontWeight.w500,
                   ),
@@ -1175,13 +1144,15 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
                 subtitle: Text(
                   'Save to your collection',
                   style: GoogleFonts.inter(
-                    color: Colors.white.withOpacity(0.6),
+                    color: themeData.textTheme.bodyMedium?.color?.withOpacity(
+                      0.6,
+                    ),
                     fontSize: 13,
                   ),
                 ),
                 trailing: Icon(
                   Icons.arrow_forward_ios,
-                  color: Colors.white.withOpacity(0.4),
+                  color: themeData.disabledColor.withOpacity(0.4),
                   size: 16,
                 ),
                 onTap: () {
@@ -1195,19 +1166,19 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
                   width: 40,
                   height: 40,
                   decoration: BoxDecoration(
-                    color: Colors.white.withOpacity(0.1),
+                    color: themeData.disabledColor.withOpacity(0.1),
                     borderRadius: BorderRadius.circular(10),
                   ),
-                  child: const Icon(
+                  child: Icon(
                     Icons.share_rounded,
-                    color: Colors.white,
+                    color: themeData.iconTheme.color,
                     size: 22,
                   ),
                 ),
                 title: Text(
                   'Share',
                   style: GoogleFonts.inter(
-                    color: Colors.white,
+                    color: themeData.textTheme.bodyLarge?.color,
                     fontSize: 16,
                     fontWeight: FontWeight.w500,
                   ),
@@ -1215,13 +1186,15 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
                 subtitle: Text(
                   'Share this song',
                   style: GoogleFonts.inter(
-                    color: Colors.white.withOpacity(0.6),
+                    color: themeData.textTheme.bodyMedium?.color?.withOpacity(
+                      0.6,
+                    ),
                     fontSize: 13,
                   ),
                 ),
                 trailing: Icon(
                   Icons.arrow_forward_ios,
-                  color: Colors.white.withOpacity(0.4),
+                  color: themeData.disabledColor.withOpacity(0.4),
                   size: 16,
                 ),
                 onTap: () async {
@@ -1237,7 +1210,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
                             'Failed to share song: ${e.toString()}',
                             style: GoogleFonts.inter(),
                           ),
-                          backgroundColor: Colors.red.shade700,
+                          backgroundColor: themeData.colorScheme.error,
                           behavior: SnackBarBehavior.floating,
                         ),
                       );
@@ -1261,6 +1234,8 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
   }
 
   Future<void> _showRadioBottomSheet() async {
+    final themeData = Theme.of(context);
+
     if (!mounted) return;
 
     // ✅ Ensure handler has radio loaded before opening sheet
@@ -1302,31 +1277,27 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
   }
 
   Widget _buildPlaceholder() {
-    final cardBackgroundColor = ref.watch(themeCardBackgroundColorProvider);
-    final iconInactiveColor = ref.watch(themeTextSecondaryColorProvider);
+    final themeData = Theme.of(context);
 
     return Container(
-      color: cardBackgroundColor,
+      color: themeData.cardColor,
       child: Center(
         child: Icon(
           Icons.music_note_rounded,
           size: 80,
-          color: iconInactiveColor,
+          color: themeData.disabledColor,
         ),
       ),
     );
   }
 
   void _showDetailedErrorDialog() {
-    final backgroundColor = ref.watch(themeBackgroundColorProvider);
-    final textPrimaryColor = ref.watch(themeTextPrimaryColorProvider);
-    final textSecondaryColor = ref.watch(themeTextSecondaryColorProvider);
-    final cardBackgroundColor = ref.watch(themeCardBackgroundColorProvider);
+    final themeData = Theme.of(context);
 
     showDialog(
       context: context,
       builder: (context) => Dialog(
-        backgroundColor: cardBackgroundColor,
+        backgroundColor: themeData.cardColor,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         child: Container(
           constraints: BoxConstraints(
@@ -1342,22 +1313,20 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
                 children: [
                   Icon(
                     Icons.bug_report_rounded,
-                    color: Colors.red, // Keep red for error icon
+                    color: themeData.colorScheme.error,
                     size: 28,
                   ),
                   const SizedBox(width: 12),
                   Expanded(
                     child: Text(
                       'Error Details',
-                      style: TextStyle(
-                        color: textPrimaryColor,
-                        fontSize: 20,
+                      style: themeData.textTheme.titleLarge?.copyWith(
                         fontWeight: FontWeight.bold,
                       ),
                     ),
                   ),
                   IconButton(
-                    icon: Icon(Icons.close, color: textPrimaryColor),
+                    icon: Icon(Icons.close, color: themeData.iconTheme.color),
                     onPressed: () => Navigator.pop(context),
                   ),
                 ],
@@ -1370,17 +1339,13 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
                   child: Container(
                     padding: const EdgeInsets.all(16),
                     decoration: BoxDecoration(
-                      color: backgroundColor.withOpacity(0.3),
+                      color: themeData.scaffoldBackgroundColor.withOpacity(0.3),
                       borderRadius: BorderRadius.circular(12),
-                      border: Border.all(
-                        color: textSecondaryColor.withOpacity(0.1),
-                      ),
+                      border: Border.all(color: themeData.dividerColor),
                     ),
                     child: SelectableText(
                       _detailedError ?? 'No error details available',
-                      style: TextStyle(
-                        color: textPrimaryColor.withOpacity(0.9),
-                        fontSize: 13,
+                      style: themeData.textTheme.bodySmall?.copyWith(
                         fontFamily: 'monospace',
                         height: 1.5,
                       ),
@@ -1402,9 +1367,11 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
                       SnackBar(
                         content: Text(
                           'Error details copied to clipboard',
-                          style: TextStyle(color: textPrimaryColor),
+                          style: TextStyle(
+                            color: themeData.colorScheme.onPrimary,
+                          ),
                         ),
-                        backgroundColor: cardBackgroundColor,
+                        backgroundColor: themeData.cardColor,
                         duration: const Duration(seconds: 2),
                       ),
                     );
@@ -1412,15 +1379,15 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
                   icon: Icon(
                     Icons.copy_rounded,
                     size: 18,
-                    color: textPrimaryColor,
+                    color: themeData.colorScheme.onPrimary,
                   ),
                   label: Text(
                     'Copy Error Details',
-                    style: TextStyle(color: textPrimaryColor),
+                    style: TextStyle(color: themeData.colorScheme.onPrimary),
                   ),
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: textSecondaryColor.withOpacity(0.1),
-                    foregroundColor: textPrimaryColor,
+                    backgroundColor: themeData.disabledColor.withOpacity(0.1),
+                    foregroundColor: themeData.colorScheme.onPrimary,
                     padding: const EdgeInsets.symmetric(vertical: 14),
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(8),
@@ -1436,6 +1403,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
   }
 
   void _showAddToPlaylistSheet() {
+    final themeData = Theme.of(context);
     final currentMedia = _audioService.currentMediaItem;
 
     if (currentMedia == null) {
@@ -1445,7 +1413,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
             'No song currently playing',
             style: GoogleFonts.inter(),
           ),
-          backgroundColor: Colors.red.shade700,
+          backgroundColor: themeData.colorScheme.error,
           behavior: SnackBarBehavior.floating,
         ),
       );
@@ -1484,7 +1452,9 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
   }
 
   Future<void> _createNotificationChannel() async {
-    final iconActiveColor = ref.watch(themeIconActiveColorProvider);
+    final themeData = Theme.of(context);
+    final iconActiveColor =
+        themeData.iconTheme.color ?? themeData.colorScheme.primary;
 
     await AwesomeNotifications().initialize(null, [
       NotificationChannel(
@@ -1558,6 +1528,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
 
   @override
   void dispose() {
+    isMiniplayerVisible.value = true; // ✅ VERIFY THIS EXISTS
     _albumArtController.dispose();
     _albumRotationController.dispose();
     _lyricsController.dispose();

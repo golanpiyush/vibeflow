@@ -249,9 +249,11 @@ class _CachePageState extends ConsumerState<CachePage> {
 
   @override
   Widget build(BuildContext context) {
-    final textSecondaryColor = ref.watch(themeTextSecondaryColorProvider);
-    final textPrimaryColor = ref.watch(themeTextPrimaryColorProvider);
-    final iconActiveColor = ref.watch(themeIconActiveColorProvider);
+    final themeData = Theme.of(context);
+    final colorScheme = themeData.colorScheme;
+    final textSecondaryColor = colorScheme.onSurface.withOpacity(0.6);
+    final textPrimaryColor = colorScheme.onSurface;
+    final iconActiveColor = colorScheme.primary;
     final cacheExpiryHours = ref.watch(cacheExpiryHoursProvider);
     final cacheStatsAsync = ref.watch(cacheStatsProvider);
     final cacheSizeGB = ref.watch(cacheSizeGBProvider);
@@ -259,6 +261,7 @@ class _CachePageState extends ConsumerState<CachePage> {
     return _SettingsPageTemplate(
       title: 'Cache',
       currentIndex: 1,
+      themeData: themeData, // Pass themeData
       content: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -629,27 +632,30 @@ class _SettingsPageTemplate extends ConsumerWidget {
   final String title;
   final int currentIndex;
   final Widget content;
-
+  final ThemeData themeData;
   const _SettingsPageTemplate({
     required this.title,
     required this.currentIndex,
     required this.content,
+    required this.themeData, // Add this
   });
-
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final backgroundColor = ref.watch(themeBackgroundColorProvider);
+    final colorScheme = themeData.colorScheme;
+    final backgroundColor = colorScheme.background;
 
     return Scaffold(
       backgroundColor: backgroundColor,
       body: SafeArea(
         child: Column(
           children: [
-            _buildTopBar(context, ref),
+            const SizedBox(height: AppSpacing.xxxl),
+
+            _buildTopBar(context, colorScheme),
             Expanded(
               child: Row(
                 children: [
-                  _buildSidebar(context, ref),
+                  _buildSidebar(context, colorScheme),
                   Expanded(
                     child: SingleChildScrollView(
                       padding: const EdgeInsets.all(AppSpacing.lg),
@@ -668,8 +674,8 @@ class _SettingsPageTemplate extends ConsumerWidget {
     );
   }
 
-  Widget _buildTopBar(BuildContext context, WidgetRef ref) {
-    final textPrimaryColor = ref.watch(themeTextPrimaryColorProvider);
+  Widget _buildTopBar(BuildContext context, ColorScheme colorScheme) {
+    final textPrimaryColor = colorScheme.onSurface;
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
@@ -695,12 +701,12 @@ class _SettingsPageTemplate extends ConsumerWidget {
     );
   }
 
-  Widget _buildSidebar(BuildContext context, WidgetRef ref) {
+  Widget _buildSidebar(BuildContext context, ColorScheme colorScheme) {
     final double availableHeight = MediaQuery.of(context).size.height;
-    final iconActiveColor = ref.watch(themeIconActiveColorProvider);
-    final iconInactiveColor = ref.watch(themeTextSecondaryColorProvider);
-    final sidebarLabelColor = ref.watch(themeTextPrimaryColorProvider);
-    final sidebarLabelActiveColor = ref.watch(themeIconActiveColorProvider);
+    final iconActiveColor = colorScheme.primary;
+    final iconInactiveColor = colorScheme.onSurface.withOpacity(0.6);
+    final sidebarLabelColor = colorScheme.onSurface;
+    final sidebarLabelActiveColor = colorScheme.primary;
 
     final sidebarLabelStyle = AppTypography.sidebarLabel(
       context,

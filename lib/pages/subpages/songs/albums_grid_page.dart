@@ -10,8 +10,7 @@ import 'package:vibeflow/constants/theme_colors.dart';
 import 'package:vibeflow/models/album_model.dart';
 import 'package:vibeflow/pages/album_view.dart';
 import 'package:vibeflow/pages/appearance_page.dart';
-import 'package:vibeflow/pages/subpages/songs/albums.dart';
-import 'package:vibeflow/pages/subpages/songs/artists.dart';
+
 import 'package:vibeflow/pages/subpages/songs/artists_grid_page.dart';
 import 'package:vibeflow/pages/subpages/songs/playlists.dart';
 import 'package:vibeflow/pages/subpages/songs/savedSongs.dart';
@@ -97,7 +96,11 @@ class _AlbumsGridPageState extends ConsumerState<AlbumsGridPage> {
 
   @override
   Widget build(BuildContext context) {
-    final backgroundColor = ref.watch(themeBackgroundColorProvider);
+    final themeData = Theme.of(context);
+    final backgroundColor = themeData.scaffoldBackgroundColor;
+    final iconActiveColor = themeData.colorScheme.primary;
+    final iconColor = themeData.colorScheme.onPrimary;
+
     return Scaffold(
       backgroundColor: backgroundColor,
       body: SafeArea(
@@ -135,11 +138,9 @@ class _AlbumsGridPageState extends ConsumerState<AlbumsGridPage> {
               }
             });
           },
-          backgroundColor: ref.watch(themeIconActiveColorProvider),
-          child: Icon(
-            isSearchMode ? Icons.close : Icons.search,
-            color: backgroundColor,
-          ),
+          backgroundColor: iconActiveColor,
+          foregroundColor: iconColor,
+          child: Icon(isSearchMode ? Icons.close : Icons.search),
         ),
       ),
     );
@@ -166,6 +167,8 @@ class _AlbumsGridPageState extends ConsumerState<AlbumsGridPage> {
         child: Column(
           children: [
             const SizedBox(height: 200),
+
+            // Settings/Appearance Icon
             _buildSidebarItem(
               icon: Icons.edit_square,
               label: '',
@@ -178,8 +181,11 @@ class _AlbumsGridPageState extends ConsumerState<AlbumsGridPage> {
               },
             ),
             const SizedBox(height: 32),
+
+            // Quick picks
             _buildSidebarItem(
               label: 'Quick picks',
+              isActive: false,
               iconActiveColor: iconActiveColor,
               iconInactiveColor: iconInactiveColor,
               labelStyle: sidebarLabelStyle,
@@ -188,8 +194,11 @@ class _AlbumsGridPageState extends ConsumerState<AlbumsGridPage> {
               },
             ),
             const SizedBox(height: 24),
+
+            // Songs
             _buildSidebarItem(
               label: 'Songs',
+              isActive: false,
               iconActiveColor: iconActiveColor,
               iconInactiveColor: iconInactiveColor,
               labelStyle: sidebarLabelStyle,
@@ -202,8 +211,11 @@ class _AlbumsGridPageState extends ConsumerState<AlbumsGridPage> {
               },
             ),
             const SizedBox(height: 24),
+
+            // Playlists
             _buildSidebarItem(
               label: 'Playlists',
+              isActive: false,
               iconActiveColor: iconActiveColor,
               iconInactiveColor: iconInactiveColor,
               labelStyle: sidebarLabelStyle,
@@ -216,8 +228,11 @@ class _AlbumsGridPageState extends ConsumerState<AlbumsGridPage> {
               },
             ),
             const SizedBox(height: 24),
+
+            // Artists
             _buildSidebarItem(
               label: 'Artists',
+              isActive: false,
               iconActiveColor: iconActiveColor,
               iconInactiveColor: iconInactiveColor,
               labelStyle: sidebarLabelStyle,
@@ -228,16 +243,16 @@ class _AlbumsGridPageState extends ConsumerState<AlbumsGridPage> {
               },
             ),
             const SizedBox(height: 24),
+
+            // Albums (ACTIVE)
             _buildSidebarItem(
               label: 'Albums',
-              isActive: true,
+              isActive: true, // ✅ This page is active
               iconActiveColor: iconActiveColor,
               iconInactiveColor: iconInactiveColor,
-              labelStyle: sidebarLabelActiveStyle,
+              labelStyle: sidebarLabelActiveStyle, // ✅ Use active style
               onTap: () {
-                Navigator.of(
-                  context,
-                ).pushMaterialVertical(const AlbumsGridPage(), slideUp: true);
+                // Already on Albums page, no action needed
               },
             ),
             const SizedBox(height: 40),
@@ -258,6 +273,7 @@ class _AlbumsGridPageState extends ConsumerState<AlbumsGridPage> {
   }) {
     return GestureDetector(
       onTap: onTap,
+      behavior: HitTestBehavior.opaque, // ✅ Better tap detection
       child: SizedBox(
         width: 72,
         child: Column(
@@ -276,7 +292,12 @@ class _AlbumsGridPageState extends ConsumerState<AlbumsGridPage> {
               child: Text(
                 label,
                 textAlign: TextAlign.center,
-                style: labelStyle.copyWith(fontSize: 16),
+                style: labelStyle.copyWith(
+                  fontSize: 16,
+                  fontWeight: isActive
+                      ? FontWeight.w600
+                      : FontWeight.w400, // ✅ Bold when active
+                ),
               ),
             ),
           ],
@@ -286,9 +307,12 @@ class _AlbumsGridPageState extends ConsumerState<AlbumsGridPage> {
   }
 
   Widget _buildTopBar(WidgetRef ref) {
-    final textPrimaryColor = ref.watch(themeTextPrimaryColorProvider);
-    final textSecondaryColor = ref.watch(themeTextSecondaryColorProvider);
-    final iconActiveColor = ref.watch(themeIconActiveColorProvider);
+    final themeData = Theme.of(context);
+    final textPrimaryColor = themeData.colorScheme.onSurface;
+    final textSecondaryColor = themeData.colorScheme.onSurfaceVariant;
+    final iconActiveColor = themeData.colorScheme.primary;
+    final backgroundColor = themeData.scaffoldBackgroundColor;
+    final cursorColor = themeData.colorScheme.primary;
 
     final pageTitleStyle = AppTypography.pageTitle(
       context,
@@ -299,6 +323,7 @@ class _AlbumsGridPageState extends ConsumerState<AlbumsGridPage> {
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      color: backgroundColor,
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
@@ -326,6 +351,7 @@ class _AlbumsGridPageState extends ConsumerState<AlbumsGridPage> {
                     focusNode: _searchFocusNode,
                     textAlign: TextAlign.right,
                     style: pageTitleStyle,
+                    cursorColor: cursorColor,
                     decoration: InputDecoration(
                       hintText: 'Search albums...',
                       hintStyle: hintStyle,
@@ -346,42 +372,10 @@ class _AlbumsGridPageState extends ConsumerState<AlbumsGridPage> {
     );
   }
 
-  Widget _buildLoadingGrid() {
-    return ShimmerLoading(
-      child: GridView.builder(
-        controller: _scrollController,
-        padding: const EdgeInsets.all(AppSpacing.lg),
-        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-          crossAxisCount: 2,
-          childAspectRatio: 0.75,
-          crossAxisSpacing: AppSpacing.md,
-          mainAxisSpacing: AppSpacing.md,
-        ),
-        itemCount: 8,
-        itemBuilder: (context, index) {
-          return Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              SkeletonBox(
-                width: double.infinity,
-                height: 160,
-                borderRadius: AppSpacing.radiusMedium,
-              ),
-              const SizedBox(height: AppSpacing.sm),
-              SkeletonBox(width: 120, height: 14, borderRadius: 4),
-              const SizedBox(height: 6),
-              SkeletonBox(width: 80, height: 12, borderRadius: 4),
-            ],
-          );
-        },
-      ),
-    );
-  }
-
   Widget _buildAlbumsGrid() {
     final textPrimaryColor = ref.watch(themeTextPrimaryColorProvider);
     final textSecondaryColor = ref.watch(themeTextSecondaryColorProvider);
-    final Color cardBackgroundColor = const Color.fromARGB(0, 0, 0, 0);
+    final cardBackgroundColor = ref.watch(themeCardBackgroundColorProvider);
     final iconInactiveColor = ref.watch(themeTextSecondaryColorProvider);
 
     if (filteredAlbums.isEmpty && !isLoadingAlbums) {
@@ -406,7 +400,7 @@ class _AlbumsGridPageState extends ConsumerState<AlbumsGridPage> {
                 isSearchMode ? 'No albums found' : 'No albums available',
                 style: AppTypography.subtitle(
                   context,
-                ).copyWith(color: textSecondaryColor),
+                ).copyWith(color: textPrimaryColor),
               ),
               if (isSearchMode) ...[
                 const SizedBox(height: 8),
@@ -423,10 +417,8 @@ class _AlbumsGridPageState extends ConsumerState<AlbumsGridPage> {
       );
     }
 
-    // Calculate total items: actual albums + loading placeholders
     final totalItems = isLoadingAlbums
-        ? filteredAlbums.length +
-              8 // Show 8 shimmer items while loading
+        ? filteredAlbums.length + 8
         : filteredAlbums.length;
 
     return GridView.builder(
@@ -440,7 +432,6 @@ class _AlbumsGridPageState extends ConsumerState<AlbumsGridPage> {
       ),
       itemCount: totalItems,
       itemBuilder: (context, index) {
-        // Show actual album if available
         if (index < filteredAlbums.length) {
           return _buildAlbumCard(
             filteredAlbums[index],
@@ -451,7 +442,6 @@ class _AlbumsGridPageState extends ConsumerState<AlbumsGridPage> {
           );
         }
 
-        // Show shimmer loading for remaining slots
         return ShimmerLoading(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -485,13 +475,12 @@ class _AlbumsGridPageState extends ConsumerState<AlbumsGridPage> {
       },
       child: Container(
         decoration: BoxDecoration(
-          color: cardBackgroundColor,
+          color: cardBackgroundColor.withOpacity(0.1),
           borderRadius: BorderRadius.circular(AppSpacing.radiusMedium),
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Album Cover
             Expanded(
               child: ClipRRect(
                 borderRadius: const BorderRadius.vertical(
@@ -537,7 +526,6 @@ class _AlbumsGridPageState extends ConsumerState<AlbumsGridPage> {
                       ),
               ),
             ),
-            // Album Info
             Padding(
               padding: const EdgeInsets.all(AppSpacing.sm),
               child: Column(
@@ -576,6 +564,38 @@ class _AlbumsGridPageState extends ConsumerState<AlbumsGridPage> {
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _buildLoadingGrid() {
+    return ShimmerLoading(
+      child: GridView.builder(
+        controller: _scrollController,
+        padding: const EdgeInsets.all(AppSpacing.lg),
+        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+          crossAxisCount: 2,
+          childAspectRatio: 0.75,
+          crossAxisSpacing: AppSpacing.md,
+          mainAxisSpacing: AppSpacing.md,
+        ),
+        itemCount: 8,
+        itemBuilder: (context, index) {
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              SkeletonBox(
+                width: double.infinity,
+                height: 160,
+                borderRadius: AppSpacing.radiusMedium,
+              ),
+              const SizedBox(height: AppSpacing.sm),
+              SkeletonBox(width: 120, height: 14, borderRadius: 4),
+              const SizedBox(height: 6),
+              SkeletonBox(width: 80, height: 12, borderRadius: 4),
+            ],
+          );
+        },
       ),
     );
   }

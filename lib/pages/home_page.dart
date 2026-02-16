@@ -28,17 +28,17 @@ import 'package:vibeflow/pages/authOnboard/Screens/social_feed_page.dart';
 import 'package:vibeflow/pages/authOnboard/access_code_screen.dart';
 import 'package:vibeflow/pages/newPlayerPage.dart';
 import 'package:vibeflow/pages/subpages/engine_status_screen.dart';
-import 'package:vibeflow/pages/subpages/songs/albums.dart';
 import 'package:vibeflow/pages/subpages/songs/albums_grid_page.dart';
-import 'package:vibeflow/pages/subpages/songs/artists.dart';
 import 'package:vibeflow/pages/subpages/songs/artists_grid_page.dart';
 import 'package:vibeflow/pages/subpages/songs/dailyPLaylist.dart';
 import 'package:vibeflow/pages/subpages/songs/playlists.dart';
 import 'package:vibeflow/pages/subpages/songs/savedSongs.dart';
+import 'package:vibeflow/providers/miniplayer_provider.dart';
 import 'package:vibeflow/services/audio_service.dart';
 import 'package:vibeflow/services/bg_audio_handler.dart';
 import 'package:vibeflow/services/last_played_service.dart';
 import 'package:vibeflow/services/sync_services/musicIntelligence.dart';
+import 'package:vibeflow/utils/album_color_generator.dart';
 import 'package:vibeflow/utils/material_transitions.dart';
 import 'package:vibeflow/utils/page_transitions.dart';
 import 'package:vibeflow/utils/theme_provider.dart';
@@ -62,7 +62,10 @@ class HomePage extends ConsumerStatefulWidget {
   ConsumerState<HomePage> createState() => _HomePageState();
 }
 
-class _HomePageState extends ConsumerState<HomePage> {
+class _HomePageState extends ConsumerState<HomePage>
+    with AutomaticKeepAliveClientMixin {
+  @override
+  bool get wantKeepAlive => true;
   final ScrollController _scrollController = ScrollController();
   final YouTubeMusicScraper _scraper = YouTubeMusicScraper();
   final TextEditingController _searchController = TextEditingController();
@@ -92,7 +95,7 @@ class _HomePageState extends ConsumerState<HomePage> {
   List<Song> searchResults = [];
   bool isSearching = false;
   bool _isCommunityPlaylistsSelected = false;
-
+  MediaItem? _cachedMediaItem;
   final _audioService = AudioServices.instance;
   final MiniplayerController _miniplayerController = MiniplayerController();
   QuickPick? _lastPlayedSong;
@@ -108,13 +111,23 @@ class _HomePageState extends ConsumerState<HomePage> {
   @override
   void initState() {
     super.initState();
+
+    // // ✅ CRITICAL FIX: Use addPostFrameCallback correctly
+    // WidgetsBinding.instance.addPostFrameCallback((_) {
+    //   if (mounted) {
+    //     // Hide global miniplayer ONLY on HomePage
+    //     ref.read(showGlobalMiniplayerProvider.notifier).state = false;
+    //     print('🎵 [HomePage] Hiding global miniplayer (showing local)');
+    //   }
+    // });
+
     _albumsScraper = YTMusicAlbumsScraper();
     _artistsScraper = YTMusicArtistsScraper();
     _searchHelper = YTMusicSearchHelper();
     _lastPlayedNotifier = ValueNotifier<QuickPick?>(null);
 
     // Initialize VibeFlow Engine
-    _initializeVibeFlowEngine(); // ADD THIS LINE
+    _initializeVibeFlowEngine();
 
     _initializeApp();
 
@@ -354,7 +367,7 @@ class _HomePageState extends ConsumerState<HomePage> {
 
     _debounceTimer = Timer(_debounceDuration, () async {
       try {
-        final results = await _searchHelper.searchSongs(query, limit: 50);
+        final results = await _searchHelper.searchSongs(query, limit: 10);
 
         if (mounted) {
           setState(() {
@@ -420,11 +433,53 @@ class _HomePageState extends ConsumerState<HomePage> {
   }
 
   void _onSearchChanged(String query) {
-    if (!mounted) return; // ✅ Check before setState
+    _debounceTimer?.cancel(); // Cancel previous timer
+
+    // ✅ Update UI immediately (no delay)
+    if (!mounted) return;
     setState(() {
-      _currentQuery = query; // Update current query for suggestions widget
+      _currentQuery = query;
     });
-    _performSearch(query); // This handles debounced actual search
+
+    if (query.trim().isEmpty) {
+      setState(() {
+        searchResults = [];
+        isSearching = false;
+      });
+      return;
+    }
+
+    // ✅ Show loading state immediately
+    setState(() => isSearching = true);
+
+    // ✅ Delay the actual search
+    _debounceTimer = Timer(_debounceDuration, () async {
+      try {
+        final results = await _searchHelper.searchSongs(query, limit: 50);
+
+        if (mounted) {
+          setState(() {
+            searchResults = results;
+            isSearching = false;
+          });
+
+          final prefs = await SharedPreferences.getInstance();
+          final isHistoryPaused =
+              prefs.getBool('search_history_paused') ?? false;
+
+          if (!isHistoryPaused) {
+            final suggestionsHelper = YTMusicSuggestionsHelper();
+            await suggestionsHelper.saveToHistory(query);
+            suggestionsHelper.dispose();
+          }
+        }
+      } catch (e) {
+        print('Error searching: $e');
+        if (mounted) {
+          setState(() => isSearching = false);
+        }
+      }
+    });
   }
 
   Future<void> _loadLastPlayedSong() async {
@@ -512,8 +567,10 @@ class _HomePageState extends ConsumerState<HomePage> {
 
   @override
   Widget build(BuildContext context) {
-    final backgroundColor = ref.watch(themeBackgroundColorProvider);
-    final iconActiveColor = ref.watch(themeIconActiveColorProvider);
+    super.build(context);
+    final themeData = Theme.of(context);
+    final backgroundColor = themeData.scaffoldBackgroundColor;
+    final iconActiveColor = themeData.colorScheme.primary;
     final iconInactiveColor = ref.watch(themeTextSecondaryColorProvider);
 
     return Scaffold(
@@ -528,40 +585,32 @@ class _HomePageState extends ConsumerState<HomePage> {
                 Expanded(
                   child: Column(
                     children: [
-                      const SizedBox(height: AppSpacing.xxxl),
+                      const SizedBox(height: AppSpacing.fourxxxl),
                       _buildTopBar(ref),
+                      const SizedBox(height: AppSpacing.xxl),
                       Expanded(
                         child: isSearchMode
                             ? _buildSearchView()
                             : SingleChildScrollView(
                                 controller: _scrollController,
                                 padding: EdgeInsets.only(
-                                  left: AppSpacing.lg,
-                                  right: AppSpacing.lg,
-                                  top: AppSpacing.lg,
-                                  bottom: _lastPlayedSong != null
-                                      ? 180
-                                      : 120, // Increased from 90/20 to 180/120
+                                  top: AppSpacing.md,
+                                  bottom: _lastPlayedSong != null ? 180 : 120,
                                 ),
                                 child: Column(
                                   crossAxisAlignment: CrossAxisAlignment.start,
                                   children: [
                                     _buildQuickPicks(),
-                                    const SizedBox(height: AppSpacing.xxxl),
+                                    const SizedBox(height: 36),
                                     _buildAlbums(),
-                                    const SizedBox(height: AppSpacing.xxxl),
+                                    const SizedBox(height: 36),
                                     _buildSimilarArtists(),
-                                    const SizedBox(
-                                      height: 20,
-                                    ), // ADD THIS SECTION HERE ⬇️
+                                    const SizedBox(height: 20),
                                     if (_hasAccessCode) ...[
-                                      const SizedBox(height: AppSpacing.xxxl),
+                                      const SizedBox(height: 36),
                                       _buildFeaturedPlaylist(),
                                     ],
-
-                                    const SizedBox(
-                                      height: 20,
-                                    ), // Additional spacing after artists
+                                    const SizedBox(height: 20),
                                   ],
                                 ),
                               ),
@@ -574,91 +623,34 @@ class _HomePageState extends ConsumerState<HomePage> {
           ),
 
           // Miniplayer overlay
-          ValueListenableBuilder<QuickPick?>(
-            valueListenable: _lastPlayedNotifier,
-            builder: (context, lastPlayed, _) {
-              return StreamBuilder<MediaItem?>(
-                stream: _audioService.mediaItemStream,
-                builder: (context, snapshot) {
-                  final currentMedia = snapshot.data;
-                  final shouldShow = currentMedia != null || lastPlayed != null;
-                  if (!shouldShow) return const SizedBox.shrink();
-
-                  final displaySong = currentMedia != null
-                      ? QuickPick(
-                          videoId: currentMedia.id,
-                          title: currentMedia.title,
-                          artists: currentMedia.artist ?? '',
-                          thumbnail: currentMedia.artUri?.toString() ?? '',
-                          duration: currentMedia.duration != null
-                              ? _formatDuration(
-                                  currentMedia.duration!.inSeconds,
-                                )
-                              : null,
-                        )
-                      : lastPlayed!;
-
-                  return Miniplayer(
-                    controller: _miniplayerController,
-                    minHeight: _miniplayerMinHeight,
-                    maxHeight: _miniplayerMinHeight,
-                    builder: (height, percentage) =>
-                        _buildMiniPlayer(displaySong, currentMedia),
-                  );
-                },
-              );
-            },
-          ),
+          // _buildOptimizedMiniplayer(),
         ],
       ),
       // FLOATING ACTION BUTTONS - Stack for multiple FABs
       // REPLACE the floatingActionButton section (around line 580-620):
-      floatingActionButton: _lastPlayedSong != null
-          ? Padding(
-              padding: const EdgeInsets.only(
-                bottom: 80,
-              ), // Add padding to avoid miniplayer
-              child: FloatingActionButton(
-                heroTag: 'search_fab',
-                onPressed: () {
-                  setState(() {
-                    isSearchMode = !isSearchMode;
-                    if (isSearchMode) {
-                      _searchFocusNode.requestFocus();
-                    } else {
-                      _searchController.clear();
-                      _searchFocusNode.unfocus();
-                      searchResults = [];
-                    }
-                  });
-                },
-                backgroundColor: iconActiveColor,
-                child: Icon(
-                  isSearchMode ? Icons.close : Icons.search,
-                  color: backgroundColor,
-                ),
-              ),
-            )
-          : FloatingActionButton(
-              heroTag: 'search_fab',
-              onPressed: () {
-                setState(() {
-                  isSearchMode = !isSearchMode;
-                  if (isSearchMode) {
-                    _searchFocusNode.requestFocus();
-                  } else {
-                    _searchController.clear();
-                    _searchFocusNode.unfocus();
-                    searchResults = [];
-                  }
-                });
-              },
-              backgroundColor: iconActiveColor,
-              child: Icon(
-                isSearchMode ? Icons.close : Icons.search,
-                color: backgroundColor,
-              ),
-            ),
+      floatingActionButton: Padding(
+        padding: const EdgeInsets.only(bottom: 95),
+        child: FloatingActionButton(
+          heroTag: 'search_fab',
+          onPressed: () {
+            setState(() {
+              isSearchMode = !isSearchMode;
+              if (isSearchMode) {
+                _searchFocusNode.requestFocus();
+              } else {
+                _searchController.clear();
+                _searchFocusNode.unfocus();
+                searchResults = [];
+              }
+            });
+          },
+          backgroundColor: iconActiveColor,
+          child: Icon(
+            isSearchMode ? Icons.close : Icons.search,
+            color: backgroundColor,
+          ),
+        ),
+      ),
     );
   }
 
@@ -1141,25 +1133,36 @@ class _HomePageState extends ConsumerState<HomePage> {
           color: cardBackgroundColor.withOpacity(0.3),
           borderRadius: BorderRadius.circular(12),
         ),
-        padding: const EdgeInsets.all(8), // PADDING INSIDE CARD
+        padding: const EdgeInsets.all(8),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           mainAxisSize: MainAxisSize.min,
           children: [
-            // Thumbnail - ASPECT RATIO prevents overflow
+            // Thumbnail
             Expanded(
-              flex: 7, // 70% of card height
+              flex: 7,
               child: ClipRRect(
                 borderRadius: BorderRadius.circular(8),
                 child: Container(
                   width: double.infinity,
-                  color: Colors.grey[900],
+                  color: cardBackgroundColor,
                   child:
                       playlist.thumbnail != null &&
                           playlist.thumbnail!.isNotEmpty
                       ? Image.network(
                           playlist.thumbnail!,
                           fit: BoxFit.cover,
+                          loadingBuilder: (context, child, loadingProgress) {
+                            if (loadingProgress == null) return child;
+                            return Center(
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                valueColor: AlwaysStoppedAnimation<Color>(
+                                  iconInactiveColor.withOpacity(0.5),
+                                ),
+                              ),
+                            );
+                          },
                           errorBuilder: (_, __, ___) => Center(
                             child: Icon(
                               Icons.playlist_play,
@@ -1179,15 +1182,15 @@ class _HomePageState extends ConsumerState<HomePage> {
               ),
             ),
 
-            const SizedBox(height: 8), // SPACE BETWEEN IMAGE AND TEXT
-            // Text area - FLEXIBLE with constraints
+            const SizedBox(height: 8),
+
+            // Text area
             Expanded(
-              flex: 3, // 30% of card height
+              flex: 3,
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 mainAxisAlignment: MainAxisAlignment.start,
                 children: [
-                  // Title
                   Text(
                     playlist.title,
                     style: TextStyle(
@@ -1199,8 +1202,8 @@ class _HomePageState extends ConsumerState<HomePage> {
                     overflow: TextOverflow.ellipsis,
                   ),
 
-                  const Spacer(), // PUSH METADATA TO BOTTOM
-                  // Song count + Creator
+                  const Spacer(),
+
                   Text(
                     '${playlist.songCount} songs • ${playlist.creator}',
                     style: TextStyle(
@@ -1221,6 +1224,12 @@ class _HomePageState extends ConsumerState<HomePage> {
 
   // Open playlist details
   Future<void> _openPlaylistDetails(CommunityPlaylist playlist) async {
+    // Get theme colors
+    final themeData = Theme.of(context);
+    final surfaceColor = themeData.colorScheme.surface;
+    final onSurface = themeData.colorScheme.onSurface;
+    final primaryColor = themeData.colorScheme.primary;
+
     // Show loading dialog with streaming support
     showDialog(
       context: context,
@@ -1230,12 +1239,16 @@ class _HomePageState extends ConsumerState<HomePage> {
         builder: (context, snapshot) {
           if (snapshot.hasError) {
             return AlertDialog(
-              title: const Text('Error'),
-              content: Text('Failed to load playlist: ${snapshot.error}'),
+              backgroundColor: surfaceColor,
+              title: Text('Error', style: TextStyle(color: onSurface)),
+              content: Text(
+                'Failed to load playlist: ${snapshot.error}',
+                style: TextStyle(color: onSurface.withOpacity(0.8)),
+              ),
               actions: [
                 TextButton(
                   onPressed: () => Navigator.pop(context),
-                  child: const Text('Close'),
+                  child: Text('Close', style: TextStyle(color: primaryColor)),
                 ),
               ],
             );
@@ -1245,17 +1258,26 @@ class _HomePageState extends ConsumerState<HomePage> {
           final isComplete = snapshot.connectionState == ConnectionState.done;
 
           return AlertDialog(
-            title: Text('Loading ${playlist.title}'),
+            backgroundColor: surfaceColor,
+            title: Text(
+              'Loading ${playlist.title}',
+              style: TextStyle(color: onSurface),
+            ),
             content: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                CircularProgressIndicator(),
+                CircularProgressIndicator(
+                  valueColor: AlwaysStoppedAnimation<Color>(primaryColor),
+                ),
                 const SizedBox(height: 16),
                 Text(
                   isComplete
                       ? 'Loaded ${loadedSongs.length} songs'
                       : 'Loading... ${loadedSongs.length} songs',
-                  style: TextStyle(fontSize: 14),
+                  style: TextStyle(
+                    fontSize: 14,
+                    color: onSurface.withOpacity(0.8),
+                  ),
                 ),
               ],
             ),
@@ -1265,22 +1287,19 @@ class _HomePageState extends ConsumerState<HomePage> {
     );
 
     try {
-      // Load with streaming
       final songs = <Song>[];
 
       await for (final song in _scraper.streamPlaylistSongs(playlist.id)) {
         songs.add(song);
-        // Cache each song as it arrives
         if (songs.length % 10 == 0) {
           await CacheManager.instance.cachePlaylistSongs(playlist.id, songs);
         }
       }
 
-      // Final cache
       await CacheManager.instance.cachePlaylistSongs(playlist.id, songs);
 
       if (!mounted) return;
-      Navigator.pop(context); // Close loading dialog
+      Navigator.pop(context);
 
       if (songs.isNotEmpty) {
         final fullPlaylist = CommunityPlaylist(
@@ -1295,9 +1314,9 @@ class _HomePageState extends ConsumerState<HomePage> {
         _showCommunityPlaylistBottomSheet(fullPlaylist);
       } else {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('No songs found in playlist'),
-            backgroundColor: Colors.orange,
+          SnackBar(
+            content: const Text('No songs found in playlist'),
+            backgroundColor: Theme.of(context).colorScheme.error,
           ),
         );
       }
@@ -1305,12 +1324,12 @@ class _HomePageState extends ConsumerState<HomePage> {
       print('❌ Error loading playlist details: $e');
       if (!mounted) return;
 
-      Navigator.pop(context); // Close loading dialog
+      Navigator.pop(context);
 
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Failed to load playlist'),
-          backgroundColor: Colors.red,
+        SnackBar(
+          content: const Text('Failed to load playlist'),
+          backgroundColor: Theme.of(context).colorScheme.error,
         ),
       );
     }
@@ -1590,6 +1609,9 @@ class _HomePageState extends ConsumerState<HomePage> {
                           vertical: 8,
                         ),
                         itemCount: playlist.songs!.length,
+                        cacheExtent: 500, // ✅ Pre-render off-screen items
+                        addAutomaticKeepAlives: true, // ✅ Keep items alive
+                        addRepaintBoundaries: true, // ✅ Isolate repaints
                         itemBuilder: (context, index) {
                           final song = playlist.songs![index];
                           return Container(
@@ -2084,6 +2106,20 @@ class _HomePageState extends ConsumerState<HomePage> {
                       ? Image.network(
                           thumbnail,
                           fit: BoxFit.cover,
+                          cacheWidth: 500, // ✅ Reduce memory usage
+                          cacheHeight: 500,
+                          loadingBuilder: (context, child, loadingProgress) {
+                            if (loadingProgress == null) return child;
+                            return const Center(
+                              child: SizedBox(
+                                width: 20,
+                                height: 20,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
+                              ),
+                            );
+                          },
                           errorBuilder: (context, error, stackTrace) =>
                               _buildThumbnailFallback(),
                         )
@@ -2165,14 +2201,14 @@ class _HomePageState extends ConsumerState<HomePage> {
     );
   }
 
+  // Replace _buildSidebar() and _buildSidebarItem() in home_page.dart
+
   Widget _buildSidebar(BuildContext context) {
-    final double availableHeight = MediaQuery.of(context).size.height;
     final iconActiveColor = ref.watch(themeIconActiveColorProvider);
     final iconInactiveColor = ref.watch(themeTextSecondaryColorProvider);
     final sidebarLabelColor = ref.watch(themeTextPrimaryColorProvider);
     final sidebarLabelActiveColor = ref.watch(themeIconActiveColorProvider);
 
-    // Create theme-aware text styles
     final sidebarLabelStyle = AppTypography.sidebarLabel(
       context,
     ).copyWith(color: sidebarLabelColor);
@@ -2180,118 +2216,169 @@ class _HomePageState extends ConsumerState<HomePage> {
       context,
     ).copyWith(color: sidebarLabelActiveColor);
 
-    // Watch if user has access code
     final hasAccessCodeAsync = ref.watch(hasAccessCodeProvider);
-    (context);
+
+    final screenWidth = MediaQuery.of(context).size.width;
+    final screenHeight = MediaQuery.of(context).size.height;
+
+    // Responsive sidebar width
+    final sidebarWidth = screenWidth < 360
+        ? 52.0
+        : screenWidth < 400
+        ? 58.0
+        : 64.0;
+
+    // Spacing between items scales with screen height
+    final itemSpacing = screenHeight < 680
+        ? 18.0
+        : screenHeight < 740
+        ? 22.0
+        : screenHeight < 820
+        ? 26.0
+        : 30.0;
+
+    // Bottom clearance for miniplayer
+    final bottomClearance =
+        _miniplayerMinHeight + MediaQuery.of(context).padding.bottom + 16;
 
     return SizedBox(
-      width: 65,
-      height: availableHeight,
+      width: sidebarWidth,
       child: SingleChildScrollView(
-        child: Column(
-          children: [
-            const SizedBox(height: 200),
-            _buildSidebarItem(
-              icon: Icons.edit_square,
-              label: '',
-              isActive: true,
-              iconActiveColor: iconActiveColor,
-              iconInactiveColor: iconInactiveColor,
-              labelStyle: sidebarLabelActiveStyle,
-              onTap: () {
-                Navigator.of(context).pushFade(const AppearancePage());
-              },
-            ),
-            const SizedBox(height: 32),
-            _buildSidebarItem(
-              label: 'Quick picks',
-              iconActiveColor: iconActiveColor,
-              iconInactiveColor: iconInactiveColor,
-              labelStyle: sidebarLabelStyle,
-            ),
-            const SizedBox(height: 24),
-            _buildSidebarItem(
-              label: 'Songs',
-              iconActiveColor: iconActiveColor,
-              iconInactiveColor: iconInactiveColor,
-              labelStyle: sidebarLabelStyle,
-              onTap: () {
-                Navigator.of(context).pushMaterialVertical(
-                  const SavedSongsScreen(),
-                  slideUp: true,
-                  enableParallax: true,
-                );
-              },
-            ),
-            const SizedBox(height: 24),
-            _buildSidebarItem(
-              label: 'Playlists',
-              iconActiveColor: iconActiveColor,
-              iconInactiveColor: iconInactiveColor,
-              labelStyle: sidebarLabelStyle,
-              onTap: () {
-                Navigator.of(context).pushMaterialVertical(
-                  const IntegratedPlaylistsScreen(),
-                  slideUp: true,
-                  enableParallax: true,
-                );
-              },
-            ),
-            const SizedBox(height: 24),
-            _buildSidebarItem(
-              label: 'Artists',
-              iconActiveColor: iconActiveColor,
-              iconInactiveColor: iconInactiveColor,
-              labelStyle: sidebarLabelStyle,
-              onTap: () {
-                Navigator.of(
-                  context,
-                ).pushMaterialVertical(const ArtistsGridPage(), slideUp: true);
-              },
-            ),
-            const SizedBox(height: 24),
-            _buildSidebarItem(
-              label: 'Albums',
-              iconActiveColor: iconActiveColor,
-              iconInactiveColor: iconInactiveColor,
-              labelStyle: sidebarLabelStyle,
-              onTap: () {
-                Navigator.of(
-                  context,
-                ).pushMaterialVertical(const AlbumsGridPage(), slideUp: true);
-              },
-            ),
-
-            // Social Item - Only show if user has access code
-            hasAccessCodeAsync.when(
-              data: (hasAccessCode) {
-                if (!hasAccessCode) return const SizedBox.shrink();
-
-                return Column(
-                  children: [
-                    const SizedBox(height: 24),
-                    _buildSidebarItem(
-                      label: 'Social',
-                      iconActiveColor: iconActiveColor,
-                      iconInactiveColor: iconInactiveColor,
-                      labelStyle: sidebarLabelStyle,
-                      onTap: () {
-                        Navigator.of(context).pushMaterialVertical(
-                          const SocialScreen(),
-                          slideUp: true,
-                          enableParallax: true,
-                        );
-                      },
+        physics: const NeverScrollableScrollPhysics(),
+        child: ConstrainedBox(
+          constraints: BoxConstraints(
+            minHeight:
+                screenHeight -
+                MediaQuery.of(context).padding.top -
+                bottomClearance,
+          ),
+          child: IntrinsicHeight(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [
+                SizedBox(height: screenHeight * 0.042),
+                // ← was 0.13, moves icon up
+                // Right-aligned edit/appearance icon
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: GestureDetector(
+                    onTap: () => Navigator.of(
+                      context,
+                    ).pushDropFall(const AppearancePage()),
+                    behavior: HitTestBehavior.opaque,
+                    child: Padding(
+                      padding: const EdgeInsets.only(right: 20, bottom: 20),
+                      child: Icon(
+                        Icons.settings,
+                        size: screenHeight < 740 ? 22.0 : 27.0,
+                        color: iconActiveColor,
+                      ),
                     ),
-                  ],
-                );
-              },
-              loading: () => const SizedBox.shrink(),
-              error: (_, __) => const SizedBox.shrink(),
-            ),
+                  ),
+                ),
+                SizedBox(height: AppSpacing.xxxl),
 
-            const SizedBox(height: 40),
-          ],
+                _buildSidebarItem(
+                  label: 'Quick picks',
+                  iconActiveColor: iconActiveColor,
+                  iconInactiveColor: iconInactiveColor,
+                  labelStyle: sidebarLabelStyle,
+                  sidebarWidth: sidebarWidth,
+                  screenHeight: screenHeight,
+                ),
+
+                SizedBox(height: itemSpacing),
+
+                _buildSidebarItem(
+                  label: 'Songs',
+                  iconActiveColor: iconActiveColor,
+                  iconInactiveColor: iconInactiveColor,
+                  labelStyle: sidebarLabelStyle,
+                  sidebarWidth: sidebarWidth,
+                  screenHeight: screenHeight,
+                  onTap: () => Navigator.of(context).pushMaterialVertical(
+                    const SavedSongsScreen(),
+                    slideUp: true,
+                    enableParallax: true,
+                  ),
+                ),
+
+                SizedBox(height: itemSpacing),
+
+                _buildSidebarItem(
+                  label: 'Playlists',
+                  iconActiveColor: iconActiveColor,
+                  iconInactiveColor: iconInactiveColor,
+                  labelStyle: sidebarLabelStyle,
+                  sidebarWidth: sidebarWidth,
+                  screenHeight: screenHeight,
+                  onTap: () => Navigator.of(context).pushMaterialVertical(
+                    const IntegratedPlaylistsScreen(),
+                    slideUp: true,
+                    enableParallax: true,
+                  ),
+                ),
+
+                SizedBox(height: itemSpacing),
+
+                _buildSidebarItem(
+                  label: 'Artists',
+                  iconActiveColor: iconActiveColor,
+                  iconInactiveColor: iconInactiveColor,
+                  labelStyle: sidebarLabelStyle,
+                  sidebarWidth: sidebarWidth,
+                  screenHeight: screenHeight,
+                  onTap: () => Navigator.of(context).pushMaterialVertical(
+                    const ArtistsGridPage(),
+                    slideUp: true,
+                  ),
+                ),
+
+                SizedBox(height: itemSpacing),
+
+                _buildSidebarItem(
+                  label: 'Albums',
+                  iconActiveColor: iconActiveColor,
+                  iconInactiveColor: iconInactiveColor,
+                  labelStyle: sidebarLabelStyle,
+                  sidebarWidth: sidebarWidth,
+                  screenHeight: screenHeight,
+                  onTap: () => Navigator.of(
+                    context,
+                  ).pushMaterialVertical(const AlbumsGridPage(), slideUp: true),
+                ),
+
+                hasAccessCodeAsync.when(
+                  data: (hasAccessCode) {
+                    if (!hasAccessCode) return const SizedBox.shrink();
+                    return Column(
+                      children: [
+                        SizedBox(height: itemSpacing),
+                        _buildSidebarItem(
+                          label: 'Social',
+                          iconActiveColor: iconActiveColor,
+                          iconInactiveColor: iconInactiveColor,
+                          labelStyle: sidebarLabelStyle,
+                          sidebarWidth: sidebarWidth,
+                          screenHeight: screenHeight,
+                          onTap: () =>
+                              Navigator.of(context).pushMaterialVertical(
+                                const SocialScreen(),
+                                slideUp: true,
+                                enableParallax: true,
+                              ),
+                        ),
+                      ],
+                    );
+                  },
+                  loading: () => const SizedBox.shrink(),
+                  error: (_, __) => const SizedBox.shrink(),
+                ),
+
+                SizedBox(height: bottomClearance),
+              ],
+            ),
+          ),
         ),
       ),
     );
@@ -2304,31 +2391,56 @@ class _HomePageState extends ConsumerState<HomePage> {
     required Color iconActiveColor,
     required Color iconInactiveColor,
     required TextStyle labelStyle,
+    required double sidebarWidth,
+    required double screenHeight,
     VoidCallback? onTap,
   }) {
+    // Font size scales with screen height
+    final fontSize = screenHeight < 680
+        ? 13.0
+        : screenHeight < 740
+        ? 14.0
+        : screenHeight < 820
+        ? 15.0
+        : 16.0;
+
+    // Icon size scales too
+    final iconSize = screenHeight < 680
+        ? 20.0
+        : screenHeight < 740
+        ? 22.0
+        : 24.0;
+
     return GestureDetector(
       onTap: onTap,
+      behavior: HitTestBehavior.opaque,
       child: SizedBox(
-        width: 72,
+        width: sidebarWidth,
         child: Column(
           mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.center,
           children: [
-            if (icon != null) ...[
+            if (icon != null)
               Icon(
                 icon,
-                size: 28,
+                size: iconSize,
                 color: isActive ? iconActiveColor : iconInactiveColor,
+              )
+            else
+              RotatedBox(
+                quarterTurns: -1,
+                child: Text(
+                  label,
+                  textAlign: TextAlign.center,
+                  style: labelStyle.copyWith(
+                    fontSize: fontSize,
+                    letterSpacing: 0.4,
+                    fontWeight: isActive ? FontWeight.w600 : FontWeight.w400,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.visible,
+                ),
               ),
-              const SizedBox(height: 16),
-            ],
-            RotatedBox(
-              quarterTurns: -1,
-              child: Text(
-                label,
-                textAlign: TextAlign.center,
-                style: labelStyle.copyWith(fontSize: 16),
-              ),
-            ),
           ],
         ),
       ),
@@ -2339,14 +2451,17 @@ class _HomePageState extends ConsumerState<HomePage> {
     final textPrimaryColor = ref.watch(themeTextPrimaryColorProvider);
     final textSecondaryColor = ref.watch(themeTextSecondaryColorProvider);
     final iconActiveColor = ref.watch(themeIconActiveColorProvider);
-    final backgroundColor = ref.watch(themeBackgroundColorProvider);
+    final backgroundColor = Theme.of(context).scaffoldBackgroundColor;
+
+    final titleFontSize = ResponsiveSpacing.pageTitleFontSize(context);
 
     final pageTitleStyle = AppTypography.pageTitle(
       context,
-    ).copyWith(color: textPrimaryColor);
-    final hintStyle = AppTypography.pageTitle(
-      context,
-    ).copyWith(color: textSecondaryColor.withOpacity(0.5));
+    ).copyWith(color: textPrimaryColor, fontSize: titleFontSize);
+    final hintStyle = AppTypography.pageTitle(context).copyWith(
+      color: textSecondaryColor.withOpacity(0.5),
+      fontSize: titleFontSize * 0.65,
+    );
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
@@ -2354,7 +2469,6 @@ class _HomePageState extends ConsumerState<HomePage> {
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          // Left side - Back button in search mode, icons in normal mode
           if (isSearchMode)
             IconButton(
               onPressed: () {
@@ -2365,19 +2479,18 @@ class _HomePageState extends ConsumerState<HomePage> {
                   searchResults = [];
                 });
               },
-              icon: Icon(Icons.arrow_back, color: iconActiveColor, size: 28),
+              icon: Icon(Icons.arrow_back, color: iconActiveColor, size: 26),
             )
           else
             Row(
               children: [
-                // ENGINE STATUS INDICATOR - NEW
+                // Engine status indicator
                 ListenableBuilder(
                   listenable: _engineLogger,
                   builder: (context, _) {
                     final isEngineRunning = _engineLogger.isEngineInitialized;
                     final hasActiveOps =
                         _engineLogger.activeOperations.isNotEmpty;
-
                     return GestureDetector(
                       onTap: () {
                         Navigator.of(context).push(
@@ -2401,21 +2514,20 @@ class _HomePageState extends ConsumerState<HomePage> {
                               color: isEngineRunning
                                   ? Colors.green
                                   : Colors.grey,
-                              size: 24,
+                              size: 22,
                             ),
                           ),
-                          // Active operations indicator
                           if (hasActiveOps)
                             Positioned(
                               top: 0,
                               right: 0,
                               child: Container(
                                 padding: const EdgeInsets.all(3),
-                                decoration: BoxDecoration(
+                                decoration: const BoxDecoration(
                                   color: Colors.blue,
                                   shape: BoxShape.circle,
                                 ),
-                                child: SizedBox(
+                                child: const SizedBox(
                                   width: 8,
                                   height: 8,
                                   child: CircularProgressIndicator(
@@ -2427,7 +2539,6 @@ class _HomePageState extends ConsumerState<HomePage> {
                                 ),
                               ),
                             ),
-                          // Status badge
                           Positioned(
                             bottom: 0,
                             right: 0,
@@ -2452,26 +2563,20 @@ class _HomePageState extends ConsumerState<HomePage> {
                   },
                 ),
 
-                const SizedBox(
-                  width: 12,
-                ), // Space between engine and access code
-                // ACCESS CODE INDICATOR - EXISTING (moved to the right)
+                const SizedBox(width: 8),
+
+                // Access code indicator
                 Consumer(
                   builder: (context, ref, child) {
                     final hasAccessCodeAsync = ref.watch(hasAccessCodeProvider);
-
                     return hasAccessCodeAsync.when(
                       data: (hasAccessCode) {
                         return GestureDetector(
                           onTap: hasAccessCode
-                              ? () {
-                                  Navigator.of(context).pushFade(
-                                    const AccessCodeManagementScreen(),
-                                  );
-                                }
-                              : () {
-                                  _showNoAccessCodeDialog(context);
-                                },
+                              ? () => Navigator.of(
+                                  context,
+                                ).pushFade(const AccessCodeManagementScreen())
+                              : () => _showNoAccessCodeDialog(context),
                           child: Stack(
                             children: [
                               Container(
@@ -2489,7 +2594,7 @@ class _HomePageState extends ConsumerState<HomePage> {
                                   color: hasAccessCode
                                       ? Colors.deepPurple
                                       : iconActiveColor,
-                                  size: 24,
+                                  size: 22,
                                 ),
                               ),
                               if (hasAccessCode)
@@ -2520,12 +2625,12 @@ class _HomePageState extends ConsumerState<HomePage> {
                           borderRadius: BorderRadius.circular(12),
                         ),
                         child: const SizedBox(
-                          width: 24,
-                          height: 24,
+                          width: 22,
+                          height: 22,
                           child: CircularProgressIndicator(strokeWidth: 2),
                         ),
                       ),
-                      error: (error, stackTrace) => GestureDetector(
+                      error: (_, __) => GestureDetector(
                         onTap: () {
                           ScaffoldMessenger.of(context).showSnackBar(
                             const SnackBar(
@@ -2545,7 +2650,7 @@ class _HomePageState extends ConsumerState<HomePage> {
                           child: const Icon(
                             Icons.error_outline,
                             color: Colors.red,
-                            size: 24,
+                            size: 22,
                           ),
                         ),
                       ),
@@ -2555,7 +2660,6 @@ class _HomePageState extends ConsumerState<HomePage> {
               ],
             ),
 
-          // Middle content - takes available space
           Expanded(
             child: isSearchMode
                 ? TextField(
@@ -2564,7 +2668,7 @@ class _HomePageState extends ConsumerState<HomePage> {
                     textAlign: TextAlign.right,
                     style: pageTitleStyle,
                     decoration: InputDecoration(
-                      hintText: 'Search songs, artists, albums...',
+                      hintText: 'Search...',
                       hintStyle: hintStyle,
                       border: InputBorder.none,
                       enabledBorder: InputBorder.none,
@@ -2572,9 +2676,7 @@ class _HomePageState extends ConsumerState<HomePage> {
                       contentPadding: EdgeInsets.zero,
                     ),
                     cursorColor: iconActiveColor,
-                    onChanged: (value) {
-                      _onSearchChanged(value);
-                    },
+                    onChanged: _onSearchChanged,
                     onSubmitted: (value) {
                       _debounceTimer?.cancel();
                       _performSearchImmediately(value);
@@ -2592,33 +2694,42 @@ class _HomePageState extends ConsumerState<HomePage> {
   }
 
   void _showNoAccessCodeDialog(BuildContext context) {
+    final themeData = Theme.of(context);
+    final surfaceColor = themeData.colorScheme.surface;
+    final onSurface = themeData.colorScheme.onSurface;
+    final primaryColor = themeData.colorScheme.primary;
+    final onPrimary = themeData.colorScheme.onPrimary;
+
     showDialog(
       context: context,
       barrierDismissible: true,
       builder: (dialogContext) => AlertDialog(
-        title: const Text('No Access Code'),
+        backgroundColor: surfaceColor,
+        title: Text('No Access Code', style: TextStyle(color: onSurface)),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text('You don\'t have an access code yet.'),
+            Text(
+              'You don\'t have an access code yet.',
+              style: TextStyle(color: onSurface),
+            ),
             const SizedBox(height: 8),
             Text(
               'Access code is required to manage access settings.',
-              style: TextStyle(color: Colors.grey.shade600, fontSize: 14),
+              style: TextStyle(color: onSurface.withOpacity(0.6), fontSize: 14),
             ),
           ],
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(dialogContext).pop(),
-            child: const Text('Cancel'),
+            child: Text('Cancel', style: TextStyle(color: primaryColor)),
           ),
           ElevatedButton(
             onPressed: () async {
               Navigator.of(dialogContext).pop();
 
-              // Stop audio player
               try {
                 await AudioServices.instance.stop();
                 print('🛑 Audio stopped before access code entry');
@@ -2633,24 +2744,27 @@ class _HomePageState extends ConsumerState<HomePage> {
                   MaterialPageRoute(
                     builder: (context) => const AccessCodeScreen(
                       showSkipButton: false,
-                      isFromDialog: true, // NEW FLAG
+                      isFromDialog: true,
                     ),
                     fullscreenDialog: true,
                   ),
                 );
 
-                // Refresh if code was entered successfully
                 if (result == true && context.mounted) {
                   setState(() {});
                   ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                      content: Text('Access code verified successfully!'),
-                      backgroundColor: Colors.green,
+                    SnackBar(
+                      content: const Text('Access code verified successfully!'),
+                      backgroundColor: primaryColor,
                     ),
                   );
                 }
               }
             },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: primaryColor,
+              foregroundColor: onPrimary,
+            ),
             child: const Text('Enter Code'),
           ),
         ],
@@ -2659,10 +2773,18 @@ class _HomePageState extends ConsumerState<HomePage> {
   }
 
   Widget _buildQuickPicks() {
+    // Get theme colors
+    final textPrimaryColor = ref.watch(themeTextPrimaryColorProvider);
+    final textSecondaryColor = ref.watch(themeTextSecondaryColorProvider);
+    final iconActiveColor = ref.watch(themeIconActiveColorProvider);
+
+    final itemHeight = ResponsiveSpacing.listItemHeight(context);
+    final totalHeight = itemHeight * 4 + 4;
+
     if (isLoadingQuickPicks) {
       return ShimmerLoading(
         child: SizedBox(
-          height: 280,
+          height: totalHeight,
           child: PageView.builder(
             controller: PageController(viewportFraction: 0.95),
             itemCount: 2,
@@ -2670,34 +2792,37 @@ class _HomePageState extends ConsumerState<HomePage> {
               return Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 8.0),
                 child: Column(
-                  children: List.generate(
-                    4,
-                    (i) => Container(
-                      height: 70,
-                      padding: const EdgeInsets.symmetric(
+                  children: List.generate(4, (i) {
+                    final artSize = ResponsiveSpacing.albumArtSize(context);
+                    final vertPad = (itemHeight - artSize) / 2;
+                    return Container(
+                      height: itemHeight,
+                      padding: EdgeInsets.symmetric(
                         horizontal: 16,
-                        vertical: 8,
+                        vertical: vertPad,
                       ),
                       child: Row(
                         children: [
-                          SkeletonBox(width: 54, height: 54, borderRadius: 12),
-                          const SizedBox(width: 12),
+                          SkeletonBox(
+                            width: artSize,
+                            height: artSize,
+                            borderRadius: 12,
+                          ),
+                          const SizedBox(width: 14),
                           Expanded(
                             child: Column(
                               mainAxisAlignment: MainAxisAlignment.center,
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                // Title line 1
                                 SkeletonBox(
                                   width: double.infinity,
-                                  height: 16,
+                                  height: 15,
                                   borderRadius: 4,
                                 ),
-                                const SizedBox(height: 4),
-                                // Title line 2 (shorter - not all titles are 2 lines)
+                                const SizedBox(height: 6),
                                 SkeletonBox(
-                                  width: 180,
-                                  height: 16,
+                                  width: 160,
+                                  height: 13,
                                   borderRadius: 4,
                                 ),
                               ],
@@ -2705,8 +2830,8 @@ class _HomePageState extends ConsumerState<HomePage> {
                           ),
                         ],
                       ),
-                    ),
-                  ),
+                    );
+                  }),
                 ),
               );
             },
@@ -2716,7 +2841,6 @@ class _HomePageState extends ConsumerState<HomePage> {
     }
 
     if (quickPicks.isEmpty) {
-      final textPrimaryColor = ref.watch(themeTextPrimaryColorProvider);
       return Center(
         child: Text(
           'No songs available',
@@ -2726,8 +2850,9 @@ class _HomePageState extends ConsumerState<HomePage> {
         ),
       );
     }
+
     return SizedBox(
-      height: 280,
+      height: totalHeight,
       child: PageView.builder(
         controller: PageController(viewportFraction: 0.95),
         itemCount: (quickPicks.length / 4).ceil(),
@@ -2742,7 +2867,7 @@ class _HomePageState extends ConsumerState<HomePage> {
               children: [
                 for (var i = 0; i < pageSongs.length; i++)
                   SizedBox(
-                    height: 70,
+                    height: itemHeight,
                     child: _buildQuickPickListItem(pageSongs[i]),
                   ),
               ],
@@ -2754,58 +2879,77 @@ class _HomePageState extends ConsumerState<HomePage> {
   }
 
   Widget _buildQuickPickListItem(QuickPick quickPick) {
+    // ✅ ADD THESE LINES at the start:
     final textPrimaryColor = ref.watch(themeTextPrimaryColorProvider);
     final textSecondaryColor = ref.watch(themeTextSecondaryColorProvider);
     final cardBackgroundColor = ref.watch(themeCardBackgroundColorProvider);
     final iconInactiveColor = ref.watch(themeTextSecondaryColorProvider);
-    final iconActiveColor = ref.watch(themeIconActiveColorProvider);
     final thumbnailRadius = ref.watch(thumbnailRadiusProvider);
+
+    final artSize = ResponsiveSpacing.albumArtSize(context);
+    final itemHeight = ResponsiveSpacing.listItemHeight(context);
+    final verticalPad = (itemHeight - artSize) / 2;
 
     return GestureDetector(
       onTap: () async {
         await LastPlayedService.saveLastPlayed(quickPick);
         if (mounted) {
           setState(() => _lastPlayedSong = quickPick);
-
-          // 🔥 Play with quickPick source type
           final handler = getAudioHandler();
           if (handler != null) {
             await handler.playSong(
               quickPick,
-              sourceType: RadioSourceType.quickPick, // ✅ SPECIFY SOURCE
+              sourceType: RadioSourceType.quickPick,
             );
           }
-
           _openPlayer(quickPick, heroTag: 'thumbnail-${quickPick.videoId}');
         }
       },
       child: Container(
-        height: 70,
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        height: itemHeight,
+        padding: EdgeInsets.only(
+          left: 0,
+          right: 12,
+          top: verticalPad,
+          bottom: verticalPad,
+        ),
         child: Row(
           children: [
             Hero(
               tag: 'thumbnail-${quickPick.videoId}',
               child: ClipRRect(
-                borderRadius: BorderRadius.circular(54 * thumbnailRadius),
+                borderRadius: BorderRadius.circular(artSize * thumbnailRadius),
                 child: SizedBox(
-                  width: 54,
-                  height: 54,
-                  child: quickPick.thumbnail.isNotEmpty
-                      ? Image.network(
-                          quickPick.thumbnail,
-                          fit: BoxFit.cover,
-                          loadingBuilder: (context, child, loadingProgress) {
-                            if (loadingProgress == null) return child;
-                            return ShimmerLoading(
-                              child: SkeletonBox(
-                                width: 54,
-                                height: 54,
-                                borderRadius: 12,
+                  width: artSize,
+                  height: artSize,
+                  child: AspectRatio(
+                    aspectRatio: 1,
+                    child: quickPick.thumbnail.isNotEmpty
+                        ? Image.network(
+                            quickPick.thumbnail,
+                            fit: BoxFit.cover,
+                            loadingBuilder: (context, child, loadingProgress) {
+                              if (loadingProgress == null) return child;
+                              return ShimmerLoading(
+                                child: SkeletonBox(
+                                  width: artSize,
+                                  height: artSize,
+                                  borderRadius: 12,
+                                ),
+                              );
+                            },
+                            errorBuilder: (_, __, ___) => Container(
+                              color: cardBackgroundColor,
+                              child: Center(
+                                child: Icon(
+                                  Icons.music_note,
+                                  color: iconInactiveColor,
+                                  size: 20,
+                                ),
                               ),
-                            );
-                          },
-                          errorBuilder: (_, __, ___) => Container(
+                            ),
+                          )
+                        : Container(
                             color: cardBackgroundColor,
                             child: Center(
                               child: Icon(
@@ -2815,43 +2959,37 @@ class _HomePageState extends ConsumerState<HomePage> {
                               ),
                             ),
                           ),
-                        )
-                      : Container(
-                          color: cardBackgroundColor,
-                          child: Center(
-                            child: Icon(
-                              Icons.music_note,
-                              color: iconInactiveColor,
-                              size: 20,
-                            ),
-                          ),
-                        ),
+                  ),
                 ),
               ),
             ),
-            const SizedBox(width: 12),
+            const SizedBox(width: 10),
             Expanded(
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
+                  // ✅ UPDATE THIS TEXT:
                   Text(
                     quickPick.title,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: AppTypography.songTitle(context).copyWith(
                       fontWeight: FontWeight.w500,
-                      color: textPrimaryColor,
+                      color: textPrimaryColor, // ✅ ADDED
+                      fontSize: 15,
                     ),
                   ),
                   const SizedBox(height: 4),
+                  // ✅ UPDATE THIS TEXT:
                   Text(
                     quickPick.artists,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: AppTypography.caption(
-                      context,
-                    ).copyWith(color: textSecondaryColor, fontSize: 12),
+                    style: AppTypography.subtitle(context).copyWith(
+                      color: textSecondaryColor, // ✅ ADDED
+                      fontSize: 13,
+                    ),
                   ),
                 ],
               ),
@@ -2862,24 +3000,27 @@ class _HomePageState extends ConsumerState<HomePage> {
     );
   }
 
-  // Updated _buildAlbums method with skeleton
   Widget _buildAlbums() {
     final textPrimaryColor = ref.watch(themeTextPrimaryColorProvider);
     final iconActiveColor = ref.watch(themeIconActiveColorProvider);
+    final cardSize = ResponsiveSpacing.albumCardSize(context);
+    final listHeight = cardSize + 72.0;
+    final thumbnailRadius = ref.watch(thumbnailRadiusProvider);
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Padding(
-          padding: const EdgeInsets.only(left: 16),
+          padding: const EdgeInsets.only(left: 16, right: 16),
           child: Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               Text(
                 'Albums',
-                style: AppTypography.sectionHeader(
-                  context,
-                ).copyWith(color: textPrimaryColor),
+                style: AppTypography.sectionHeader(context).copyWith(
+                  color: textPrimaryColor,
+                  fontSize: ResponsiveSpacing.sectionHeaderFontSize(context),
+                ),
               ),
               if (isLoadingAlbums)
                 SizedBox(
@@ -2893,34 +3034,45 @@ class _HomePageState extends ConsumerState<HomePage> {
             ],
           ),
         ),
-        const SizedBox(height: AppSpacing.lg),
+        const SizedBox(height: 14),
         if (isLoadingAlbums)
           ShimmerLoading(
             child: SizedBox(
-              height: 220,
+              height: listHeight,
               child: ListView.builder(
                 scrollDirection: Axis.horizontal,
                 padding: const EdgeInsets.only(left: 16),
                 itemCount: 5,
+                cacheExtent: 500,
+                addAutomaticKeepAlives: true,
+                addRepaintBoundaries: true,
                 itemBuilder: (context, index) {
                   return Padding(
-                    padding: const EdgeInsets.only(right: 12),
+                    padding: const EdgeInsets.only(right: 14),
                     child: SizedBox(
-                      width: 120,
+                      width: cardSize,
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           SkeletonBox(
-                            width: 120,
-                            height: 120,
-                            borderRadius: AppSpacing.radiusMedium,
+                            width: cardSize,
+                            height: cardSize,
+                            borderRadius: cardSize * thumbnailRadius * 0.08,
                           ),
-                          const SizedBox(height: AppSpacing.sm),
-                          SkeletonBox(width: 120, height: 14, borderRadius: 4),
+                          const SizedBox(height: 10),
+                          SkeletonBox(
+                            width: cardSize,
+                            height: 14,
+                            borderRadius: 4,
+                          ),
                           const SizedBox(height: 6),
-                          SkeletonBox(width: 80, height: 12, borderRadius: 4),
-                          const SizedBox(height: 4),
-                          SkeletonBox(width: 40, height: 10, borderRadius: 4),
+                          SkeletonBox(
+                            width: cardSize * 0.7,
+                            height: 12,
+                            borderRadius: 4,
+                          ),
+                          const SizedBox(height: 5),
+                          SkeletonBox(width: 40, height: 11, borderRadius: 4),
                         ],
                       ),
                     ),
@@ -2937,23 +3089,26 @@ class _HomePageState extends ConsumerState<HomePage> {
                 'No albums found',
                 style: AppTypography.subtitle(
                   context,
-                ).copyWith(color: AppColors.textSecondary),
+                ).copyWith(color: textPrimaryColor.withOpacity(0.6)),
               ),
             ),
           )
         else
           SizedBox(
-            height: 220,
+            height: listHeight,
             child: ListView.builder(
               scrollDirection: Axis.horizontal,
               padding: const EdgeInsets.only(left: 16),
+              cacheExtent: 500,
+              addAutomaticKeepAlives: true,
+              addRepaintBoundaries: true,
               itemCount: relatedAlbums.length,
               itemBuilder: (context, index) {
                 return Padding(
-                  padding: const EdgeInsets.only(right: 12),
+                  padding: const EdgeInsets.only(right: 14),
                   child: SizedBox(
-                    width: 120,
-                    height: 220,
+                    width: cardSize,
+                    height: listHeight,
                     child: _buildAlbumCard(relatedAlbums[index]),
                   ),
                 );
@@ -2964,48 +3119,48 @@ class _HomePageState extends ConsumerState<HomePage> {
     );
   }
 
-  // Replace the _buildAlbumCard method with this updated version:
-
   Widget _buildAlbumCard(Album album) {
-    const double size = 120;
+    final cardSize = ResponsiveSpacing.albumCardSize(context);
     final cardBackgroundColor = ref.watch(themeCardBackgroundColorProvider);
     final iconInactiveColor = ref.watch(themeTextSecondaryColorProvider);
+    // ✅ ADD THESE LINES:
     final textPrimaryColor = ref.watch(themeTextPrimaryColorProvider);
     final textSecondaryColor = ref.watch(themeTextSecondaryColorProvider);
-    final thumbnailRadius = ref.watch(
-      thumbnailRadiusProvider,
-    ); // Get the radius
+    final thumbnailRadius = ref.watch(thumbnailRadiusProvider);
+
+    final double borderRadius = cardSize * thumbnailRadius * 0.08;
 
     return GestureDetector(
       onTap: () {
-        // Navigate immediately without showing loading dialog
         Navigator.push(
           context,
           MaterialPageRoute(builder: (context) => AlbumPage(album: album)),
         );
       },
-      child: Container(
-        width: size,
+      child: SizedBox(
+        width: cardSize,
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             ClipRRect(
-              borderRadius: BorderRadius.circular(54 * thumbnailRadius),
+              borderRadius: BorderRadius.circular(borderRadius),
               child: Container(
-                width: size,
-                height: size,
+                width: cardSize,
+                height: cardSize,
                 color: cardBackgroundColor,
                 child: album.coverArt != null && album.coverArt!.isNotEmpty
                     ? Image.network(
                         album.coverArt!,
                         fit: BoxFit.cover,
+                        cacheWidth: 500,
+                        cacheHeight: 500,
                         loadingBuilder: (context, child, loadingProgress) {
                           if (loadingProgress == null) return child;
                           return ShimmerLoading(
                             child: SkeletonBox(
-                              width: size,
-                              height: size,
-                              borderRadius: AppSpacing.radiusMedium,
+                              width: cardSize,
+                              height: cardSize,
+                              borderRadius: borderRadius,
                             ),
                           );
                         },
@@ -3013,7 +3168,7 @@ class _HomePageState extends ConsumerState<HomePage> {
                           child: Icon(
                             Icons.album,
                             color: iconInactiveColor,
-                            size: 40,
+                            size: cardSize * 0.3,
                           ),
                         ),
                       )
@@ -3021,36 +3176,42 @@ class _HomePageState extends ConsumerState<HomePage> {
                         child: Icon(
                           Icons.album,
                           color: iconInactiveColor,
-                          size: 40,
+                          size: cardSize * 0.3,
                         ),
                       ),
               ),
             ),
-            const SizedBox(height: AppSpacing.sm),
+            const SizedBox(height: 10),
+            // ✅ UPDATE THIS TEXT:
             Text(
               album.title,
-              style: AppTypography.subtitle(
-                context,
-              ).copyWith(fontWeight: FontWeight.w600, color: textPrimaryColor),
+              style: AppTypography.subtitle(context).copyWith(
+                fontWeight: FontWeight.w600,
+                color: textPrimaryColor, // ✅ ADDED
+                fontSize: 13,
+              ),
               maxLines: 2,
               overflow: TextOverflow.ellipsis,
             ),
-            const SizedBox(height: AppSpacing.xs / 2),
+            const SizedBox(height: 4),
+            // ✅ UPDATE THIS TEXT:
             Text(
               album.artist,
-              style: AppTypography.caption(
-                context,
-              ).copyWith(color: textSecondaryColor),
+              style: AppTypography.caption(context).copyWith(
+                color: textSecondaryColor, // ✅ ADDED
+                fontSize: 12,
+              ),
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
             ),
             if (album.year > 0) ...[
-              const SizedBox(height: AppSpacing.xs / 2),
+              const SizedBox(height: 3),
+              // ✅ UPDATE THIS TEXT:
               Text(
                 album.year.toString(),
-                style: AppTypography.captionSmall(
-                  context,
-                ).copyWith(color: textSecondaryColor.withOpacity(0.7)),
+                style: AppTypography.captionSmall(context).copyWith(
+                  color: textSecondaryColor.withOpacity(0.7), // ✅ ADDED
+                ),
               ),
             ],
           ],
@@ -3059,12 +3220,14 @@ class _HomePageState extends ConsumerState<HomePage> {
     );
   }
 
-  // Updated _buildSimilarArtists method with skeleton
   Widget _buildSimilarArtists() {
     final textPrimaryColor = ref.watch(themeTextPrimaryColorProvider);
     final iconActiveColor = ref.watch(themeIconActiveColorProvider);
 
-    // Filter artists to only show those with profile images
+    final imageSize = ResponsiveSpacing.artistImageSize(context);
+    final cardWidth = ResponsiveSpacing.artistCardWidth(context);
+    final listHeight = imageSize + 56.0;
+
     final artistsWithImages = similarArtists
         .where(
           (artist) =>
@@ -3076,26 +3239,19 @@ class _HomePageState extends ConsumerState<HomePage> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Padding(
-          padding: const EdgeInsets.only(left: 16),
+          padding: const EdgeInsets.only(left: 16, right: 8),
           child: Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               Text(
                 'Similar artists',
-                style: AppTypography.sectionHeader(
-                  context,
-                ).copyWith(color: textPrimaryColor),
+                style: AppTypography.sectionHeader(context).copyWith(
+                  color: textPrimaryColor,
+                  fontSize: ResponsiveSpacing.sectionHeaderFontSize(context),
+                ),
               ),
               Row(
                 children: [
-                  // if (artistsWithImages.isNotEmpty)
-                  //   Text(
-                  //     '${artistsWithImages.length} artists',
-                  //     style: AppTypography.caption.copyWith(
-                  //       color: AppColors.textSecondary,
-                  //     ),
-                  //   ),
-                  const SizedBox(width: 8),
                   if (isLoadingArtists)
                     SizedBox(
                       width: 16,
@@ -3116,30 +3272,33 @@ class _HomePageState extends ConsumerState<HomePage> {
             ],
           ),
         ),
-        const SizedBox(height: AppSpacing.lg),
+        const SizedBox(height: 14),
         if (isLoadingArtists)
           ShimmerLoading(
             child: SizedBox(
-              height: AppSpacing.artistCardSize + 50,
+              height: listHeight,
               child: ListView.builder(
                 scrollDirection: Axis.horizontal,
                 padding: const EdgeInsets.only(left: 16),
-                itemCount: 10,
+                itemCount: 8,
+                cacheExtent: 500,
+                addAutomaticKeepAlives: true,
+                addRepaintBoundaries: true,
                 itemBuilder: (context, index) {
                   return Container(
-                    width: AppSpacing.artistCardSize,
-                    margin: const EdgeInsets.only(right: AppSpacing.lg),
+                    width: cardWidth,
+                    margin: const EdgeInsets.only(right: 16),
                     child: Column(
                       children: [
                         SkeletonBox(
-                          width: AppSpacing.artistImageSize,
-                          height: AppSpacing.artistImageSize,
-                          borderRadius: AppSpacing.artistImageSize / 2,
+                          width: imageSize,
+                          height: imageSize,
+                          borderRadius: imageSize / 2,
                         ),
-                        const SizedBox(height: AppSpacing.sm),
-                        SkeletonBox(width: 80, height: 14, borderRadius: 4),
-                        const SizedBox(height: 6),
-                        SkeletonBox(width: 60, height: 10, borderRadius: 4),
+                        const SizedBox(height: 10),
+                        SkeletonBox(width: 70, height: 13, borderRadius: 4),
+                        const SizedBox(height: 5),
+                        SkeletonBox(width: 50, height: 11, borderRadius: 4),
                       ],
                     ),
                   );
@@ -3157,13 +3316,16 @@ class _HomePageState extends ConsumerState<HomePage> {
                     'No artists found',
                     style: AppTypography.subtitle(
                       context,
-                    ).copyWith(color: AppColors.textSecondary),
+                    ).copyWith(color: textPrimaryColor.withOpacity(0.6)),
                   ),
                   const SizedBox(height: 16),
                   ElevatedButton.icon(
                     onPressed: _fetchRandomArtists,
                     icon: const Icon(Icons.refresh),
                     label: const Text('Load Artists'),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: iconActiveColor,
+                    ),
                   ),
                 ],
               ),
@@ -3171,17 +3333,114 @@ class _HomePageState extends ConsumerState<HomePage> {
           )
         else
           SizedBox(
-            height: AppSpacing.artistCardSize + 50,
+            height: listHeight,
             child: ListView.builder(
               scrollDirection: Axis.horizontal,
               padding: const EdgeInsets.only(left: 16),
               itemCount: artistsWithImages.length,
+              cacheExtent: 500,
+              addAutomaticKeepAlives: true,
+              addRepaintBoundaries: true,
               itemBuilder: (context, index) {
                 return _buildArtistCard(artistsWithImages[index]);
               },
             ),
           ),
       ],
+    );
+  }
+
+  Widget _buildArtistCard(Artist artist) {
+    final cardBackgroundColor = ref.watch(themeCardBackgroundColorProvider);
+    final iconInactiveColor = ref.watch(themeTextSecondaryColorProvider);
+    // ✅ ADD THESE LINES:
+    final textPrimaryColor = ref.watch(themeTextPrimaryColorProvider);
+    final textSecondaryColor = ref.watch(themeTextSecondaryColorProvider);
+
+    final imageSize = ResponsiveSpacing.artistImageSize(context);
+    final cardWidth = ResponsiveSpacing.artistCardWidth(context);
+
+    return GestureDetector(
+      onTap: () {
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (context) => ArtistPage(artist: artist, artistName: ''),
+          ),
+        );
+      },
+      child: Container(
+        width: cardWidth,
+        margin: const EdgeInsets.only(right: 16),
+        child: Column(
+          children: [
+            ClipOval(
+              child: Container(
+                width: imageSize,
+                height: imageSize,
+                color: cardBackgroundColor,
+                child: artist.profileImage != null
+                    ? Image.network(
+                        artist.profileImage!,
+                        fit: BoxFit.cover,
+                        cacheWidth: 500,
+                        cacheHeight: 500,
+                        loadingBuilder: (context, child, loadingProgress) {
+                          if (loadingProgress == null) return child;
+                          return ShimmerLoading(
+                            child: SkeletonBox(
+                              width: imageSize,
+                              height: imageSize,
+                              borderRadius: imageSize / 2,
+                            ),
+                          );
+                        },
+                        errorBuilder: (context, error, stackTrace) {
+                          return Center(
+                            child: Icon(
+                              Icons.person,
+                              color: iconInactiveColor,
+                              size: imageSize * 0.42,
+                            ),
+                          );
+                        },
+                      )
+                    : Center(
+                        child: Icon(
+                          Icons.person,
+                          color: iconInactiveColor,
+                          size: imageSize * 0.42,
+                        ),
+                      ),
+              ),
+            ),
+            const SizedBox(height: 10),
+            // ✅ UPDATE THIS TEXT:
+            Text(
+              artist.name,
+              style: AppTypography.subtitle(context).copyWith(
+                color: textPrimaryColor, // ✅ ADDED
+                fontSize: 13,
+              ),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 4),
+            // ✅ UPDATE THIS TEXT:
+            Text(
+              artist.subscribers,
+              style: AppTypography.captionSmall(context).copyWith(
+                color: textSecondaryColor, // ✅ ADDED
+                fontSize: 11,
+              ),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              textAlign: TextAlign.center,
+            ),
+          ],
+        ),
+      ),
     );
   }
 
@@ -3255,6 +3514,9 @@ class _HomePageState extends ConsumerState<HomePage> {
                 scrollDirection: Axis.horizontal,
                 padding: const EdgeInsets.only(left: 16),
                 itemCount: 5,
+                cacheExtent: 500, // ✅ Pre-render off-screen items
+                addAutomaticKeepAlives: true, // ✅ Keep items alive
+                addRepaintBoundaries: true, // ✅ Isolate repaints
                 itemBuilder: (context, index) {
                   return Padding(
                     padding: const EdgeInsets.only(right: 12),
@@ -3480,6 +3742,9 @@ class _HomePageState extends ConsumerState<HomePage> {
                   scrollDirection: Axis.horizontal,
                   padding: const EdgeInsets.only(left: 16),
                   itemCount: _featuredPlaylist!.songs.take(10).length,
+                  cacheExtent: 500, // ✅ Pre-render off-screen items
+                  addAutomaticKeepAlives: true, // ✅ Keep items alive
+                  addRepaintBoundaries: true, // ✅ Isolate repaints
                   itemBuilder: (context, index) {
                     final song = _featuredPlaylist!.songs[index];
                     return Padding(
@@ -3513,17 +3778,16 @@ class _HomePageState extends ConsumerState<HomePage> {
     );
   }
 
-  // 6. ADD FEATURED SONG CARD WIDGET
   Widget _buildFeaturedSongCard(PlaylistSong song) {
     const double size = 140;
     final cardBackgroundColor = ref.watch(themeCardBackgroundColorProvider);
+    // ✅ ADD THESE LINES:
     final textPrimaryColor = ref.watch(themeTextPrimaryColorProvider);
     final textSecondaryColor = ref.watch(themeTextSecondaryColorProvider);
     final thumbnailRadius = ref.watch(thumbnailRadiusProvider);
 
     return GestureDetector(
       onTap: () async {
-        // Search for the song and play it
         await _searchAndPlayFeaturedSong(song);
       },
       child: Container(
@@ -3536,35 +3800,37 @@ class _HomePageState extends ConsumerState<HomePage> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Placeholder album art (since we don't have it from AI)
             ClipRRect(
               borderRadius: BorderRadius.circular(size * thumbnailRadius),
               child: Container(
                 width: size - 24,
                 height: size - 24,
-                color: Colors.grey[800],
+                color: cardBackgroundColor.withOpacity(0.5),
                 child: const Center(
                   child: Icon(Icons.music_note, color: Colors.grey, size: 40),
                 ),
               ),
             ),
             const SizedBox(height: AppSpacing.sm),
+            // ✅ UPDATE THIS TEXT:
             Text(
               song.title,
               style: AppTypography.subtitle(context).copyWith(
                 fontWeight: FontWeight.w600,
-                color: textPrimaryColor,
+                color: textPrimaryColor, // ✅ ADDED
                 fontSize: 13,
               ),
               maxLines: 2,
               overflow: TextOverflow.ellipsis,
             ),
             const SizedBox(height: 4),
+            // ✅ UPDATE THIS TEXT:
             Text(
               song.artist,
-              style: AppTypography.caption(
-                context,
-              ).copyWith(color: textSecondaryColor, fontSize: 11),
+              style: AppTypography.caption(context).copyWith(
+                color: textSecondaryColor, // ✅ ADDED
+                fontSize: 11,
+              ),
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
             ),
@@ -3717,6 +3983,9 @@ class _HomePageState extends ConsumerState<HomePage> {
                 child: ListView.builder(
                   padding: const EdgeInsets.all(16),
                   itemCount: _featuredPlaylist!.songs.length,
+                  cacheExtent: 500, // ✅ Pre-render off-screen items
+                  addAutomaticKeepAlives: true, // ✅ Keep items alive
+                  addRepaintBoundaries: true, // ✅ Isolate repaints
                   itemBuilder: (context, index) {
                     final song = _featuredPlaylist!.songs[index];
                     return ListTile(
@@ -3750,270 +4019,282 @@ class _HomePageState extends ConsumerState<HomePage> {
     );
   }
 
-  Widget _buildArtistCard(Artist artist) {
-    final cardBackgroundColor = ref.watch(themeCardBackgroundColorProvider);
-    final iconInactiveColor = ref.watch(themeTextSecondaryColorProvider);
-    final textPrimaryColor = ref.watch(themeTextPrimaryColorProvider);
-    final textSecondaryColor = ref.watch(themeTextSecondaryColorProvider);
-    final iconActiveColor = ref.watch(themeIconActiveColorProvider);
+  // Enhanced Miniplayer with Album Colors - Matching Reference Design
+  // Replace your _buildMiniPlayer method with this code
 
-    return GestureDetector(
-      onTap: () {
-        Navigator.push(
-          context,
-          MaterialPageRoute(
-            builder: (context) => ArtistPage(artist: artist, artistName: ''),
+  Widget _buildMiniPlayer(QuickPick song, MediaItem? currentMedia) {
+    final thumbnailRadius = ref.watch(thumbnailRadiusProvider);
+
+    // Get artwork URL
+    final artworkUrl = currentMedia?.artUri?.toString() ?? song.thumbnail;
+
+    return FutureBuilder<AlbumPalette?>(
+      future: artworkUrl.isNotEmpty
+          ? AlbumColorGenerator.fromAnySource(artworkUrl).catchError((e) {
+              print('❌ Error extracting colors: $e');
+              return null;
+            })
+          : Future.value(null),
+      builder: (context, colorSnapshot) {
+        // Get theme colors as fallback
+        final themeData = Theme.of(context);
+        final surfaceColor = themeData.colorScheme.surface;
+        final onSurface = themeData.colorScheme.onSurface;
+
+        // Show loading state while extracting colors
+        if (colorSnapshot.connectionState == ConnectionState.waiting) {
+          return Container(
+            height: _miniplayerMinHeight,
+            color: surfaceColor,
+            child: Center(
+              child: CircularProgressIndicator(
+                strokeWidth: 2,
+                valueColor: AlwaysStoppedAnimation<Color>(
+                  onSurface.withOpacity(0.5),
+                ),
+              ),
+            ),
+          );
+        }
+
+        // Use album colors if available, otherwise use theme colors
+        final palette = colorSnapshot.data;
+        final dominantColor = palette?.dominant ?? surfaceColor;
+        final mutedColor = palette?.muted ?? surfaceColor.withOpacity(0.8);
+
+        // Use theme colors for text and controls
+        const titleColor = Colors.white;
+        const subtitleColor = Colors.white70;
+        const controlColor = Colors.white;
+
+        return GestureDetector(
+          onTap: () {
+            NewPlayerPage.open(
+              context,
+              song,
+              heroTag: 'miniplayer-thumbnail-${song.videoId}',
+            );
+          },
+          child: Container(
+            height: _miniplayerMinHeight,
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.centerLeft,
+                end: Alignment.centerRight,
+                colors: [
+                  dominantColor.withOpacity(0.95),
+                  mutedColor.withOpacity(0.85),
+                ],
+              ),
+            ),
+            child: StreamBuilder<PlaybackState>(
+              stream: _audioService.playbackStateStream,
+              builder: (context, playbackSnapshot) {
+                final playbackState = playbackSnapshot.data;
+                final isPlaying = playbackState?.playing ?? false;
+                final processingState =
+                    playbackState?.processingState ?? AudioProcessingState.idle;
+                final isLoading =
+                    processingState == AudioProcessingState.loading;
+
+                return Stack(
+                  children: [
+                    // Progress bar as gradient overlay
+                    StreamBuilder<Duration>(
+                      stream: _audioService.positionStream,
+                      builder: (context, positionSnapshot) {
+                        final position = positionSnapshot.data ?? Duration.zero;
+                        final duration =
+                            currentMedia?.duration ?? Duration.zero;
+                        final progress = duration.inMilliseconds > 0
+                            ? position.inMilliseconds / duration.inMilliseconds
+                            : 0.0;
+
+                        return Positioned.fill(
+                          child: Row(
+                            children: [
+                              // PLAYED portion
+                              if (progress > 0)
+                                Expanded(
+                                  flex: (progress * 100).round().clamp(1, 100),
+                                  child: Container(
+                                    decoration: BoxDecoration(
+                                      gradient: LinearGradient(
+                                        begin: Alignment.centerLeft,
+                                        end: Alignment.centerRight,
+                                        colors: [
+                                          dominantColor.withOpacity(0.95),
+                                          mutedColor.withOpacity(0.85),
+                                        ],
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              // UNPLAYED portion
+                              if (progress < 1)
+                                Expanded(
+                                  flex: ((1 - progress) * 100).round().clamp(
+                                    1,
+                                    100,
+                                  ),
+                                  child: Container(
+                                    decoration: BoxDecoration(
+                                      gradient: LinearGradient(
+                                        begin: Alignment.centerLeft,
+                                        end: Alignment.centerRight,
+                                        colors: [
+                                          dominantColor.withOpacity(0.4),
+                                          mutedColor.withOpacity(0.3),
+                                        ],
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                            ],
+                          ),
+                        );
+                      },
+                    ),
+
+                    // Main content
+                    Padding(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 8,
+                      ),
+                      child: Row(
+                        children: [
+                          // Album Art
+                          Hero(
+                            tag: 'miniplayer-thumbnail-${song.videoId}',
+                            child: ClipRRect(
+                              borderRadius: BorderRadius.circular(6),
+                              child: Container(
+                                width: 54,
+                                height: 54,
+                                color: surfaceColor,
+                                child: artworkUrl.isNotEmpty
+                                    ? buildAlbumArtImage(
+                                        artworkUrl: artworkUrl,
+                                        fit: BoxFit.cover,
+                                        errorBuilder: (_, __, ___) =>
+                                            _buildMiniThumbnailFallback(
+                                              ref,
+                                              thumbnailRadius,
+                                            ),
+                                      )
+                                    : _buildMiniThumbnailFallback(
+                                        ref,
+                                        thumbnailRadius,
+                                      ),
+                              ),
+                            ),
+                          ),
+
+                          const SizedBox(width: 14),
+
+                          // Song Info
+                          Expanded(
+                            child: Column(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  currentMedia?.title ?? song.title,
+                                  style: const TextStyle(
+                                    color: titleColor,
+                                    fontSize: 15,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                                const SizedBox(height: 4),
+                                Text(
+                                  currentMedia?.artist ?? song.artists,
+                                  style: const TextStyle(
+                                    color: subtitleColor,
+                                    fontSize: 13,
+                                  ),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ],
+                            ),
+                          ),
+
+                          const SizedBox(width: 12),
+
+                          // Play/Pause Button
+                          SizedBox(
+                            width: 40,
+                            height: 40,
+                            child: isLoading
+                                ? const Center(
+                                    child: SizedBox(
+                                      width: 24,
+                                      height: 24,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2.5,
+                                        valueColor:
+                                            AlwaysStoppedAnimation<Color>(
+                                              controlColor,
+                                            ),
+                                      ),
+                                    ),
+                                  )
+                                : IconButton(
+                                    icon: Icon(
+                                      isPlaying
+                                          ? Icons.pause
+                                          : Icons.play_arrow,
+                                      color: controlColor,
+                                      size: 28,
+                                    ),
+                                    padding: EdgeInsets.zero,
+                                    onPressed: () async {
+                                      if (isPlaying) {
+                                        await _audioService.pause();
+                                      } else {
+                                        if (processingState ==
+                                                AudioProcessingState.idle ||
+                                            processingState ==
+                                                AudioProcessingState.error) {
+                                          await _audioService.playSong(song);
+                                        } else {
+                                          await _audioService.play();
+                                        }
+                                      }
+                                    },
+                                  ),
+                          ),
+
+                          const SizedBox(width: 4),
+
+                          // Next Button
+                          SizedBox(
+                            width: 40,
+                            height: 40,
+                            child: IconButton(
+                              icon: const Icon(
+                                Icons.skip_next,
+                                color: controlColor,
+                                size: 28,
+                              ),
+                              padding: EdgeInsets.zero,
+                              onPressed: () => _audioService.skipToNext(),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                );
+              },
+            ),
           ),
         );
       },
-      child: Container(
-        width: AppSpacing.artistCardSize,
-        margin: const EdgeInsets.only(right: AppSpacing.lg),
-        child: Column(
-          children: [
-            ClipOval(
-              child: Container(
-                width: AppSpacing.artistImageSize,
-                height: AppSpacing.artistImageSize,
-                color: cardBackgroundColor,
-                child: artist.profileImage != null
-                    ? Image.network(
-                        artist.profileImage!,
-                        fit: BoxFit.cover,
-                        loadingBuilder: (context, child, loadingProgress) {
-                          if (loadingProgress == null) return child;
-                          return ShimmerLoading(
-                            child: SkeletonBox(
-                              width: AppSpacing.artistImageSize,
-                              height: AppSpacing.artistImageSize,
-                              borderRadius: AppSpacing.artistImageSize / 2,
-                            ),
-                          );
-                        },
-                        errorBuilder: (context, error, stackTrace) {
-                          return Center(
-                            child: Icon(
-                              Icons.person,
-                              color: iconInactiveColor,
-                              size: 48,
-                            ),
-                          );
-                        },
-                      )
-                    : Center(
-                        child: Icon(
-                          Icons.person,
-                          color: iconInactiveColor,
-                          size: 48,
-                        ),
-                      ),
-              ),
-            ),
-            const SizedBox(height: AppSpacing.sm),
-            Text(
-              artist.name,
-              style: AppTypography.subtitle(
-                context,
-              ).copyWith(color: textPrimaryColor),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              textAlign: TextAlign.center,
-            ),
-            const SizedBox(height: AppSpacing.xs / 2),
-            Text(
-              artist.subscribers,
-              style: AppTypography.captionSmall(
-                context,
-              ).copyWith(color: textSecondaryColor),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              textAlign: TextAlign.center,
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  // Replace the _buildMiniPlayer method in your home_page.dart
-
-  Widget _buildMiniPlayer(QuickPick song, MediaItem? currentMedia) {
-    final backgroundColor = ref.watch(themeBackgroundColorProvider);
-    final cardBackgroundColor = ref.watch(themeCardBackgroundColorProvider);
-    final textPrimaryColor = ref.watch(themeTextPrimaryColorProvider);
-    final textSecondaryColor = ref.watch(themeTextSecondaryColorProvider);
-    final iconActiveColor = ref.watch(themeIconActiveColorProvider);
-    final iconInactiveColor = ref.watch(themeTextSecondaryColorProvider);
-    final thumbnailRadius = ref.watch(thumbnailRadiusProvider);
-
-    return GestureDetector(
-      onTap: () {
-        // OPTIMIZED: Direct navigation
-        NewPlayerPage.open(
-          context,
-          song,
-          heroTag: 'miniplayer-thumbnail-${song.videoId}',
-        );
-      },
-
-      child: Container(
-        decoration: BoxDecoration(
-          color: cardBackgroundColor,
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withOpacity(0.3),
-              blurRadius: 8,
-              offset: const Offset(0, -2),
-            ),
-          ],
-        ),
-        child: StreamBuilder<PlaybackState>(
-          stream: _audioService.playbackStateStream,
-          builder: (context, playbackSnapshot) {
-            // Extract both playing state and processing state
-            final playbackState = playbackSnapshot.data;
-            final isPlaying = playbackState?.playing ?? false;
-            final processingState =
-                playbackState?.processingState ?? AudioProcessingState.idle;
-
-            return Row(
-              children: [
-                // Album Art
-                Hero(
-                  tag: 'miniplayer-thumbnail-${song.videoId}',
-                  child: Container(
-                    width: 70,
-                    height: 70,
-                    decoration: BoxDecoration(
-                      color: backgroundColor,
-                      borderRadius: BorderRadius.circular(70 * thumbnailRadius),
-                    ),
-                    child: ClipRRect(
-                      borderRadius: BorderRadius.circular(70 * thumbnailRadius),
-                      child: currentMedia?.artUri != null
-                          ? Image.network(
-                              currentMedia!.artUri.toString(),
-                              fit: BoxFit.cover,
-                              errorBuilder: (context, error, stackTrace) =>
-                                  _buildMiniThumbnailFallback(
-                                    ref,
-                                    thumbnailRadius,
-                                  ),
-                            )
-                          : song.thumbnail.isNotEmpty
-                          ? Image.network(
-                              song.thumbnail,
-                              fit: BoxFit.cover,
-                              errorBuilder: (context, error, stackTrace) =>
-                                  _buildMiniThumbnailFallback(
-                                    ref,
-                                    thumbnailRadius,
-                                  ),
-                            )
-                          : _buildMiniThumbnailFallback(ref, thumbnailRadius),
-                    ),
-                  ),
-                ),
-
-                // Song Info
-                Expanded(
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 12),
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          currentMedia?.title ?? song.title,
-                          style: AppTypography.songTitle(context).copyWith(
-                            color: textPrimaryColor,
-                            fontSize: 14,
-                            fontWeight: FontWeight.w600,
-                          ),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                        const SizedBox(height: 4),
-                        Text(
-                          currentMedia?.artist ?? song.artists,
-                          style: AppTypography.caption(
-                            context,
-                          ).copyWith(color: textSecondaryColor, fontSize: 12),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-
-                // Play/Pause Button - FIXED LOGIC
-                Container(
-                  width: 48,
-                  height: 48,
-                  margin: const EdgeInsets.only(right: 8),
-                  decoration: BoxDecoration(
-                    color: iconActiveColor.withOpacity(0.2),
-                    shape: BoxShape.circle,
-                  ),
-                  child: IconButton(
-                    icon: Icon(
-                      processingState == AudioProcessingState.loading
-                          ? Icons.hourglass_empty
-                          : isPlaying
-                          ? Icons.pause
-                          : Icons.play_arrow,
-                      color: iconActiveColor,
-                      size: 24,
-                    ),
-                    onPressed: () async {
-                      if (isPlaying) {
-                        // If playing, just pause
-                        await _audioService.pause();
-                      } else {
-                        // If paused/stopped, check if we need to reload
-                        if (processingState == AudioProcessingState.idle ||
-                            processingState == AudioProcessingState.error) {
-                          // Audio source lost - need to reload with playSong
-                          print(
-                            '🎵 [Miniplayer] Audio source lost, reloading song...',
-                          );
-                          await _audioService.playSong(song);
-                        } else {
-                          // Audio source still loaded - just resume
-                          print('▶️ [Miniplayer] Resuming playback...');
-                          await _audioService.play();
-                        }
-                      }
-                    },
-                  ),
-                ),
-
-                // Next Button
-                Container(
-                  width: 48,
-                  height: 48,
-                  margin: const EdgeInsets.only(right: 12),
-                  decoration: BoxDecoration(
-                    color: iconActiveColor.withOpacity(0.2),
-                    shape: BoxShape.circle,
-                  ),
-                  child: IconButton(
-                    icon: Icon(
-                      Icons.skip_next,
-                      color: iconActiveColor,
-                      size: 24,
-                    ),
-                    onPressed: () {
-                      _audioService.skipToNext();
-                    },
-                  ),
-                ),
-              ],
-            );
-          },
-        ),
-      ),
     );
   }
 
@@ -4047,10 +4328,13 @@ class _HomePageState extends ConsumerState<HomePage> {
 
   @override
   void dispose() {
+    _debounceTimer?.cancel(); // ✅ Cancel timer first
     _scrollController.dispose();
     _searchController.dispose();
     _searchFocusNode.dispose();
     _searchHelper.dispose();
+    _lastPlayedNotifier.dispose(); // ✅ Dispose notifier
+    _cachedMediaItem = null; // ✅ Clear cache
     super.dispose();
   }
 }

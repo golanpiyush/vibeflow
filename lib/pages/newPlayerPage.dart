@@ -5,20 +5,25 @@ import 'dart:ui';
 import 'package:device_info_plus/device_info_plus.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_riverpod/legacy.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:audio_service/audio_service.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:vibeflow/api_base/vibeflowcore.dart';
+import 'package:vibeflow/main.dart';
 import 'package:vibeflow/managers/download_manager.dart';
+import 'package:vibeflow/managers/download_state_provider.dart';
 import 'package:vibeflow/models/DBSong.dart';
 import 'package:vibeflow/models/quick_picks_model.dart';
 import 'package:vibeflow/pages/audio_equalizer_page.dart';
+import 'package:vibeflow/pages/subpages/settings/player_settings_page.dart';
 import 'package:vibeflow/pages/thoughtsScreen.dart';
 import 'package:vibeflow/services/audioGoverner.dart';
 import 'package:vibeflow/services/audio_service.dart';
 import 'package:vibeflow/services/bg_audio_handler.dart';
+import 'package:vibeflow/services/lyrics_service.dart';
 import 'package:vibeflow/utils/album_color_generator.dart';
 import 'package:vibeflow/pages/player_page.dart';
 import 'package:vibeflow/utils/material_transitions.dart';
@@ -32,6 +37,11 @@ enum ViewMode { album, lyrics }
 
 ViewMode _viewMode = ViewMode.album;
 
+final currentLyricsProvider = StateProvider<List<Map<String, dynamic>>>(
+  (ref) => [],
+);
+final currentLyricsLoadingProvider = StateProvider<bool>((ref) => false);
+
 class NewPlayerPage extends ConsumerStatefulWidget {
   final QuickPick song;
   final String? heroTag;
@@ -42,15 +52,17 @@ class NewPlayerPage extends ConsumerStatefulWidget {
   @override
   ConsumerState<NewPlayerPage> createState() => _NewPlayerPageState();
 
-  /// Static method to navigate with beta check and slide-up animation
-  static Future<void> open(
-    BuildContext context,
+  // ───────── Open with Navigator ─────────
+  static Future<void> openWithNavigator(
+    NavigatorState navigator,
     QuickPick song, {
     String? heroTag,
   }) async {
+    // Hide miniplayer before navigation
+    isMiniplayerVisible.value = false;
+
     final supabase = Supabase.instance.client;
     final userId = supabase.auth.currentUser?.id;
-
     bool useBetaPlayer = false;
 
     if (userId != null) {
@@ -64,20 +76,66 @@ class NewPlayerPage extends ConsumerStatefulWidget {
         useBetaPlayer = profile?['is_beta_tester'] ?? false;
       } catch (e) {
         print('Error checking beta status: $e');
+        useBetaPlayer = false;
       }
     }
 
-    if (context.mounted) {
-      // Use PageTransitions.instant for zero-lag navigation
-      await Navigator.push(
-        context,
-        PageTransitions.playerScale(
-          page: useBetaPlayer
-              ? NewPlayerPage(song: song, heroTag: heroTag)
-              : PlayerScreen(song: song, heroTag: heroTag),
-        ),
-      );
+    await navigator
+        .push(
+          PageTransitions.playerScale(
+            page: useBetaPlayer
+                ? NewPlayerPage(song: song, heroTag: heroTag)
+                : PlayerScreen(song: song, heroTag: heroTag),
+          ),
+        )
+        .then((_) {
+          // Restore miniplayer visibility after navigation
+          isMiniplayerVisible.value = true;
+        });
+  }
+
+  // ───────── Open with BuildContext ─────────
+  static Future<void> open(
+    BuildContext context,
+    QuickPick song, {
+    String? heroTag,
+  }) async {
+    // Hide miniplayer before navigation
+    isMiniplayerVisible.value = false;
+
+    final navigator = Navigator.of(context);
+
+    final supabase = Supabase.instance.client;
+    final userId = supabase.auth.currentUser?.id;
+    bool useBetaPlayer = false;
+
+    if (userId != null) {
+      try {
+        final profile = await supabase
+            .from('profiles')
+            .select('is_beta_tester')
+            .eq('id', userId)
+            .single();
+
+        useBetaPlayer = profile?['is_beta_tester'] ?? false;
+      } catch (e) {
+        print('Error checking beta status: $e');
+        useBetaPlayer = false;
+      }
     }
+
+    await navigator
+        .push(
+          PageTransitions.playerScale(
+            page: useBetaPlayer
+                ? NewPlayerPage(song: song, heroTag: heroTag)
+                : PlayerScreen(song: song, heroTag: heroTag),
+          ),
+        )
+        .then((_) {
+          // Restore miniplayer visibility after navigation
+          isMiniplayerVisible.value = true;
+        });
   }
 }
 
@@ -97,11 +155,14 @@ class _NewPlayerPageState extends ConsumerState<NewPlayerPage>
   String? _currentVideoId;
   String? _lastProcessedVideoId;
   String? _lastProcessedTitle;
+  Timer? _sleepTimer;
+  Duration? _sleepTimerDuration;
+  DateTime? _sleepTimerEndTime;
 
   @override
   void initState() {
     super.initState();
-
+    isMiniplayerVisible.value = false;
     _scaleController = AnimationController(
       duration: const Duration(milliseconds: 600),
       vsync: this,
@@ -302,56 +363,110 @@ class _NewPlayerPageState extends ConsumerState<NewPlayerPage>
       final androidInfo = await DeviceInfoPlugin().androidInfo;
 
       if (androidInfo.version.sdkInt >= 33) {
-        // Android 13+
-        permission = Permission.audio; // READ_MEDIA_AUDIO
+        // Android 13+ - Use audio permission
+        permission = Permission.audio;
+      } else if (androidInfo.version.sdkInt >= 30) {
+        // Android 11-12 - Use manageExternalStorage
+        permission = Permission.manageExternalStorage;
       } else {
-        // Android 12 and below
+        // Android 10 and below
         permission = Permission.storage;
       }
     } else {
       return true; // iOS / others
     }
 
+    // Check if already granted
     if (await permission.isGranted) return true;
 
-    // Explain first
+    // For Android 11+, check if we need MANAGE_EXTERNAL_STORAGE
+    if (Platform.isAndroid) {
+      final androidInfo = await DeviceInfoPlugin().androidInfo;
+      if (androidInfo.version.sdkInt >= 30 && androidInfo.version.sdkInt < 33) {
+        // Try manageExternalStorage first
+        if (await Permission.manageExternalStorage.isGranted) {
+          return true;
+        }
+      }
+    }
+
+    // Show permission dialog
     final shouldRequest = await showDialog<bool>(
       context: context,
       barrierDismissible: false,
-      builder: (context) => AlertDialog(
-        backgroundColor: const Color(0xFF0A0A0A),
-        title: const Text(
-          'Storage permission required',
-          style: TextStyle(color: Colors.white),
-        ),
-        content: const Text(
-          'VibeFlow needs access to save songs '
-          'so you can listen offline anytime.',
-          style: TextStyle(color: Colors.white70),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text(
-              'Not now',
-              style: TextStyle(color: Colors.white70),
+      builder: (context) {
+        // Get theme colors
+        final cardBg = Theme.of(context).colorScheme.surface;
+        final textColor = Theme.of(context).colorScheme.onSurface;
+
+        return AlertDialog(
+          backgroundColor: cardBg,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+          ),
+          title: Text(
+            'Storage permission required',
+            style: GoogleFonts.inter(
+              color: textColor,
+              fontWeight: FontWeight.w600,
             ),
           ),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(context, true),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.white,
-              foregroundColor: Colors.black,
-            ),
-            child: const Text('Allow'),
+          content: Text(
+            'VibeFlow needs access to save songs '
+            'so you can listen offline anytime.',
+            style: GoogleFonts.inter(color: textColor.withOpacity(0.8)),
           ),
-        ],
-      ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: Text(
+                'Not now',
+                style: GoogleFonts.inter(color: textColor.withOpacity(0.7)),
+              ),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.pop(context, true),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Theme.of(context).colorScheme.primary,
+                foregroundColor: Theme.of(context).colorScheme.onPrimary,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(8),
+                ),
+              ),
+              child: Text(
+                'Allow',
+                style: GoogleFonts.inter(fontWeight: FontWeight.w600),
+              ),
+            ),
+          ],
+        );
+      },
     );
 
     if (shouldRequest != true) return false;
 
-    final result = await permission.request();
+    // Request permission
+    var result = await permission.request();
+
+    // If initial request denied on Android 11+, try opening settings
+    if (!result.isGranted && Platform.isAndroid) {
+      final androidInfo = await DeviceInfoPlugin().androidInfo;
+
+      if (androidInfo.version.sdkInt >= 30 && androidInfo.version.sdkInt < 33) {
+        // For Android 11-12, try manageExternalStorage via settings
+        final settingsOpened = await openAppSettings();
+
+        if (settingsOpened) {
+          // Wait a bit for user to grant permission
+          await Future.delayed(const Duration(seconds: 1));
+          result = await permission.status;
+        }
+      } else if (androidInfo.version.sdkInt >= 33) {
+        // For Android 13+, audio permission should work
+        result = await Permission.audio.status;
+      }
+    }
+
     return result.isGranted;
   }
 
@@ -696,14 +811,22 @@ class _NewPlayerPageState extends ConsumerState<NewPlayerPage>
 
   @override
   Widget build(BuildContext context) {
+    // Get theme colors
+    final themeData = Theme.of(context);
+    final bgColor = themeData.scaffoldBackgroundColor;
+
     return Scaffold(
-      backgroundColor: Colors.black,
+      backgroundColor: bgColor,
       body: Container(
-        decoration: const BoxDecoration(
+        decoration: BoxDecoration(
           gradient: LinearGradient(
             begin: Alignment.topCenter,
             end: Alignment.bottomCenter,
-            colors: [Color(0xFF0A0A0A), Colors.black, Colors.black],
+            colors: [
+              bgColor,
+              bgColor.withOpacity(0.95),
+              bgColor.withOpacity(0.9),
+            ],
           ),
         ),
         child: SafeArea(
@@ -718,7 +841,6 @@ class _NewPlayerPageState extends ConsumerState<NewPlayerPage>
                   final isPlaying = playbackSnapshot.data?.playing ?? false;
                   final playbackState = playbackSnapshot.data;
 
-                  // OPTIMIZED: Single position/duration listener
                   return StreamBuilder<Duration>(
                     stream: _audioService.positionStream,
                     builder: (context, positionSnapshot) {
@@ -774,14 +896,12 @@ class _NewPlayerPageState extends ConsumerState<NewPlayerPage>
   }
 
   Widget _buildTopBar() {
+    final iconColor = Theme.of(context).colorScheme.onSurface.withOpacity(0.7);
+
     return Row(
       children: [
         IconButton(
-          icon: const Icon(
-            Icons.keyboard_arrow_down,
-            color: Colors.white70,
-            size: 24,
-          ),
+          icon: Icon(Icons.keyboard_arrow_down, color: iconColor, size: 24),
           padding: EdgeInsets.zero,
           onPressed: () {
             Navigator.pop(context);
@@ -789,7 +909,7 @@ class _NewPlayerPageState extends ConsumerState<NewPlayerPage>
         ),
         const Spacer(),
         IconButton(
-          icon: const Icon(Icons.more_vert, color: Colors.white70, size: 24),
+          icon: Icon(Icons.more_vert, color: iconColor, size: 24),
           padding: EdgeInsets.zero,
           onPressed: _showMoreOptions,
         ),
@@ -798,12 +918,19 @@ class _NewPlayerPageState extends ConsumerState<NewPlayerPage>
   }
 
   void _showMoreOptions() {
+    // Get theme colors from provider
+    final themeData = Theme.of(context);
+    final cardBg = themeData.colorScheme.surface;
+    final textPrimary = themeData.colorScheme.onSurface;
+    final textSecondary = themeData.colorScheme.onSurface.withOpacity(0.6);
+    final dividerColor = themeData.colorScheme.onSurface.withOpacity(0.1);
+
     showModalBottomSheet(
       context: context,
       backgroundColor: Colors.transparent,
       builder: (context) => Container(
         decoration: BoxDecoration(
-          color: const Color(0xFF1A1A1A),
+          color: cardBg,
           borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
         ),
         child: SafeArea(
@@ -816,11 +943,67 @@ class _NewPlayerPageState extends ConsumerState<NewPlayerPage>
                 width: 40,
                 height: 4,
                 decoration: BoxDecoration(
-                  color: Colors.white.withOpacity(0.3),
+                  color: textSecondary.withOpacity(0.5),
                   borderRadius: BorderRadius.circular(2),
                 ),
               ),
               const SizedBox(height: 20),
+
+              // Sleep Timer Option
+              ListTile(
+                leading: Container(
+                  width: 40,
+                  height: 40,
+                  decoration: BoxDecoration(
+                    color: textSecondary.withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Icon(
+                    _sleepTimer != null && _sleepTimer!.isActive
+                        ? Icons.bedtime
+                        : Icons.bedtime_outlined,
+                    color: _sleepTimer != null && _sleepTimer!.isActive
+                        ? Colors.blue.shade300
+                        : textPrimary,
+                    size: 22,
+                  ),
+                ),
+                title: Text(
+                  'Sleep Timer',
+                  style: GoogleFonts.inter(
+                    color: textPrimary,
+                    fontSize: 16,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+                subtitle: Text(
+                  _sleepTimer != null && _sleepTimer!.isActive
+                      ? 'Active: ${_getRemainingTime()}'
+                      : 'Pause music after a set time',
+                  style: GoogleFonts.inter(
+                    color: _sleepTimer != null && _sleepTimer!.isActive
+                        ? Colors.blue.shade300
+                        : textSecondary,
+                    fontSize: 13,
+                  ),
+                ),
+                trailing: Icon(
+                  Icons.arrow_forward_ios,
+                  color: textSecondary,
+                  size: 16,
+                ),
+                onTap: () {
+                  Navigator.pop(context);
+                  _showSleepTimerDialog();
+                },
+              ),
+
+              Divider(
+                color: dividerColor,
+                height: 1,
+                indent: 20,
+                endIndent: 20,
+              ),
 
               // EQ Option
               ListTile(
@@ -828,33 +1011,30 @@ class _NewPlayerPageState extends ConsumerState<NewPlayerPage>
                   width: 40,
                   height: 40,
                   decoration: BoxDecoration(
-                    color: Colors.white.withOpacity(0.1),
+                    color: textSecondary.withOpacity(0.1),
                     borderRadius: BorderRadius.circular(10),
                   ),
-                  child: const Icon(
+                  child: Icon(
                     Icons.equalizer_rounded,
-                    color: Colors.white,
+                    color: textPrimary,
                     size: 22,
                   ),
                 ),
                 title: Text(
                   'Equalizer',
                   style: GoogleFonts.inter(
-                    color: Colors.white,
+                    color: textPrimary,
                     fontSize: 16,
                     fontWeight: FontWeight.w500,
                   ),
                 ),
                 subtitle: Text(
                   'Adjust audio settings',
-                  style: GoogleFonts.inter(
-                    color: Colors.white.withOpacity(0.6),
-                    fontSize: 13,
-                  ),
+                  style: GoogleFonts.inter(color: textSecondary, fontSize: 13),
                 ),
                 trailing: Icon(
                   Icons.arrow_forward_ios,
-                  color: Colors.white.withOpacity(0.4),
+                  color: textSecondary,
                   size: 16,
                 ),
                 onTap: () {
@@ -864,7 +1044,7 @@ class _NewPlayerPageState extends ConsumerState<NewPlayerPage>
               ),
 
               Divider(
-                color: Colors.white.withOpacity(0.1),
+                color: dividerColor,
                 height: 1,
                 indent: 20,
                 endIndent: 20,
@@ -876,33 +1056,26 @@ class _NewPlayerPageState extends ConsumerState<NewPlayerPage>
                   width: 40,
                   height: 40,
                   decoration: BoxDecoration(
-                    color: Colors.white.withOpacity(0.1),
+                    color: textSecondary.withOpacity(0.1),
                     borderRadius: BorderRadius.circular(10),
                   ),
-                  child: const Icon(
-                    Icons.tune_rounded,
-                    color: Colors.white,
-                    size: 22,
-                  ),
+                  child: Icon(Icons.tune_rounded, color: textPrimary, size: 22),
                 ),
                 title: Text(
                   'Audio Governor',
                   style: GoogleFonts.inter(
-                    color: Colors.white,
+                    color: textPrimary,
                     fontSize: 16,
                     fontWeight: FontWeight.w500,
                   ),
                 ),
                 subtitle: Text(
                   'Advanced audio controls',
-                  style: GoogleFonts.inter(
-                    color: Colors.white.withOpacity(0.6),
-                    fontSize: 13,
-                  ),
+                  style: GoogleFonts.inter(color: textSecondary, fontSize: 13),
                 ),
                 trailing: Icon(
                   Icons.arrow_forward_ios,
-                  color: Colors.white.withOpacity(0.4),
+                  color: textSecondary,
                   size: 16,
                 ),
                 onTap: () {
@@ -912,7 +1085,7 @@ class _NewPlayerPageState extends ConsumerState<NewPlayerPage>
               ),
 
               Divider(
-                color: Colors.white.withOpacity(0.1),
+                color: dividerColor,
                 height: 1,
                 indent: 20,
                 endIndent: 20,
@@ -924,33 +1097,30 @@ class _NewPlayerPageState extends ConsumerState<NewPlayerPage>
                   width: 40,
                   height: 40,
                   decoration: BoxDecoration(
-                    color: Colors.white.withOpacity(0.1),
+                    color: textSecondary.withOpacity(0.1),
                     borderRadius: BorderRadius.circular(10),
                   ),
-                  child: const Icon(
+                  child: Icon(
                     Icons.playlist_add_rounded,
-                    color: Colors.white,
+                    color: textPrimary,
                     size: 22,
                   ),
                 ),
                 title: Text(
                   'Add to Playlist',
                   style: GoogleFonts.inter(
-                    color: Colors.white,
+                    color: textPrimary,
                     fontSize: 16,
                     fontWeight: FontWeight.w500,
                   ),
                 ),
                 subtitle: Text(
                   'Save to your collection',
-                  style: GoogleFonts.inter(
-                    color: Colors.white.withOpacity(0.6),
-                    fontSize: 13,
-                  ),
+                  style: GoogleFonts.inter(color: textSecondary, fontSize: 13),
                 ),
                 trailing: Icon(
                   Icons.arrow_forward_ios,
-                  color: Colors.white.withOpacity(0.4),
+                  color: textSecondary,
                   size: 16,
                 ),
                 onTap: () {
@@ -1017,7 +1187,9 @@ class _NewPlayerPageState extends ConsumerState<NewPlayerPage>
   }
 
   Widget _buildSongTitle(MediaItem? currentMedia) {
-    // ✅ CRITICAL: Show nothing if no current media
+    final textPrimary = Theme.of(context).colorScheme.onSurface;
+    final textSecondary = textPrimary.withOpacity(0.7);
+
     if (currentMedia == null) {
       return Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -1032,7 +1204,7 @@ class _NewPlayerPageState extends ConsumerState<NewPlayerPage>
                   style: GoogleFonts.inter(
                     fontSize: 38,
                     fontWeight: FontWeight.w300,
-                    color: Colors.white.withOpacity(0.5),
+                    color: textPrimary.withOpacity(0.5),
                     letterSpacing: -0.5,
                     height: 1.1,
                   ),
@@ -1044,7 +1216,6 @@ class _NewPlayerPageState extends ConsumerState<NewPlayerPage>
       );
     }
 
-    // ✅ ALWAYS use currentMedia
     final displayTitle = currentMedia.title;
     final displayArtist = currentMedia.artist ?? 'Unknown artist';
 
@@ -1061,7 +1232,7 @@ class _NewPlayerPageState extends ConsumerState<NewPlayerPage>
                 style: GoogleFonts.inter(
                   fontSize: 38,
                   fontWeight: FontWeight.w300,
-                  color: Colors.white,
+                  color: textPrimary,
                   letterSpacing: -0.5,
                   height: 1.1,
                 ),
@@ -1074,7 +1245,7 @@ class _NewPlayerPageState extends ConsumerState<NewPlayerPage>
                 style: GoogleFonts.inter(
                   fontSize: 15,
                   fontWeight: FontWeight.w500,
-                  color: Colors.white.withOpacity(0.7),
+                  color: textSecondary,
                   letterSpacing: 0.2,
                 ),
                 maxLines: 1,
@@ -1086,41 +1257,74 @@ class _NewPlayerPageState extends ConsumerState<NewPlayerPage>
 
         SongShareButton(song: widget.song),
         const SizedBox(width: 12),
-        _isCheckingLiked
-            ? const SizedBox(
+
+        // Download/Like button with provider
+        Consumer(
+          builder: (context, ref, child) {
+            final downloadState = ref.watch(downloadStateProvider);
+            final isDownloading = downloadState.containsKey(currentMedia.id);
+            final downloadProgress =
+                downloadState[currentMedia.id]?.progress ?? 0.0;
+
+            if (_isCheckingLiked || isDownloading) {
+              return SizedBox(
                 width: 48,
                 height: 48,
                 child: Center(
-                  child: SizedBox(
-                    width: 20,
-                    height: 20,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2,
-                      valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
-                    ),
-                  ),
-                ),
-              )
-            : IconButton(
-                icon: _isSavingLike
-                    ? const SizedBox(
-                        width: 26,
-                        height: 26,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2,
-                          valueColor: AlwaysStoppedAnimation<Color>(
-                            Colors.white,
+                  child: Stack(
+                    alignment: Alignment.center,
+                    children: [
+                      if (isDownloading)
+                        SizedBox(
+                          width: 26,
+                          height: 26,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2.5,
+                            value: downloadProgress,
+                            valueColor: AlwaysStoppedAnimation<Color>(
+                              textPrimary,
+                            ),
+                            backgroundColor: textSecondary.withOpacity(0.2),
+                          ),
+                        )
+                      else
+                        SizedBox(
+                          width: 20,
+                          height: 20,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            valueColor: AlwaysStoppedAnimation<Color>(
+                              textPrimary,
+                            ),
                           ),
                         ),
-                      )
-                    : Icon(
-                        _isLiked ? Icons.favorite : Icons.favorite_border,
-                        color: _isLiked ? Colors.red : Colors.white,
-                        size: 26,
-                      ),
+                    ],
+                  ),
+                ),
+              );
+            }
+
+            return AnimatedSwitcher(
+              duration: const Duration(milliseconds: 300),
+              transitionBuilder: (child, animation) {
+                return ScaleTransition(
+                  scale: animation,
+                  child: FadeTransition(opacity: animation, child: child),
+                );
+              },
+              child: IconButton(
+                key: ValueKey(_isLiked),
+                icon: Icon(
+                  _isLiked ? Icons.favorite : Icons.favorite_border,
+                  color: _isLiked ? Colors.red : textPrimary,
+                  size: 26,
+                ),
                 onPressed: _isSavingLike ? null : _toggleLike,
                 padding: EdgeInsets.zero,
               ),
+            );
+          },
+        ),
       ],
     );
   }
@@ -1130,7 +1334,6 @@ class _NewPlayerPageState extends ConsumerState<NewPlayerPage>
     bool isPlaying,
     Duration position,
   ) {
-    // ✅ CRITICAL FIX: ALWAYS use currentMedia for artwork
     final artworkUrl = currentMedia?.artUri?.toString() ?? '';
     final palette = _albumPalette;
 
@@ -1148,9 +1351,25 @@ class _NewPlayerPageState extends ConsumerState<NewPlayerPage>
 
         return Transform.scale(scale: scaleValue, child: child);
       },
-      child: _viewMode == ViewMode.lyrics
-          ? _buildLyricsView(currentMedia)
-          : _buildAlbumView(artworkUrl, palette, isPlaying, position),
+      child: AnimatedSwitcher(
+        duration: const Duration(milliseconds: 500),
+        switchInCurve: Curves.easeInOutCubic,
+        switchOutCurve: Curves.easeInOutCubic,
+        transitionBuilder: (child, animation) {
+          return FadeTransition(
+            opacity: animation,
+            child: ScaleTransition(
+              scale: Tween<double>(begin: 0.92, end: 1.0).animate(
+                CurvedAnimation(parent: animation, curve: Curves.easeOutCubic),
+              ),
+              child: child,
+            ),
+          );
+        },
+        child: _viewMode == ViewMode.lyrics
+            ? _buildLyricsView(currentMedia)
+            : _buildAlbumView(artworkUrl, palette, isPlaying, position),
+      ),
     );
   }
 
@@ -1160,6 +1379,11 @@ class _NewPlayerPageState extends ConsumerState<NewPlayerPage>
     bool isPlaying,
     Duration position,
   ) {
+    // Get theme colors
+    final themeData = Theme.of(context);
+    final surfaceVariant = themeData.colorScheme.surfaceVariant;
+    final onSurface = themeData.colorScheme.onSurface;
+
     return GestureDetector(
       onTap: () {
         if (isPlaying) {
@@ -1172,9 +1396,11 @@ class _NewPlayerPageState extends ConsumerState<NewPlayerPage>
         alignment: Alignment.center,
         clipBehavior: Clip.none,
         children: [
-          // ✅ FIXED: Static glow (doesn't rotate)
+          // Static glow (keep existing palette-based glow)
           if (palette != null)
-            Container(
+            AnimatedContainer(
+              duration: const Duration(milliseconds: 400),
+              curve: Curves.easeInOut,
               width: 380,
               height: 380,
               decoration: BoxDecoration(
@@ -1189,26 +1415,24 @@ class _NewPlayerPageState extends ConsumerState<NewPlayerPage>
               ),
             ),
 
-          // ✅ FIXED: No rotation - static album frame
+          // Album frame with smooth transitions
           _buildAlbumFrame(artworkUrl, isPlaying),
 
-          // TIME BADGE (doesn't rotate)
+          // Time badge with theme colors
           Positioned(
             bottom: -12,
-            child: Container(
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 300),
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
               decoration: BoxDecoration(
-                color: Colors.black.withOpacity(0.8),
+                color: surfaceVariant.withOpacity(0.9),
                 borderRadius: BorderRadius.circular(16),
-                border: Border.all(
-                  color: Colors.white.withOpacity(0.2),
-                  width: 1,
-                ),
+                border: Border.all(color: onSurface.withOpacity(0.2), width: 1),
               ),
               child: Text(
                 _formatDuration(position),
                 style: GoogleFonts.inter(
-                  color: Colors.white.withOpacity(0.9),
+                  color: onSurface.withOpacity(0.9),
                   fontSize: 12,
                   fontWeight: FontWeight.w400,
                   letterSpacing: 0.3,
@@ -1220,6 +1444,10 @@ class _NewPlayerPageState extends ConsumerState<NewPlayerPage>
       ),
     );
   }
+
+  // ============================================================================
+  // REPLACE _buildAlbumFrame method with this version (smooth image loading)
+  // ============================================================================
 
   Widget _buildAlbumFrame(String artworkUrl, bool isPlaying) {
     return Container(
@@ -1242,50 +1470,127 @@ class _NewPlayerPageState extends ConsumerState<NewPlayerPage>
         ],
       ),
       child: ClipRRect(
-        borderRadius: BorderRadius.circular(12),
-        child: Stack(
-          fit: StackFit.expand,
-          children: [
-            if (artworkUrl.isNotEmpty)
-              widget.heroTag != null
-                  ? Hero(
-                      tag: widget.heroTag!,
-                      child: Image.network(
-                        artworkUrl,
-                        fit: BoxFit.cover,
-                        cacheWidth: 350,
-                        cacheHeight: 350,
-                        errorBuilder: (_, __, ___) => _buildPlaceholder(),
-                      ),
-                    )
-                  : Image.network(
-                      artworkUrl,
-                      fit: BoxFit.cover,
-                      cacheWidth: 350,
-                      cacheHeight: 350,
-                      errorBuilder: (_, __, ___) => _buildPlaceholder(),
-                    )
-            else
-              _buildPlaceholder(),
+        borderRadius: BorderRadius.circular(16),
+        child: AspectRatio(
+          aspectRatio: 1.0,
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              // ✅ Smooth image transition with AnimatedSwitcher
+              if (artworkUrl.isNotEmpty)
+                AnimatedSwitcher(
+                  duration: const Duration(milliseconds: 600),
+                  switchInCurve: Curves.easeInOut,
+                  switchOutCurve: Curves.easeInOut,
+                  transitionBuilder: (child, animation) {
+                    return FadeTransition(opacity: animation, child: child);
+                  },
+                  child: widget.heroTag != null
+                      ? Hero(
+                          key: ValueKey(artworkUrl), // Key for AnimatedSwitcher
+                          tag: widget.heroTag!,
+                          child: Image.network(
+                            artworkUrl,
+                            fit: BoxFit.cover,
+                            width: double.infinity,
+                            height: double.infinity,
+                            cacheWidth: 350,
+                            cacheHeight: 350,
+                            errorBuilder: (_, __, ___) => _buildPlaceholder(),
+                            loadingBuilder: (context, child, loadingProgress) {
+                              if (loadingProgress == null) return child;
 
-            // Subtle overlay
-            Container(
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  begin: Alignment.topCenter,
-                  end: Alignment.bottomCenter,
-                  colors: [Colors.transparent, Colors.black.withOpacity(0.15)],
+                              return Stack(
+                                fit: StackFit.expand,
+                                children: [
+                                  _buildPlaceholder(),
+                                  Center(
+                                    child: CircularProgressIndicator(
+                                      value:
+                                          loadingProgress.expectedTotalBytes !=
+                                              null
+                                          ? loadingProgress
+                                                    .cumulativeBytesLoaded /
+                                                loadingProgress
+                                                    .expectedTotalBytes!
+                                          : null,
+                                      strokeWidth: 2,
+                                      valueColor:
+                                          const AlwaysStoppedAnimation<Color>(
+                                            Colors.white54,
+                                          ),
+                                    ),
+                                  ),
+                                ],
+                              );
+                            },
+                          ),
+                        )
+                      : Image.network(
+                          key: ValueKey(artworkUrl), // Key for AnimatedSwitcher
+                          artworkUrl,
+                          fit: BoxFit.cover,
+                          width: double.infinity,
+                          height: double.infinity,
+                          cacheWidth: 350,
+                          cacheHeight: 350,
+                          errorBuilder: (_, __, ___) => _buildPlaceholder(),
+                          loadingBuilder: (context, child, loadingProgress) {
+                            if (loadingProgress == null) return child;
+
+                            return Stack(
+                              fit: StackFit.expand,
+                              children: [
+                                _buildPlaceholder(),
+                                Center(
+                                  child: CircularProgressIndicator(
+                                    value:
+                                        loadingProgress.expectedTotalBytes !=
+                                            null
+                                        ? loadingProgress
+                                                  .cumulativeBytesLoaded /
+                                              loadingProgress
+                                                  .expectedTotalBytes!
+                                        : null,
+                                    strokeWidth: 2,
+                                    valueColor:
+                                        const AlwaysStoppedAnimation<Color>(
+                                          Colors.white54,
+                                        ),
+                                  ),
+                                ),
+                              ],
+                            );
+                          },
+                        ),
+                )
+              else
+                _buildPlaceholder(),
+
+              // Subtle overlay with smooth transition
+              AnimatedContainer(
+                duration: const Duration(milliseconds: 300),
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    colors: [
+                      Colors.transparent,
+                      Colors.black.withOpacity(0.15),
+                    ],
+                  ),
                 ),
               ),
-            ),
 
-            // Pause overlay
-            AnimatedOpacity(
-              opacity: isPlaying ? 0.0 : 0.5,
-              duration: const Duration(milliseconds: 200),
-              child: Container(color: Colors.black),
-            ),
-          ],
+              // Pause overlay with smooth fade
+              AnimatedOpacity(
+                opacity: isPlaying ? 0.0 : 0.5,
+                duration: const Duration(milliseconds: 300),
+                curve: Curves.easeInOut,
+                child: Container(color: Colors.black),
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -1313,22 +1618,36 @@ class _NewPlayerPageState extends ConsumerState<NewPlayerPage>
   }
 
   Widget _buildPlaybackControls(bool isPlaying, PlaybackState? playbackState) {
+    // Get theme colors
+    final themeData = Theme.of(context);
+    final primaryColor = themeData.colorScheme.primary;
+    final onPrimary = themeData.colorScheme.onPrimary;
+    final surfaceVariant = themeData.colorScheme.surfaceVariant;
+    final onSurface = themeData.colorScheme.onSurface;
+    final textSecondary = onSurface.withOpacity(0.6);
+
+    // Check if line-by-line lyrics is enabled
+    final isLineByLineEnabled = ref.watch(lineByLineLyricsEnabledProvider);
+    // Show compact lyrics in controls area whenever line-by-line is enabled
+    final showLyricsHere = isLineByLineEnabled;
+
     return Column(
       children: [
         Row(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
+            // Previous button
             Container(
               width: 44,
               height: 44,
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
-                color: Colors.white.withOpacity(0.08),
+                color: surfaceVariant.withOpacity(0.5),
               ),
               child: IconButton(
-                icon: const Icon(
+                icon: Icon(
                   Icons.skip_previous_rounded,
-                  color: Colors.white,
+                  color: onSurface,
                   size: 26,
                 ),
                 onPressed: () => _audioService.skipToPrevious(),
@@ -1336,17 +1655,19 @@ class _NewPlayerPageState extends ConsumerState<NewPlayerPage>
               ),
             ),
             const SizedBox(width: 24),
+
+            // Play/Pause button
             GestureDetector(
               onTap: () => _audioService.playPause(),
               child: Container(
                 width: 68,
                 height: 68,
                 decoration: BoxDecoration(
-                  color: Colors.white,
+                  color: primaryColor,
                   shape: BoxShape.circle,
                   boxShadow: [
                     BoxShadow(
-                      color: Colors.white.withOpacity(0.15),
+                      color: primaryColor.withOpacity(0.3),
                       blurRadius: 15,
                       spreadRadius: 1,
                     ),
@@ -1358,25 +1679,23 @@ class _NewPlayerPageState extends ConsumerState<NewPlayerPage>
                       : isPlaying
                       ? Icons.pause_rounded
                       : Icons.play_arrow_rounded,
-                  color: Colors.black,
+                  color: onPrimary,
                   size: 34,
                 ),
               ),
             ),
             const SizedBox(width: 24),
+
+            // Next button
             Container(
               width: 44,
               height: 44,
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
-                color: Colors.white.withOpacity(0.08),
+                color: surfaceVariant.withOpacity(0.5),
               ),
               child: IconButton(
-                icon: const Icon(
-                  Icons.skip_next_rounded,
-                  color: Colors.white,
-                  size: 26,
-                ),
+                icon: Icon(Icons.skip_next_rounded, color: onSurface, size: 26),
                 onPressed: () => _audioService.skipToNext(),
                 padding: EdgeInsets.zero,
               ),
@@ -1385,7 +1704,7 @@ class _NewPlayerPageState extends ConsumerState<NewPlayerPage>
         ),
         const SizedBox(height: 24),
 
-        // Shuffle and Repeat
+        // Shuffle and Repeat buttons
         Row(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
@@ -1398,7 +1717,7 @@ class _NewPlayerPageState extends ConsumerState<NewPlayerPage>
                 return IconButton(
                   icon: Icon(
                     Icons.shuffle_rounded,
-                    color: isShuffleEnabled ? Colors.white : Colors.white60,
+                    color: isShuffleEnabled ? primaryColor : textSecondary,
                     size: 22,
                   ),
                   onPressed: () async {
@@ -1422,8 +1741,8 @@ class _NewPlayerPageState extends ConsumerState<NewPlayerPage>
                         ? Icons.repeat_one_rounded
                         : Icons.repeat_rounded,
                     color: loopMode != LoopMode.off
-                        ? Colors.white
-                        : Colors.white60,
+                        ? primaryColor
+                        : textSecondary,
                     size: 22,
                   ),
                   onPressed: () {
@@ -1445,15 +1764,70 @@ class _NewPlayerPageState extends ConsumerState<NewPlayerPage>
             ),
           ],
         ),
-        const SizedBox(height: 28),
 
-        // OPTIMIZED: Progress slider with single stream
+        // ✨ NEW: Line-by-line lyrics area (before slider)
+        if (showLyricsHere) ...[
+          StreamBuilder<MediaItem?>(
+            stream: _audioService.mediaItemStream,
+            builder: (context, snapshot) {
+              final currentMedia = snapshot.data;
+
+              print(
+                '🎵 [Compact Lyrics] Rendering - hasMedia: ${currentMedia != null}',
+              );
+
+              if (currentMedia == null) {
+                return Container(
+                  height: 80,
+                  color: Colors.red.withOpacity(0.1), // Debug: Show area
+                  child: Center(
+                    child: Text(
+                      'Waiting for media...',
+                      style: GoogleFonts.inter(
+                        color: Colors.white.withOpacity(0.5),
+                        fontSize: 12,
+                      ),
+                    ),
+                  ),
+                );
+              }
+
+              return Container(
+                height: 80,
+                padding: const EdgeInsets.symmetric(horizontal: 20),
+                decoration: BoxDecoration(
+                  color: const Color.fromARGB(
+                    0,
+                    0,
+                    187,
+                    212,
+                  ), // Debug: Show area
+                ),
+                child: CompactLineByLineLyrics(
+                  title: currentMedia.title,
+                  artist: currentMedia.artist ?? 'Unknown Artist',
+                  videoId: currentMedia.id,
+                  duration: currentMedia.duration?.inSeconds ?? 0,
+                  accentColor: _albumPalette?.vibrant ?? primaryColor,
+                ),
+              );
+            },
+          ),
+        ],
+
+        // Progress slider
         _buildOptimizedSlider(),
       ],
     );
   }
 
   Widget _buildOptimizedSlider() {
+    // Get theme colors
+    final themeData = Theme.of(context);
+    final primaryColor = themeData.colorScheme.primary;
+    final onSurface = themeData.colorScheme.onSurface;
+    final textSecondary = onSurface.withOpacity(0.6);
+
     return StreamBuilder<Duration>(
       stream: _audioService.positionStream,
       builder: (context, positionSnapshot) {
@@ -1470,6 +1844,7 @@ class _NewPlayerPageState extends ConsumerState<NewPlayerPage>
               padding: const EdgeInsets.symmetric(horizontal: 1),
               child: Column(
                 children: [
+                  // Time labels
                   Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 12),
                     child: Row(
@@ -1478,7 +1853,7 @@ class _NewPlayerPageState extends ConsumerState<NewPlayerPage>
                         Text(
                           _formatDuration(position),
                           style: GoogleFonts.inter(
-                            color: Colors.white.withOpacity(0.6),
+                            color: textSecondary,
                             fontSize: 11,
                             fontWeight: FontWeight.w400,
                           ),
@@ -1486,7 +1861,7 @@ class _NewPlayerPageState extends ConsumerState<NewPlayerPage>
                         Text(
                           _formatDuration(validDuration),
                           style: GoogleFonts.inter(
-                            color: Colors.white.withOpacity(0.6),
+                            color: textSecondary,
                             fontSize: 11,
                             fontWeight: FontWeight.w400,
                           ),
@@ -1495,6 +1870,8 @@ class _NewPlayerPageState extends ConsumerState<NewPlayerPage>
                     ),
                   ),
                   const SizedBox(height: 8),
+
+                  // Slider
                   SliderTheme(
                     data: SliderThemeData(
                       trackHeight: 2.5,
@@ -1504,10 +1881,10 @@ class _NewPlayerPageState extends ConsumerState<NewPlayerPage>
                       overlayShape: const RoundSliderOverlayShape(
                         overlayRadius: 14,
                       ),
-                      activeTrackColor: Colors.white,
-                      inactiveTrackColor: Colors.white.withOpacity(0.2),
-                      thumbColor: Colors.white,
-                      overlayColor: Colors.white.withOpacity(0.2),
+                      activeTrackColor: primaryColor,
+                      inactiveTrackColor: textSecondary.withOpacity(0.2),
+                      thumbColor: primaryColor,
+                      overlayColor: primaryColor.withOpacity(0.2),
                     ),
                     child: Slider(
                       value: validDuration.inMilliseconds > 0
@@ -1539,7 +1916,17 @@ class _NewPlayerPageState extends ConsumerState<NewPlayerPage>
     required String label,
     required bool isSelected,
     required VoidCallback onTap,
+    required Color primaryColor,
+    required Color onSurface,
+    required Color surfaceVariant,
   }) {
+    final selectedBg = primaryColor.withOpacity(0.15);
+    final unselectedBg = surfaceVariant.withOpacity(0.3);
+    final selectedBorder = primaryColor.withOpacity(0.3);
+    final unselectedBorder = onSurface.withOpacity(0.08);
+    final selectedColor = primaryColor;
+    final unselectedColor = onSurface.withOpacity(0.5);
+
     return GestureDetector(
       onTap: onTap,
       child: AnimatedContainer(
@@ -1547,14 +1934,10 @@ class _NewPlayerPageState extends ConsumerState<NewPlayerPage>
         curve: Curves.easeInOut,
         padding: const EdgeInsets.symmetric(vertical: 12),
         decoration: BoxDecoration(
-          color: isSelected
-              ? Colors.white.withOpacity(0.15)
-              : Colors.white.withOpacity(0.04),
+          color: isSelected ? selectedBg : unselectedBg,
           borderRadius: BorderRadius.circular(12),
           border: Border.all(
-            color: isSelected
-                ? Colors.white.withOpacity(0.3)
-                : Colors.white.withOpacity(0.08),
+            color: isSelected ? selectedBorder : unselectedBorder,
             width: 1,
           ),
         ),
@@ -1563,16 +1946,14 @@ class _NewPlayerPageState extends ConsumerState<NewPlayerPage>
           children: [
             Icon(
               icon,
-              color: isSelected ? Colors.white : Colors.white.withOpacity(0.5),
+              color: isSelected ? selectedColor : unselectedColor,
               size: 20,
             ),
             const SizedBox(width: 8),
             Text(
               label,
               style: GoogleFonts.inter(
-                color: isSelected
-                    ? Colors.white
-                    : Colors.white.withOpacity(0.5),
+                color: isSelected ? selectedColor : unselectedColor,
                 fontSize: 14,
                 fontWeight: isSelected ? FontWeight.w600 : FontWeight.w400,
                 letterSpacing: 0.3,
@@ -1583,16 +1964,25 @@ class _NewPlayerPageState extends ConsumerState<NewPlayerPage>
       ),
     );
   }
+
   // UPDATED PARTS ONLY
 
   Widget _buildRadioLyricsToggle() {
+    // Get theme colors
+    final themeData = Theme.of(context);
+    final primaryColor = themeData.colorScheme.primary;
+    final onSurface = themeData.colorScheme.onSurface;
+    final surfaceVariant = themeData.colorScheme.surfaceVariant;
+    final dividerColor = onSurface.withOpacity(0.1);
+
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        Container(height: 1, color: Colors.white.withOpacity(0.1)),
+        Container(height: 1, color: dividerColor),
         const SizedBox(height: 18),
         Row(
           children: [
+            // Radio button
             Expanded(
               child: _buildToggleButton(
                 icon: Icons.radio_rounded,
@@ -1601,7 +1991,7 @@ class _NewPlayerPageState extends ConsumerState<NewPlayerPage>
                 onTap: () {
                   setState(() => _viewMode = ViewMode.album);
 
-                  // ✅ Ensure handler has radio loaded
+                  // Ensure handler has radio loaded
                   final handler = getAudioHandler();
                   if (handler != null) {
                     final customState =
@@ -1611,7 +2001,6 @@ class _NewPlayerPageState extends ConsumerState<NewPlayerPage>
                         customState['radio_queue'] as List<dynamic>? ?? [];
 
                     if (radioQueue.isEmpty) {
-                      // Get current song and trigger radio load
                       final currentMedia = handler.mediaItem.value;
                       if (currentMedia != null) {
                         final currentSong = QuickPick(
@@ -1622,7 +2011,6 @@ class _NewPlayerPageState extends ConsumerState<NewPlayerPage>
                           duration: currentMedia.duration?.inSeconds.toString(),
                         );
 
-                        // ✅ Trigger load using public method
                         handler.loadRadioImmediately(currentSong);
                       }
                     }
@@ -1641,9 +2029,14 @@ class _NewPlayerPageState extends ConsumerState<NewPlayerPage>
                     ),
                   );
                 },
+                primaryColor: primaryColor,
+                onSurface: onSurface,
+                surfaceVariant: surfaceVariant,
               ),
             ),
             const SizedBox(width: 12),
+
+            // Lyrics button
             Expanded(
               child: _buildToggleButton(
                 icon: Icons.lyrics_rounded,
@@ -1658,6 +2051,9 @@ class _NewPlayerPageState extends ConsumerState<NewPlayerPage>
                     }
                   });
                 },
+                primaryColor: primaryColor,
+                onSurface: onSurface,
+                surfaceVariant: surfaceVariant,
               ),
             ),
           ],
@@ -1670,7 +2066,6 @@ class _NewPlayerPageState extends ConsumerState<NewPlayerPage>
   Future<void> _toggleLike() async {
     if (_isSavingLike) return;
 
-    // Get current playing song
     final currentMedia = _audioService.currentMediaItem;
     if (currentMedia == null) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -1685,19 +2080,29 @@ class _NewPlayerPageState extends ConsumerState<NewPlayerPage>
       final downloadService = DownloadService.instance;
 
       if (_isLiked) {
+        // Remove from downloads
         final success = await downloadService.deleteDownload(currentMedia.id);
 
         if (success && mounted) {
           setState(() => _isLiked = false);
 
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Removed from saved songs'),
-              backgroundColor: Colors.red,
+            SnackBar(
+              content: Row(
+                children: [
+                  const Icon(Icons.check_circle, color: Colors.white, size: 20),
+                  const SizedBox(width: 12),
+                  const Text('Removed from saved songs'),
+                ],
+              ),
+              backgroundColor: Colors.red.shade700,
+              duration: const Duration(seconds: 2),
+              behavior: SnackBarBehavior.floating,
             ),
           );
         }
       } else {
+        // Add to downloads with progress tracking
         final hasPermission = await _ensureStoragePermission();
         if (!hasPermission) {
           ScaffoldMessenger.of(context).showSnackBar(
@@ -1706,9 +2111,11 @@ class _NewPlayerPageState extends ConsumerState<NewPlayerPage>
           return;
         }
 
+        // ✅ Start tracking download in provider
+        ref.read(downloadStateProvider.notifier).startDownload(currentMedia.id);
+
         final core = VibeFlowCore();
 
-        // ✅ Create QuickPick from current media
         final currentSong = QuickPick(
           videoId: currentMedia.id,
           title: currentMedia.title,
@@ -1723,24 +2130,47 @@ class _NewPlayerPageState extends ConsumerState<NewPlayerPage>
         );
 
         if (audioUrl == null || audioUrl.isEmpty) {
+          ref
+              .read(downloadStateProvider.notifier)
+              .failDownload(currentMedia.id);
           throw Exception('Failed to get audio URL');
         }
 
+        // ✅ Download with progress callback
         final result = await downloadService.downloadSong(
           videoId: currentSong.videoId,
           audioUrl: audioUrl,
           title: currentSong.title,
           artist: currentSong.artists,
           thumbnailUrl: currentSong.thumbnail,
+          onProgress: (progress) {
+            // Update progress in provider
+            ref
+                .read(downloadStateProvider.notifier)
+                .updateProgress(currentMedia.id, progress);
+          },
         );
+
+        // ✅ Complete download tracking
+        ref
+            .read(downloadStateProvider.notifier)
+            .completeDownload(currentMedia.id);
 
         if (result.success && mounted) {
           setState(() => _isLiked = true);
 
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Added to saved songs'),
-              backgroundColor: Colors.green,
+            SnackBar(
+              content: Row(
+                children: [
+                  const Icon(Icons.check_circle, color: Colors.white, size: 20),
+                  const SizedBox(width: 12),
+                  const Text('Added to saved songs'),
+                ],
+              ),
+              backgroundColor: Colors.green.shade700,
+              duration: const Duration(seconds: 2),
+              behavior: SnackBarBehavior.floating,
             ),
           );
         } else {
@@ -1748,9 +2178,26 @@ class _NewPlayerPageState extends ConsumerState<NewPlayerPage>
         }
       }
     } catch (e) {
+      // ✅ Clean up download state on error
+      final currentMedia = _audioService.currentMediaItem;
+      if (currentMedia != null) {
+        ref.read(downloadStateProvider.notifier).failDownload(currentMedia.id);
+      }
+
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed: $e'), backgroundColor: Colors.red),
+          SnackBar(
+            content: Row(
+              children: [
+                const Icon(Icons.error_outline, color: Colors.white, size: 20),
+                const SizedBox(width: 12),
+                Expanded(child: Text('Failed: $e')),
+              ],
+            ),
+            backgroundColor: Colors.red.shade700,
+            duration: const Duration(seconds: 3),
+            behavior: SnackBarBehavior.floating,
+          ),
         );
       }
     } finally {
@@ -1758,7 +2205,6 @@ class _NewPlayerPageState extends ConsumerState<NewPlayerPage>
     }
   }
 
-  // ✅ UPDATE: Lyrics view should use current song
   Widget _buildLyricsView(MediaItem? currentMedia) {
     if (currentMedia == null) {
       return const Center(
@@ -1776,24 +2222,52 @@ class _NewPlayerPageState extends ConsumerState<NewPlayerPage>
         videoId: currentMedia.id,
         duration: currentMedia.duration?.inSeconds ?? 0,
         accentColor: _albumPalette?.vibrant ?? Colors.white,
+        // ✅ NEW: Show shimmers while loading
+        loadingBuilder: (context) => _buildLyricsLoadingShimmer(),
+        // ✅ NEW: Enable auto-translation for CJK languages
+        autoTranslate: true,
       ),
     );
   }
 
-  // ==================== HELPER METHOD FOR NEXT SONG PLACEHOLDER ====================
-  Widget _buildQueueItemPlaceholder() {
-    return Container(
-      width: 44,
-      height: 44,
-      decoration: BoxDecoration(
-        color: const Color(0xFF2A2A2A),
-        borderRadius: BorderRadius.circular(6),
-      ),
-      child: const Icon(
-        Icons.music_note_rounded,
-        color: Colors.white38,
-        size: 20,
-      ),
+  Widget _buildLyricsLoadingShimmer() {
+    // Get theme colors
+    final themeData = Theme.of(context);
+    final shimmerBase = themeData.colorScheme.onSurface.withOpacity(0.05);
+    final shimmerHighlight = themeData.colorScheme.onSurface.withOpacity(0.15);
+
+    return ListView.builder(
+      padding: const EdgeInsets.symmetric(vertical: 40, horizontal: 24),
+      itemCount: 8,
+      itemBuilder: (context, index) {
+        return Padding(
+          padding: const EdgeInsets.only(bottom: 24),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              _ShimmerLine(
+                width:
+                    MediaQuery.of(context).size.width *
+                    (0.6 + (index % 3) * 0.15),
+                height: 20,
+                delay: Duration(milliseconds: index * 100),
+                baseColor: shimmerBase,
+                highlightColor: shimmerHighlight,
+              ),
+              const SizedBox(height: 8),
+              _ShimmerLine(
+                width:
+                    MediaQuery.of(context).size.width *
+                    (0.5 + (index % 2) * 0.2),
+                height: 16,
+                delay: Duration(milliseconds: index * 100 + 50),
+                baseColor: shimmerBase,
+                highlightColor: shimmerHighlight,
+              ),
+            ],
+          ),
+        );
+      },
     );
   }
 
@@ -1872,9 +2346,345 @@ class _NewPlayerPageState extends ConsumerState<NewPlayerPage>
     }
   }
 
+  // ✅ NEW: Show sleep timer dialog with duration options
+  void _showSleepTimerDialog() {
+    final durations = [
+      {'label': '15 minutes', 'duration': const Duration(minutes: 15)},
+      {'label': '30 minutes', 'duration': const Duration(minutes: 30)},
+      {'label': '45 minutes', 'duration': const Duration(minutes: 45)},
+      {'label': '1 hour', 'duration': const Duration(hours: 1)},
+      {'label': '2 hours', 'duration': const Duration(hours: 2)},
+      {'label': '3 hours', 'duration': const Duration(hours: 3)},
+      {'label': '5 hours', 'duration': const Duration(hours: 5)},
+    ];
+
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (context) => Container(
+        decoration: BoxDecoration(
+          color: const Color(0xFF1A1A1A),
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+        ),
+        child: SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // Drag handle
+              const SizedBox(height: 12),
+              Container(
+                width: 40,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: Colors.white.withOpacity(0.3),
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+              const SizedBox(height: 20),
+
+              // Header
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 20),
+                child: Row(
+                  children: [
+                    Icon(
+                      Icons.bedtime_rounded,
+                      color: Colors.blue.shade300,
+                      size: 24,
+                    ),
+                    const SizedBox(width: 12),
+                    Text(
+                      'Sleep Timer',
+                      style: GoogleFonts.inter(
+                        color: Colors.white,
+                        fontSize: 20,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 8),
+
+              // Active timer info (if running)
+              if (_sleepTimer != null && _sleepTimer!.isActive)
+                Container(
+                  margin: const EdgeInsets.symmetric(
+                    horizontal: 20,
+                    vertical: 12,
+                  ),
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.blue.shade900.withOpacity(0.3),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(
+                      color: Colors.blue.shade300.withOpacity(0.3),
+                      width: 1,
+                    ),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(
+                        Icons.timer_rounded,
+                        color: Colors.blue.shade300,
+                        size: 20,
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Text(
+                          'Timer active: Music will pause in ${_getRemainingTime()}',
+                          style: GoogleFonts.inter(
+                            color: Colors.blue.shade300,
+                            fontSize: 13,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+
+              const SizedBox(height: 8),
+
+              // Duration options
+              ...durations.map((item) {
+                final duration = item['duration'] as Duration;
+                final label = item['label'] as String;
+                final isActive =
+                    _sleepTimerDuration == duration &&
+                    _sleepTimer != null &&
+                    _sleepTimer!.isActive;
+
+                return Column(
+                  children: [
+                    ListTile(
+                      leading: Container(
+                        width: 40,
+                        height: 40,
+                        decoration: BoxDecoration(
+                          color: isActive
+                              ? Colors.blue.shade300.withOpacity(0.2)
+                              : Colors.white.withOpacity(0.05),
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: Icon(
+                          Icons.access_time_rounded,
+                          color: isActive
+                              ? Colors.blue.shade300
+                              : Colors.white.withOpacity(0.7),
+                          size: 20,
+                        ),
+                      ),
+                      title: Text(
+                        label,
+                        style: GoogleFonts.inter(
+                          color: isActive ? Colors.blue.shade300 : Colors.white,
+                          fontSize: 16,
+                          fontWeight: isActive
+                              ? FontWeight.w600
+                              : FontWeight.w500,
+                        ),
+                      ),
+                      trailing: isActive
+                          ? Icon(
+                              Icons.check_circle,
+                              color: Colors.blue.shade300,
+                              size: 20,
+                            )
+                          : null,
+                      onTap: () {
+                        Navigator.pop(context);
+                        _startSleepTimer(duration, label);
+                      },
+                    ),
+                    if (item != durations.last)
+                      Divider(
+                        color: Colors.white.withOpacity(0.05),
+                        height: 1,
+                        indent: 20,
+                        endIndent: 20,
+                      ),
+                  ],
+                );
+              }).toList(),
+
+              // Cancel timer button (if active)
+              if (_sleepTimer != null && _sleepTimer!.isActive) ...[
+                const SizedBox(height: 8),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 20),
+                  child: SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton.icon(
+                      onPressed: () {
+                        Navigator.pop(context);
+                        _cancelSleepTimer();
+                      },
+                      icon: const Icon(Icons.cancel_outlined, size: 20),
+                      label: Text(
+                        'Cancel Timer',
+                        style: GoogleFonts.inter(
+                          fontSize: 15,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.red.shade700,
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+
+              const SizedBox(height: 20),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  // ✅ NEW: Start sleep timer
+  void _startSleepTimer(Duration duration, String label) {
+    // Cancel existing timer if any
+    _sleepTimer?.cancel();
+
+    setState(() {
+      _sleepTimerDuration = duration;
+      _sleepTimerEndTime = DateTime.now().add(duration);
+    });
+
+    _sleepTimer = Timer(duration, () {
+      if (mounted) {
+        // Pause the music
+        _audioService.pause();
+
+        // Show notification
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Row(
+              children: [
+                Icon(Icons.bedtime, color: Colors.blue.shade300, size: 20),
+                const SizedBox(width: 12),
+                const Expanded(
+                  child: Text(
+                    'Sleep timer ended - Music paused',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            backgroundColor: Colors.blue.shade900,
+            duration: const Duration(seconds: 3),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+
+        setState(() {
+          _sleepTimer = null;
+          _sleepTimerDuration = null;
+          _sleepTimerEndTime = null;
+        });
+      }
+    });
+
+    // Show confirmation
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Row(
+          children: [
+            Icon(Icons.bedtime, color: Colors.blue.shade300, size: 20),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                'Sleep timer set for $label',
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ),
+          ],
+        ),
+        backgroundColor: Colors.blue.shade900,
+        duration: const Duration(seconds: 2),
+        behavior: SnackBarBehavior.floating,
+        action: SnackBarAction(
+          label: 'CANCEL',
+          textColor: Colors.white,
+          onPressed: _cancelSleepTimer,
+        ),
+      ),
+    );
+  }
+
+  // ✅ NEW: Cancel sleep timer
+  void _cancelSleepTimer() {
+    _sleepTimer?.cancel();
+
+    if (mounted) {
+      setState(() {
+        _sleepTimer = null;
+        _sleepTimerDuration = null;
+        _sleepTimerEndTime = null;
+      });
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Row(
+            children: [
+              const Icon(Icons.cancel_outlined, color: Colors.white, size: 20),
+              const SizedBox(width: 12),
+              const Expanded(
+                child: Text(
+                  'Sleep timer cancelled',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          backgroundColor: Colors.grey.shade800,
+          duration: const Duration(seconds: 2),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    }
+  }
+
+  // ✅ NEW: Get remaining time for display
+  String _getRemainingTime() {
+    if (_sleepTimerEndTime == null) return '';
+
+    final remaining = _sleepTimerEndTime!.difference(DateTime.now());
+
+    if (remaining.isNegative) return '0 min';
+
+    final hours = remaining.inHours;
+    final minutes = remaining.inMinutes.remainder(60);
+
+    if (hours > 0) {
+      return '$hours hr ${minutes} min';
+    } else {
+      return '$minutes min';
+    }
+  }
+
   @override
   void dispose() {
+    isMiniplayerVisible.value = true; // ✅ ADD THIS - was missing!
     _mediaItemDebounceTimer?.cancel();
+    _sleepTimer?.cancel();
 
     if (_rotationController.isAnimating) {
       _rotationController.stop();
@@ -1973,6 +2783,89 @@ class _GlowingAlbumRingState extends State<GlowingAlbumRing>
                   blurRadius: 35,
                   spreadRadius: 4,
                 ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _ShimmerLine extends StatefulWidget {
+  final double width;
+  final double height;
+  final Duration delay;
+  final Color baseColor;
+  final Color highlightColor;
+
+  const _ShimmerLine({
+    required this.width,
+    required this.height,
+    this.delay = Duration.zero,
+    required this.baseColor,
+    required this.highlightColor,
+  });
+
+  @override
+  State<_ShimmerLine> createState() => _ShimmerLineState();
+}
+
+class _ShimmerLineState extends State<_ShimmerLine>
+    with SingleTickerProviderStateMixin {
+  late AnimationController _controller;
+  late Animation<double> _animation;
+
+  @override
+  void initState() {
+    super.initState();
+
+    _controller = AnimationController(
+      duration: const Duration(milliseconds: 1500),
+      vsync: this,
+    );
+
+    _animation = Tween<double>(
+      begin: -1.0,
+      end: 2.0,
+    ).animate(CurvedAnimation(parent: _controller, curve: Curves.easeInOut));
+
+    // Start animation after delay
+    Future.delayed(widget.delay, () {
+      if (mounted) {
+        _controller.repeat();
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _animation,
+      builder: (context, child) {
+        return Container(
+          width: widget.width,
+          height: widget.height,
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(4),
+            gradient: LinearGradient(
+              begin: Alignment.centerLeft,
+              end: Alignment.centerRight,
+              stops: [
+                max(0.0, _animation.value - 0.3),
+                max(0.0, _animation.value),
+                min(1.0, _animation.value + 0.3),
+              ],
+              colors: [
+                widget.baseColor,
+                widget.highlightColor,
+                widget.baseColor,
               ],
             ),
           ),

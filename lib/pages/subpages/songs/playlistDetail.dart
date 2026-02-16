@@ -1,16 +1,26 @@
-// lib/pages/subpages/songs/playlistDetail.dart - FIXED VERSION
+// lib/pages/subpages/songs/playlistDetail.dart - FIXED WITH MATERIAL WIDGET & VISUALIZER
+import 'dart:io';
+import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'dart:io';
 import 'package:image_picker/image_picker.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:path/path.dart' as path;
+import 'package:vibeflow/constants/app_spacing.dart';
+import 'package:vibeflow/constants/app_typography.dart';
+import 'package:vibeflow/constants/theme_colors.dart';
 import 'package:vibeflow/models/DBSong.dart';
 import 'package:vibeflow/models/playlist_model.dart';
 import 'package:vibeflow/models/quick_picks_model.dart';
-import 'package:vibeflow/models/song_model.dart';
+import 'package:vibeflow/pages/appearance_page.dart';
+import 'package:vibeflow/pages/subpages/songs/albums_grid_page.dart';
+import 'package:vibeflow/pages/subpages/songs/artists_grid_page.dart';
+import 'package:vibeflow/pages/subpages/songs/playlists.dart';
+import 'package:vibeflow/pages/subpages/songs/savedSongs.dart';
 import 'package:vibeflow/providers/playlist_providers.dart';
 import 'package:vibeflow/services/bg_audio_handler.dart';
+import 'package:vibeflow/utils/material_transitions.dart';
+import 'package:vibeflow/utils/page_transitions.dart';
 
 class PlaylistDetailScreen extends ConsumerStatefulWidget {
   final int playlistId;
@@ -28,286 +38,458 @@ class _PlaylistDetailScreenState extends ConsumerState<PlaylistDetailScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final themeData = Theme.of(context);
     final playlistAsync = ref.watch(
       playlistWithSongsProvider(widget.playlistId),
     );
 
     return Scaffold(
-      backgroundColor: Colors.black,
-      body: playlistAsync.when(
-        data: (playlistWithSongs) {
-          if (playlistWithSongs == null) {
-            return const Center(
-              child: Text(
-                'Playlist not found',
-                style: TextStyle(color: Colors.white),
-              ),
-            );
-          }
+      backgroundColor: themeData.scaffoldBackgroundColor,
+      body: SafeArea(
+        child: Row(
+          children: [
+            // ── Vertical sidebar ───────────────────────────────────────────
+            _buildSidebar(context, themeData),
 
-          return _buildContent(playlistWithSongs);
-        },
-        loading: () =>
-            const Center(child: CircularProgressIndicator(color: Colors.white)),
-        error: (error, stack) => Center(
-          child: Padding(
-            padding: const EdgeInsets.all(24),
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(
-                  Icons.error_outline,
-                  size: 60,
-                  color: Colors.red.withOpacity(0.7),
-                ),
-                const SizedBox(height: 16),
-                Text(
-                  'Error loading playlist',
-                  style: TextStyle(
-                    color: Colors.white.withOpacity(0.9),
-                    fontSize: 18,
-                  ),
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  error.toString().length > 100
-                      ? '${error.toString().substring(0, 100)}...'
-                      : error.toString(),
-                  style: TextStyle(
-                    color: Colors.white.withOpacity(0.6),
-                    fontSize: 12,
-                  ),
-                  textAlign: TextAlign.center,
-                  maxLines: 3,
-                ),
-              ],
+            // ── Main content ───────────────────────────────────────────────
+            Expanded(
+              child: playlistAsync.when(
+                data: (playlistWithSongs) {
+                  if (playlistWithSongs == null) {
+                    return _buildNotFoundState(themeData);
+                  }
+                  return _buildContent(playlistWithSongs, themeData);
+                },
+                loading: () => _buildLoadingState(themeData),
+                error: (error, stack) => _buildErrorState(error, themeData),
+              ),
             ),
-          ),
+          ],
+        ),
+      ),
+
+      // ── Floating Action Buttons ───────────────────────────────────────
+      floatingActionButton: playlistAsync.maybeWhen(
+        data: (data) => data != null ? _buildFABs(data, themeData) : null,
+        orElse: () => null,
+      ),
+    );
+  }
+
+  // ── Sidebar ───────────────────────────────────────────────────────────────
+
+  Widget _buildSidebar(BuildContext context, ThemeData themeData) {
+    final double availableHeight = MediaQuery.of(context).size.height;
+    final iconColor = themeData.iconTheme.color ?? Colors.white;
+    final textColor = themeData.textTheme.bodyLarge?.color ?? Colors.white;
+
+    final labelStyle = AppTypography.sidebarLabel(
+      context,
+    ).copyWith(color: textColor);
+
+    return SizedBox(
+      width: 65,
+      height: availableHeight,
+      child: SingleChildScrollView(
+        child: Column(
+          children: [
+            const SizedBox(height: 200),
+
+            // Appearance icon
+            _buildSidebarItem(
+              icon: Icons.edit_square,
+              label: '',
+              isActive: false,
+              iconColor: iconColor,
+              labelStyle: labelStyle,
+              onTap: () =>
+                  Navigator.of(context).pushFade(const AppearancePage()),
+            ),
+            const SizedBox(height: 32),
+
+            _buildSidebarItem(
+              label: 'Quick picks',
+              iconColor: iconColor,
+              labelStyle: labelStyle,
+              onTap: () {
+                Navigator.of(context).popUntil((route) => route.isFirst);
+              },
+            ),
+            const SizedBox(height: 24),
+
+            _buildSidebarItem(
+              label: 'Songs',
+              iconColor: iconColor,
+              labelStyle: labelStyle,
+              onTap: () {
+                Navigator.of(context).pushReplacementMaterialVertical(
+                  const SavedSongsScreen(),
+                  slideUp: true,
+                  enableParallax: true,
+                );
+              },
+            ),
+            const SizedBox(height: 24),
+
+            _buildSidebarItem(
+              label: 'Playlists',
+              iconColor: iconColor,
+              labelStyle: labelStyle,
+              onTap: () {
+                Navigator.of(context).pushReplacementMaterialVertical(
+                  const IntegratedPlaylistsScreen(),
+                  slideUp: true,
+                  enableParallax: true,
+                );
+              },
+            ),
+            const SizedBox(height: 24),
+
+            _buildSidebarItem(
+              label: 'Artists',
+              iconColor: iconColor,
+              labelStyle: labelStyle,
+              onTap: () {
+                Navigator.of(context).pushReplacementMaterialVertical(
+                  const ArtistsGridPage(),
+                  slideUp: true,
+                  enableParallax: true,
+                );
+              },
+            ),
+            const SizedBox(height: 24),
+
+            _buildSidebarItem(
+              label: 'Albums',
+              iconColor: iconColor,
+              labelStyle: labelStyle,
+              onTap: () {
+                Navigator.of(context).pushReplacementMaterialVertical(
+                  const AlbumsGridPage(),
+                  slideUp: true,
+                );
+              },
+            ),
+            const SizedBox(height: 40),
+          ],
         ),
       ),
     );
   }
 
-  Widget _buildContent(PlaylistWithSongs playlistWithSongs) {
+  Widget _buildSidebarItem({
+    IconData? icon,
+    required String label,
+    bool isActive = false,
+    required Color iconColor,
+    required TextStyle labelStyle,
+    VoidCallback? onTap,
+  }) {
+    return GestureDetector(
+      onTap: onTap,
+      child: SizedBox(
+        width: 72,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (icon != null) ...[
+              Icon(
+                icon,
+                size: 28,
+                color: iconColor.withOpacity(isActive ? 1.0 : 0.6),
+              ),
+              const SizedBox(height: 16),
+            ],
+            RotatedBox(
+              quarterTurns: -1,
+              child: Text(
+                label,
+                textAlign: TextAlign.center,
+                style: labelStyle.copyWith(fontSize: 16),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ── Content ───────────────────────────────────────────────────────────────
+
+  Widget _buildContent(
+    PlaylistWithSongs playlistWithSongs,
+    ThemeData themeData,
+  ) {
     final playlist = playlistWithSongs.playlist;
     final songs = playlistWithSongs.songs;
 
-    return CustomScrollView(
-      slivers: [
-        // Header with cover
-        SliverAppBar(
-          expandedHeight: 320,
-          pinned: true,
-          backgroundColor: Colors.black,
-          leading: IconButton(
-            icon: const Icon(Icons.arrow_back, color: Colors.white),
-            onPressed: () => Navigator.pop(context),
-          ),
-          actions: [
-            IconButton(
-              icon: const Icon(Icons.more_vert, color: Colors.white),
-              onPressed: () => _showPlaylistOptions(playlist),
-            ),
-          ],
-          flexibleSpace: FlexibleSpaceBar(
-            background: _buildPlaylistHeader(playlist, songs),
-          ),
-        ),
-
-        // Controls
-        SliverToBoxAdapter(
-          child: Padding(
-            padding: const EdgeInsets.all(16),
-            child: Row(
-              children: [
-                Expanded(
-                  child: ElevatedButton.icon(
-                    onPressed: songs.isEmpty ? null : () => _playAll(songs),
-                    icon: const Icon(Icons.play_arrow),
-                    label: const Text('Play All'),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFFFF4458),
-                      foregroundColor: Colors.white,
-                      disabledBackgroundColor: Colors.white.withOpacity(0.1),
-                      padding: const EdgeInsets.symmetric(vertical: 14),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(24),
-                      ),
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 12),
-                IconButton(
-                  icon: Icon(
-                    _isReordering ? Icons.check : Icons.swap_vert,
-                    color: Colors.white,
-                  ),
-                  onPressed: songs.isEmpty
-                      ? null
-                      : () {
-                          setState(() {
-                            _isReordering = !_isReordering;
-                          });
-                        },
-                ),
-              ],
-            ),
-          ),
-        ),
-
-        // Song list
-        if (songs.isEmpty)
-          SliverFillRemaining(
-            child: Center(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Icon(
-                    Icons.music_note_outlined,
-                    size: 80,
-                    color: Colors.white.withOpacity(0.3),
-                  ),
-                  const SizedBox(height: 16),
-                  Text(
-                    'No songs yet',
-                    style: TextStyle(
-                      color: Colors.white.withOpacity(0.7),
-                      fontSize: 18,
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    'Add songs to start listening',
-                    style: TextStyle(
-                      color: Colors.white.withOpacity(0.5),
-                      fontSize: 14,
-                    ),
-                  ),
-                ],
+    return Column(
+      children: [
+        const SizedBox(height: AppSpacing.xxxl),
+        _buildTopBar(playlist, themeData),
+        Expanded(
+          child: CustomScrollView(
+            slivers: [
+              // Playlist header
+              SliverToBoxAdapter(
+                child: _buildPlaylistHeader(playlist, songs, themeData),
               ),
-            ),
-          )
-        else if (_isReordering)
-          SliverReorderableList(
-            itemCount: songs.length,
-            onReorder: (oldIndex, newIndex) =>
-                _reorderSong(playlist.id!, songs, oldIndex, newIndex),
-            itemBuilder: (context, index) {
-              final song = songs[index];
-              return ReorderableDragStartListener(
-                key: Key(song.videoId),
-                index: index,
-                child: _buildSongTile(song, index, playlist.id!, true),
-              );
-            },
-          )
-        else
-          SliverList(
-            delegate: SliverChildBuilderDelegate((context, index) {
-              final song = songs[index];
-              return _buildSongTile(song, index, playlist.id!, false);
-            }, childCount: songs.length),
+
+              // Controls
+              SliverToBoxAdapter(child: _buildControls(songs, themeData)),
+
+              // Song list
+              if (songs.isEmpty)
+                SliverFillRemaining(child: _buildEmptySongsState(themeData))
+              else if (_isReordering)
+                SliverReorderableList(
+                  itemCount: songs.length,
+                  onReorder: (oldIndex, newIndex) =>
+                      _reorderSong(playlist.id!, songs, oldIndex, newIndex),
+                  itemBuilder: (context, index) {
+                    final song = songs[index];
+                    return ReorderableDragStartListener(
+                      key: Key(song.videoId),
+                      index: index,
+                      child: _buildSongTile(
+                        song,
+                        index,
+                        playlist.id!,
+                        true,
+                        themeData,
+                      ),
+                    );
+                  },
+                )
+              else
+                SliverList(
+                  delegate: SliverChildBuilderDelegate((context, index) {
+                    final song = songs[index];
+                    return _buildSongTile(
+                      song,
+                      index,
+                      playlist.id!,
+                      false,
+                      themeData,
+                    );
+                  }, childCount: songs.length),
+                ),
+
+              // Bottom padding
+              const SliverToBoxAdapter(child: SizedBox(height: 120)),
+            ],
           ),
+        ),
       ],
     );
   }
 
-  Widget _buildPlaylistHeader(Playlist playlist, List<DbSong> songs) {
+  Widget _buildTopBar(Playlist playlist, ThemeData themeData) {
+    final textColor = themeData.textTheme.bodyLarge?.color ?? Colors.white;
+    final iconColor = themeData.iconTheme.color ?? Colors.white;
+
+    final pageTitleStyle = AppTypography.pageTitle(
+      context,
+    ).copyWith(color: textColor);
+
     return Container(
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topCenter,
-          end: Alignment.bottomCenter,
-          colors: [const Color(0xFF6B4CE8).withOpacity(0.8), Colors.black],
-        ),
-      ),
-      child: SafeArea(
-        child: SingleChildScrollView(
-          // ✅ FIX
-          physics: const NeverScrollableScrollPhysics(),
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(16, 60, 16, 16),
-            child: Column(
-              mainAxisSize: MainAxisSize.min, // ✅ IMPORTANT
-              children: [
-                // Cover image
-                GestureDetector(
-                  onTap: () => _changeCover(playlist),
-                  child: SizedBox(
-                    width: 180,
-                    height: 180,
-                    child: ClipRRect(
-                      borderRadius: BorderRadius.circular(12),
-                      child: playlist.coverImagePath != null
-                          ? Image.file(
-                              File(playlist.coverImagePath!),
-                              fit: BoxFit.cover,
-                            )
-                          : songs.isNotEmpty && songs.first.thumbnail.isNotEmpty
-                          ? Image.network(
-                              songs.first.thumbnail,
-                              fit: BoxFit.cover,
-                            )
-                          : _buildCoverPlaceholder(),
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 20),
-
-                Text(
-                  playlist.name,
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 28,
-                    fontWeight: FontWeight.bold,
-                  ),
-                  textAlign: TextAlign.center,
-                  maxLines: 2, // ✅ EXTRA SAFETY
-                  overflow: TextOverflow.ellipsis,
-                ),
-
-                if (playlist.description?.isNotEmpty == true) ...[
-                  const SizedBox(height: 8),
-                  Text(
-                    playlist.description!,
-                    style: TextStyle(
-                      color: Colors.white.withOpacity(0.7),
-                      fontSize: 14,
-                    ),
-                    textAlign: TextAlign.center,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ],
-
-                const SizedBox(height: 12),
-
-                Text(
-                  '${playlist.songCount} songs • ${_formatDuration(playlist.totalDuration)}',
-                  style: TextStyle(
-                    color: Colors.white.withOpacity(0.6),
-                    fontSize: 13,
-                  ),
-                ),
-              ],
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          IconButton(
+            onPressed: () => Navigator.of(context).pop(),
+            icon: Icon(Icons.arrow_back, color: iconColor, size: 28),
+          ),
+          Expanded(
+            child: Align(
+              alignment: Alignment.centerRight,
+              child: Text(
+                playlist.name,
+                style: pageTitleStyle.copyWith(fontSize: 20),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
             ),
           ),
-        ),
+          IconButton(
+            icon: Icon(Icons.more_vert, color: iconColor, size: 24),
+            onPressed: () => _showPlaylistOptions(playlist, themeData),
+          ),
+        ],
       ),
     );
   }
 
-  Widget _buildCoverPlaceholder() {
+  Widget _buildPlaylistHeader(
+    Playlist playlist,
+    List<DbSong> songs,
+    ThemeData themeData,
+  ) {
+    final textPrimary = themeData.textTheme.bodyLarge?.color ?? Colors.white;
+    final textSecondary =
+        themeData.textTheme.bodyMedium?.color ?? Colors.white70;
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(
+        AppSpacing.lg,
+        AppSpacing.md,
+        AppSpacing.lg,
+        AppSpacing.lg,
+      ),
+      child: Column(
+        children: [
+          // Cover image
+          GestureDetector(
+            onTap: () => _changeCover(playlist, themeData),
+            child: Container(
+              width: 200,
+              height: 200,
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(12),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withOpacity(0.3),
+                    blurRadius: 20,
+                    offset: const Offset(0, 10),
+                  ),
+                ],
+              ),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(12),
+                child: playlist.coverImagePath != null
+                    ? Image.file(
+                        File(playlist.coverImagePath!),
+                        fit: BoxFit.cover,
+                        errorBuilder: (_, __, ___) =>
+                            _buildCoverPlaceholder(themeData),
+                      )
+                    : (songs.isNotEmpty && songs.first.thumbnail.isNotEmpty
+                          ? Image.network(
+                              songs.first.thumbnail,
+                              fit: BoxFit.cover,
+                              errorBuilder: (_, __, ___) =>
+                                  _buildCoverPlaceholder(themeData),
+                            )
+                          : _buildCoverPlaceholder(themeData)),
+              ),
+            ),
+          ),
+          const SizedBox(height: 20),
+
+          // Playlist name
+          Text(
+            playlist.name,
+            style: AppTypography.songTitle(
+              context,
+            ).copyWith(color: textPrimary, fontWeight: FontWeight.bold),
+            textAlign: TextAlign.center,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+          ),
+
+          if (playlist.description?.isNotEmpty == true) ...[
+            const SizedBox(height: 8),
+            Text(
+              playlist.description!,
+              style: AppTypography.body(context).copyWith(color: textSecondary),
+              textAlign: TextAlign.center,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ],
+
+          const SizedBox(height: 12),
+
+          Text(
+            '${playlist.songCount} songs • ${_formatDuration(playlist.totalDuration)}',
+            style: AppTypography.caption(
+              context,
+            ).copyWith(color: textSecondary.withOpacity(0.8)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildCoverPlaceholder(ThemeData themeData) {
+    final primaryColor = themeData.primaryColor;
+
     return Container(
       decoration: BoxDecoration(
         gradient: LinearGradient(
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
-          colors: [const Color(0xFF6B4CE8), const Color(0xFF8B6CE8)],
+          colors: [
+            primaryColor.withOpacity(0.6),
+            primaryColor.withOpacity(0.9),
+          ],
         ),
       ),
-      child: const Center(
-        child: Icon(Icons.playlist_play, size: 80, color: Colors.white),
+      child: Center(
+        child: Icon(
+          Icons.playlist_play,
+          size: 80,
+          color: Colors.white.withOpacity(0.9),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildControls(List<DbSong> songs, ThemeData themeData) {
+    final primaryColor = themeData.primaryColor;
+    final backgroundColor = themeData.scaffoldBackgroundColor;
+    final textColor = themeData.textTheme.bodyLarge?.color ?? Colors.white;
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(
+        horizontal: AppSpacing.lg,
+        vertical: AppSpacing.md,
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: ElevatedButton.icon(
+              onPressed: songs.isEmpty ? null : () => _playAll(songs),
+              icon: const Icon(Icons.play_arrow, size: 22),
+              label: const Text('Play All'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: primaryColor,
+                foregroundColor: backgroundColor,
+                disabledBackgroundColor: textColor.withOpacity(0.1),
+                padding: const EdgeInsets.symmetric(vertical: 16),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(24),
+                ),
+                textStyle: const TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(width: 12),
+          Container(
+            decoration: BoxDecoration(
+              color: textColor.withOpacity(0.1),
+              shape: BoxShape.circle,
+            ),
+            child: IconButton(
+              icon: Icon(
+                _isReordering ? Icons.check : Icons.swap_vert,
+                color: textColor,
+                size: 24,
+              ),
+              onPressed: songs.isEmpty
+                  ? null
+                  : () {
+                      setState(() {
+                        _isReordering = !_isReordering;
+                      });
+                    },
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -317,55 +499,280 @@ class _PlaylistDetailScreenState extends ConsumerState<PlaylistDetailScreen> {
     int index,
     int playlistId,
     bool showDragHandle,
+    ThemeData themeData,
   ) {
-    return ListTile(
-      key: Key(song.videoId),
-      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-      leading: showDragHandle
-          ? const Icon(Icons.drag_handle, color: Colors.white54)
-          : Container(
-              width: 50,
-              height: 50,
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(6),
-                image: song.thumbnail.isNotEmpty
-                    ? DecorationImage(
-                        image: NetworkImage(song.thumbnail),
-                        fit: BoxFit.cover,
-                      )
-                    : null,
-                color: Colors.white12,
+    final textPrimary = themeData.textTheme.bodyLarge?.color ?? Colors.white;
+    final textSecondary =
+        themeData.textTheme.bodyMedium?.color ?? Colors.white70;
+    final primaryColor = themeData.primaryColor;
+    final cardBg = themeData.cardColor;
+
+    return Container(
+      margin: const EdgeInsets.symmetric(
+        horizontal: AppSpacing.lg,
+        vertical: 4,
+      ),
+      child: Material(
+        color: Colors.transparent,
+        borderRadius: BorderRadius.circular(12),
+        child: StreamBuilder<String?>(
+          stream: _getCurrentPlayingSongStream(),
+          builder: (context, snapshot) {
+            final currentVideoId = snapshot.data;
+            final isCurrentlyPlaying = currentVideoId == song.videoId;
+
+            return InkWell(
+              borderRadius: BorderRadius.circular(12),
+              onTap: showDragHandle ? null : () => _playSong(song, index),
+              child: Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 8,
+                ),
+                decoration: BoxDecoration(
+                  color: isCurrentlyPlaying
+                      ? primaryColor.withOpacity(0.1)
+                      : Colors.transparent,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Row(
+                  children: [
+                    // Leading
+                    if (showDragHandle)
+                      Icon(Icons.drag_handle, color: textSecondary, size: 24)
+                    else
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(8),
+                        child: Container(
+                          width: 50,
+                          height: 50,
+                          decoration: BoxDecoration(color: cardBg),
+                          child: song.thumbnail.isNotEmpty
+                              ? Image.network(
+                                  song.thumbnail,
+                                  fit: BoxFit.cover,
+                                  errorBuilder: (_, __, ___) => Icon(
+                                    Icons.music_note,
+                                    color: textSecondary,
+                                  ),
+                                )
+                              : Icon(Icons.music_note, color: textSecondary),
+                        ),
+                      ),
+                    const SizedBox(width: 12),
+
+                    // Title and subtitle
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            song.title,
+                            style: AppTypography.body(context).copyWith(
+                              color: isCurrentlyPlaying
+                                  ? primaryColor
+                                  : textPrimary,
+                              fontWeight: isCurrentlyPlaying
+                                  ? FontWeight.w600
+                                  : FontWeight.w500,
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            song.artistsString,
+                            style: AppTypography.caption(context).copyWith(
+                              color: isCurrentlyPlaying
+                                  ? primaryColor.withOpacity(0.8)
+                                  : textSecondary,
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ],
+                      ),
+                    ),
+
+                    // Trailing
+                    if (!showDragHandle)
+                      if (isCurrentlyPlaying)
+                        Container(
+                          width: 28,
+                          height: 28,
+                          margin: const EdgeInsets.only(left: 8),
+                          child: _MiniMusicVisualizer(color: primaryColor),
+                        )
+                      else
+                        IconButton(
+                          icon: Icon(
+                            Icons.more_vert,
+                            color: textSecondary,
+                            size: 20,
+                          ),
+                          onPressed: () =>
+                              _showSongOptions(song, playlistId, themeData),
+                        ),
+                  ],
+                ),
               ),
-              child: song.thumbnail.isEmpty
-                  ? const Icon(Icons.music_note, color: Colors.white54)
-                  : null,
-            ),
-      title: Text(
-        song.title,
-        style: const TextStyle(color: Colors.white, fontSize: 15),
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
+            );
+          },
+        ),
       ),
-      subtitle: Text(
-        song.artistsString,
-        style: TextStyle(color: Colors.white.withOpacity(0.6), fontSize: 13),
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
-      ),
-      trailing: !showDragHandle
-          ? IconButton(
-              icon: const Icon(Icons.more_vert, color: Colors.white54),
-              onPressed: () => _showSongOptions(song, playlistId),
-            )
-          : null,
-      onTap: showDragHandle ? null : () => _playSong(song, index),
     );
   }
 
-  void _showPlaylistOptions(Playlist playlist) {
+  Stream<String?> _getCurrentPlayingSongStream() {
+    final handler = getAudioHandler();
+    if (handler == null) {
+      return Stream.value(null);
+    }
+    return handler.mediaItem.map((item) => item?.id);
+  }
+
+  // ── States ────────────────────────────────────────────────────────────────
+
+  Widget _buildLoadingState(ThemeData themeData) {
+    final primaryColor = themeData.primaryColor;
+    return Center(child: CircularProgressIndicator(color: primaryColor));
+  }
+
+  Widget _buildNotFoundState(ThemeData themeData) {
+    final textSecondary =
+        themeData.textTheme.bodyMedium?.color ?? Colors.white70;
+
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(
+            Icons.playlist_remove,
+            size: 80,
+            color: textSecondary.withOpacity(0.5),
+          ),
+          const SizedBox(height: 16),
+          Text(
+            'Playlist not found',
+            style: AppTypography.subtitle(
+              context,
+            ).copyWith(color: textSecondary),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildErrorState(Object error, ThemeData themeData) {
+    final textPrimary = themeData.textTheme.bodyLarge?.color ?? Colors.white;
+    final textSecondary =
+        themeData.textTheme.bodyMedium?.color ?? Colors.white70;
+    final errorColor = themeData.colorScheme.error;
+
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              Icons.error_outline,
+              size: 60,
+              color: errorColor.withOpacity(0.7),
+            ),
+            const SizedBox(height: 16),
+            Text(
+              'Error loading playlist',
+              style: AppTypography.subtitle(
+                context,
+              ).copyWith(color: textPrimary),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              error.toString().length > 100
+                  ? '${error.toString().substring(0, 100)}...'
+                  : error.toString(),
+              style: AppTypography.caption(
+                context,
+              ).copyWith(color: textSecondary),
+              textAlign: TextAlign.center,
+              maxLines: 3,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildEmptySongsState(ThemeData themeData) {
+    final textSecondary =
+        themeData.textTheme.bodyMedium?.color ?? Colors.white70;
+
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(
+            Icons.music_note_outlined,
+            size: 80,
+            color: textSecondary.withOpacity(0.3),
+          ),
+          const SizedBox(height: 16),
+          Text(
+            'No songs yet',
+            style: AppTypography.subtitle(
+              context,
+            ).copyWith(color: textSecondary),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'Add songs to start listening',
+            style: AppTypography.caption(
+              context,
+            ).copyWith(color: textSecondary.withOpacity(0.7)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildFABs(PlaylistWithSongs playlistWithSongs, ThemeData themeData) {
+    final primaryColor = themeData.primaryColor;
+    final backgroundColor = themeData.scaffoldBackgroundColor;
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 40.0),
+      child: FloatingActionButton(
+        heroTag: 'reorder_songs',
+        onPressed: playlistWithSongs.songs.isEmpty
+            ? null
+            : () {
+                setState(() {
+                  _isReordering = !_isReordering;
+                });
+              },
+        backgroundColor: playlistWithSongs.songs.isEmpty
+            ? primaryColor.withOpacity(0.3)
+            : primaryColor,
+        child: Icon(
+          _isReordering ? Icons.check : Icons.swap_vert,
+          color: backgroundColor,
+        ),
+      ),
+    );
+  }
+
+  // ── Actions ───────────────────────────────────────────────────────────────
+
+  void _showPlaylistOptions(Playlist playlist, ThemeData themeData) {
+    final cardBg = themeData.cardColor;
+    final textPrimary = themeData.textTheme.bodyLarge?.color ?? Colors.white;
+    final errorColor = themeData.colorScheme.error;
+
     showModalBottomSheet(
       context: context,
-      backgroundColor: const Color(0xFF1A1A1A),
+      backgroundColor: cardBg,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
@@ -374,36 +781,30 @@ class _PlaylistDetailScreenState extends ConsumerState<PlaylistDetailScreen> {
           mainAxisSize: MainAxisSize.min,
           children: [
             ListTile(
-              leading: const Icon(Icons.edit, color: Colors.white),
-              title: const Text(
-                'Edit Details',
-                style: TextStyle(color: Colors.white),
-              ),
+              leading: Icon(Icons.edit, color: textPrimary),
+              title: Text('Edit Details', style: TextStyle(color: textPrimary)),
               onTap: () {
                 Navigator.pop(context);
-                _editPlaylist(playlist);
+                _editPlaylist(playlist, themeData);
               },
             ),
             ListTile(
-              leading: const Icon(Icons.image, color: Colors.white),
-              title: const Text(
-                'Change Cover',
-                style: TextStyle(color: Colors.white),
-              ),
+              leading: Icon(Icons.image, color: textPrimary),
+              title: Text('Change Cover', style: TextStyle(color: textPrimary)),
               onTap: () {
                 Navigator.pop(context);
-                _changeCover(playlist);
+                _changeCover(playlist, themeData);
               },
             ),
             ListTile(
-              leading: const Icon(Icons.delete, color: Colors.red),
-              title: const Text(
+              leading: Icon(Icons.delete, color: errorColor),
+              title: Text(
                 'Delete Playlist',
-                style: TextStyle(color: Colors.red),
+                style: TextStyle(color: errorColor),
               ),
               onTap: () {
                 Navigator.pop(context);
-                _deletePlaylist(playlist);
+                _deletePlaylist(playlist, themeData);
               },
             ),
           ],
@@ -412,10 +813,14 @@ class _PlaylistDetailScreenState extends ConsumerState<PlaylistDetailScreen> {
     );
   }
 
-  void _showSongOptions(DbSong song, int playlistId) {
+  void _showSongOptions(DbSong song, int playlistId, ThemeData themeData) {
+    final cardBg = themeData.cardColor;
+    final textPrimary = themeData.textTheme.bodyLarge?.color ?? Colors.white;
+    final errorColor = themeData.colorScheme.error;
+
     showModalBottomSheet(
       context: context,
-      backgroundColor: const Color(0xFF1A1A1A),
+      backgroundColor: cardBg,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
@@ -424,13 +829,10 @@ class _PlaylistDetailScreenState extends ConsumerState<PlaylistDetailScreen> {
           mainAxisSize: MainAxisSize.min,
           children: [
             ListTile(
-              leading: const Icon(
-                Icons.remove_circle_outline,
-                color: Colors.red,
-              ),
-              title: const Text(
+              leading: Icon(Icons.remove_circle_outline, color: errorColor),
+              title: Text(
                 'Remove from Playlist',
-                style: TextStyle(color: Colors.white),
+                style: TextStyle(color: textPrimary),
               ),
               onTap: () {
                 Navigator.pop(context);
@@ -443,37 +845,52 @@ class _PlaylistDetailScreenState extends ConsumerState<PlaylistDetailScreen> {
     );
   }
 
-  Future<void> _editPlaylist(Playlist playlist) async {
+  Future<void> _editPlaylist(Playlist playlist, ThemeData themeData) async {
     final nameController = TextEditingController(text: playlist.name);
     final descController = TextEditingController(text: playlist.description);
+
+    final cardBg = themeData.cardColor;
+    final textPrimary = themeData.textTheme.bodyLarge?.color ?? Colors.white;
+    final textSecondary =
+        themeData.textTheme.bodyMedium?.color ?? Colors.white70;
+    final primaryColor = themeData.primaryColor;
 
     final result = await showDialog<Map<String, String>>(
       context: context,
       builder: (context) => AlertDialog(
-        backgroundColor: const Color(0xFF2A2A2A),
-        title: const Text(
+        backgroundColor: cardBg,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Text(
           'Edit Playlist',
-          style: TextStyle(color: Colors.white),
+          style: AppTypography.subtitle(
+            context,
+          ).copyWith(color: textPrimary, fontWeight: FontWeight.bold),
         ),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             TextField(
               controller: nameController,
-              style: const TextStyle(color: Colors.white),
-              decoration: const InputDecoration(
+              style: TextStyle(color: textPrimary),
+              decoration: InputDecoration(
                 labelText: 'Name',
-                labelStyle: TextStyle(color: Colors.white70),
+                labelStyle: TextStyle(color: textSecondary),
+                focusedBorder: UnderlineInputBorder(
+                  borderSide: BorderSide(color: primaryColor),
+                ),
               ),
             ),
             const SizedBox(height: 16),
             TextField(
               controller: descController,
-              style: const TextStyle(color: Colors.white),
+              style: TextStyle(color: textPrimary),
               maxLines: 3,
-              decoration: const InputDecoration(
+              decoration: InputDecoration(
                 labelText: 'Description',
-                labelStyle: TextStyle(color: Colors.white70),
+                labelStyle: TextStyle(color: textSecondary),
+                focusedBorder: UnderlineInputBorder(
+                  borderSide: BorderSide(color: primaryColor),
+                ),
               ),
             ),
           ],
@@ -481,10 +898,7 @@ class _PlaylistDetailScreenState extends ConsumerState<PlaylistDetailScreen> {
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
-            child: const Text(
-              'Cancel',
-              style: TextStyle(color: Colors.white70),
-            ),
+            child: Text('Cancel', style: TextStyle(color: textSecondary)),
           ),
           TextButton(
             onPressed: () {
@@ -493,10 +907,7 @@ class _PlaylistDetailScreenState extends ConsumerState<PlaylistDetailScreen> {
                 'description': descController.text,
               });
             },
-            child: const Text(
-              'Save',
-              style: TextStyle(color: Color(0xFFFF4458)),
-            ),
+            child: Text('Save', style: TextStyle(color: primaryColor)),
           ),
         ],
       ),
@@ -514,7 +925,7 @@ class _PlaylistDetailScreenState extends ConsumerState<PlaylistDetailScreen> {
     }
   }
 
-  Future<void> _changeCover(Playlist playlist) async {
+  Future<void> _changeCover(Playlist playlist, ThemeData themeData) async {
     final ImagePicker picker = ImagePicker();
     final XFile? image = await picker.pickImage(
       source: ImageSource.gallery,
@@ -544,30 +955,34 @@ class _PlaylistDetailScreenState extends ConsumerState<PlaylistDetailScreen> {
     }
   }
 
-  Future<void> _deletePlaylist(Playlist playlist) async {
+  Future<void> _deletePlaylist(Playlist playlist, ThemeData themeData) async {
+    final cardBg = themeData.cardColor;
+    final textPrimary = themeData.textTheme.bodyLarge?.color ?? Colors.white;
+    final textSecondary =
+        themeData.textTheme.bodyMedium?.color ?? Colors.white70;
+    final errorColor = themeData.colorScheme.error;
+
     final confirm = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        backgroundColor: const Color(0xFF2A2A2A),
-        title: const Text(
+        backgroundColor: cardBg,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Text(
           'Delete Playlist?',
-          style: TextStyle(color: Colors.white),
+          style: AppTypography.subtitle(context).copyWith(color: textPrimary),
         ),
         content: Text(
           'This will permanently delete "${playlist.name}" and remove all songs from it.',
-          style: TextStyle(color: Colors.white.withOpacity(0.8)),
+          style: AppTypography.body(context).copyWith(color: textSecondary),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
-            child: const Text(
-              'Cancel',
-              style: TextStyle(color: Colors.white70),
-            ),
+            child: Text('Cancel', style: TextStyle(color: textSecondary)),
           ),
           TextButton(
             onPressed: () => Navigator.pop(context, true),
-            child: const Text('Delete', style: TextStyle(color: Colors.red)),
+            child: Text('Delete', style: TextStyle(color: errorColor)),
           ),
         ],
       ),
@@ -608,6 +1023,7 @@ class _PlaylistDetailScreenState extends ConsumerState<PlaylistDetailScreen> {
 
   Future<void> _removeSong(DbSong song, int playlistId) async {
     final repo = await ref.read(playlistRepositoryFutureProvider.future);
+    final iconActive = ref.read(themeIconActiveColorProvider);
 
     if (song.id != null) {
       await repo.removeSongFromPlaylist(
@@ -618,9 +1034,9 @@ class _PlaylistDetailScreenState extends ConsumerState<PlaylistDetailScreen> {
       ref.invalidate(playlistWithSongsProvider(playlistId));
 
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Removed from playlist'),
-          backgroundColor: Colors.green,
+        SnackBar(
+          content: const Text('Removed from playlist'),
+          backgroundColor: iconActive,
           behavior: SnackBarBehavior.floating,
         ),
       );
@@ -634,18 +1050,16 @@ class _PlaylistDetailScreenState extends ConsumerState<PlaylistDetailScreen> {
       return;
     }
 
-    // Convert DbSong list to QuickPick list
     final quickPicks = songs.map((dbSong) {
       return QuickPick(
         videoId: dbSong.videoId,
         title: dbSong.title,
         artists: dbSong.artistsString,
         thumbnail: dbSong.thumbnail,
-        duration: dbSong.duration, // Use duration field directly
+        duration: dbSong.duration,
       );
     }).toList();
 
-    // Play the entire playlist from the beginning
     handler.playPlaylistQueue(
       quickPicks,
       startIndex: 0,
@@ -671,18 +1085,16 @@ class _PlaylistDetailScreenState extends ConsumerState<PlaylistDetailScreen> {
 
       final songs = playlistWithSongs.songs;
 
-      // Convert DbSong list to QuickPick list
       final quickPicks = songs.map((dbSong) {
         return QuickPick(
           videoId: dbSong.videoId,
           title: dbSong.title,
           artists: dbSong.artistsString,
           thumbnail: dbSong.thumbnail,
-          duration: dbSong.duration, // Use duration field directly
+          duration: dbSong.duration,
         );
       }).toList();
 
-      // Play the playlist starting from the selected index
       handler.playPlaylistQueue(
         quickPicks,
         startIndex: index,
@@ -701,5 +1113,85 @@ class _PlaylistDetailScreenState extends ConsumerState<PlaylistDetailScreen> {
       return '${hours}h ${minutes}m';
     }
     return '${minutes}m';
+  }
+}
+
+// ─── Mini Music Visualizer Widget ─────────────────────────────────────────────
+
+class _MiniMusicVisualizer extends StatefulWidget {
+  final Color color;
+
+  const _MiniMusicVisualizer({required this.color});
+
+  @override
+  State<_MiniMusicVisualizer> createState() => _MiniMusicVisualizerState();
+}
+
+class _MiniMusicVisualizerState extends State<_MiniMusicVisualizer>
+    with SingleTickerProviderStateMixin {
+  late AnimationController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 600),
+    )..repeat();
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _controller,
+      builder: (context, child) {
+        final value = _controller.value;
+        return Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: [
+            _buildBar(_getBarHeight(value, 0)),
+            const SizedBox(width: 2.5),
+            _buildBar(_getBarHeight(value, 0.25)),
+            const SizedBox(width: 2.5),
+            _buildBar(_getBarHeight(value, 0.5)),
+            const SizedBox(width: 2.5),
+            _buildBar(_getBarHeight(value, 0.75)),
+          ],
+        );
+      },
+    );
+  }
+
+  double _getBarHeight(double animationValue, double offset) {
+    // Create a wave effect with phase offset for each bar
+    final phase = (animationValue + offset) % 1.0;
+    // Use sine wave for smooth, natural motion
+    final height = 0.3 + (0.7 * ((1 + math.sin(phase * 2 * math.pi)) / 2));
+    return height;
+  }
+
+  Widget _buildBar(double heightFactor) {
+    return Container(
+      width: 3.5,
+      height: 20 * heightFactor,
+      decoration: BoxDecoration(
+        color: widget.color,
+        borderRadius: BorderRadius.circular(2),
+        boxShadow: [
+          BoxShadow(
+            color: widget.color.withOpacity(0.3),
+            blurRadius: 2,
+            spreadRadius: 0.5,
+          ),
+        ],
+      ),
+    );
   }
 }

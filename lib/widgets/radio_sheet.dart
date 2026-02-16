@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:audio_service/audio_service.dart';
 import 'package:mini_music_visualizer/mini_music_visualizer.dart';
@@ -170,7 +172,6 @@ class _EnhancedRadioSheetState extends State<EnhancedRadioSheet>
   }
 
   Future<void> _saveQueueOrder() async {
-    // TODO: Save queue order to audio manager and governance
     final videoIds = queueSongs.map((s) => s.videoId).toList();
     print('💾 Saving queue order: $videoIds');
 
@@ -179,11 +180,13 @@ class _EnhancedRadioSheetState extends State<EnhancedRadioSheet>
     });
 
     if (mounted) {
+      final primaryColor = Theme.of(context).colorScheme.primary;
+
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Queue order saved'),
-          duration: Duration(seconds: 2),
-          backgroundColor: AppColors.iconActive,
+        SnackBar(
+          content: const Text('Queue order saved'),
+          duration: const Duration(seconds: 2),
+          backgroundColor: primaryColor,
         ),
       );
     }
@@ -201,18 +204,17 @@ class _EnhancedRadioSheetState extends State<EnhancedRadioSheet>
 
   Future<void> _addToQueue(QuickPick song) async {
     try {
-      // ✅ Add to audio handler instead of local list
       await widget.audioService.addToQueue(song);
-
-      // ✅ Reload queue from handler
       await _loadQueue();
 
       if (mounted) {
+        final primaryColor = Theme.of(context).colorScheme.primary;
+
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text('Added "${song.title}" to queue'),
             duration: const Duration(seconds: 2),
-            backgroundColor: AppColors.iconActive,
+            backgroundColor: primaryColor,
           ),
         );
       }
@@ -246,13 +248,18 @@ class _EnhancedRadioSheetState extends State<EnhancedRadioSheet>
 
   @override
   Widget build(BuildContext context) {
+    // Get theme colors
+    final themeData = Theme.of(context);
+    final bgColor = themeData.scaffoldBackgroundColor;
+    final surfaceColor = themeData.colorScheme.surface;
+
     return Container(
       height: MediaQuery.of(context).size.height * 0.85,
       decoration: BoxDecoration(
         gradient: LinearGradient(
           begin: Alignment.topCenter,
           end: Alignment.bottomCenter,
-          colors: [const Color(0xFF1A1A1A), Colors.black],
+          colors: [surfaceColor, bgColor],
         ),
         borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
       ),
@@ -272,6 +279,12 @@ class _EnhancedRadioSheetState extends State<EnhancedRadioSheet>
   }
 
   Widget _buildHeader() {
+    // Get theme colors
+    final themeData = Theme.of(context);
+    final primaryColor = themeData.colorScheme.primary;
+    final onSurface = themeData.colorScheme.onSurface;
+    final surfaceVariant = themeData.colorScheme.surfaceVariant;
+
     return Container(
       padding: const EdgeInsets.fromLTRB(20, 12, 20, 0),
       child: Column(
@@ -281,7 +294,7 @@ class _EnhancedRadioSheetState extends State<EnhancedRadioSheet>
             width: 40,
             height: 4,
             decoration: BoxDecoration(
-              color: Colors.white.withOpacity(0.3),
+              color: onSurface.withOpacity(0.3),
               borderRadius: BorderRadius.circular(2),
             ),
           ),
@@ -299,20 +312,16 @@ class _EnhancedRadioSheetState extends State<EnhancedRadioSheet>
                       Container(
                         padding: const EdgeInsets.all(8),
                         decoration: BoxDecoration(
-                          color: AppColors.iconActive.withOpacity(0.2),
+                          color: primaryColor.withOpacity(0.2),
                           borderRadius: BorderRadius.circular(8),
                         ),
-                        child: const Icon(
-                          Icons.radio,
-                          color: AppColors.iconActive,
-                          size: 20,
-                        ),
+                        child: Icon(Icons.radio, color: primaryColor, size: 20),
                       ),
                       const SizedBox(width: 12),
-                      const Text(
+                      Text(
                         'Now Playing',
                         style: TextStyle(
-                          color: Colors.white,
+                          color: onSurface,
                           fontSize: 24,
                           fontWeight: FontWeight.bold,
                         ),
@@ -327,16 +336,14 @@ class _EnhancedRadioSheetState extends State<EnhancedRadioSheet>
                     IconButton(
                       icon: Icon(
                         _isEditMode ? Icons.check : Icons.edit,
-                        color: _isEditMode
-                            ? AppColors.iconActive
-                            : Colors.white,
+                        color: _isEditMode ? primaryColor : onSurface,
                       ),
                       onPressed: _isEditMode
                           ? _saveQueueOrder
                           : _toggleEditMode,
                     ),
                   IconButton(
-                    icon: const Icon(Icons.close, color: Colors.white),
+                    icon: Icon(Icons.close, color: onSurface),
                     onPressed: () => Navigator.pop(context),
                   ),
                 ],
@@ -354,22 +361,29 @@ class _EnhancedRadioSheetState extends State<EnhancedRadioSheet>
         handler?.customState.value as Map<String, dynamic>? ?? {};
     final radioQueueData = customState['radio_queue'] as List<dynamic>? ?? [];
 
+    // Get theme colors
+    final themeData = Theme.of(context);
+    final primaryColor = themeData.colorScheme.primary;
+    final onPrimary = themeData.colorScheme.onPrimary;
+    final onSurface = themeData.colorScheme.onSurface;
+    final surfaceVariant = themeData.colorScheme.surfaceVariant;
+
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
       decoration: BoxDecoration(
-        color: Colors.white.withOpacity(0.05),
+        color: surfaceVariant.withOpacity(0.3),
         borderRadius: BorderRadius.circular(12),
       ),
       child: TabBar(
         controller: _tabController,
         indicator: BoxDecoration(
-          color: AppColors.iconActive,
+          color: primaryColor,
           borderRadius: BorderRadius.circular(12),
         ),
         indicatorSize: TabBarIndicatorSize.tab,
         dividerColor: Colors.transparent,
-        labelColor: Colors.black,
-        unselectedLabelColor: Colors.white.withOpacity(0.7),
+        labelColor: onPrimary,
+        unselectedLabelColor: onSurface.withOpacity(0.7),
         labelStyle: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
         tabs: [
           Tab(
@@ -378,9 +392,7 @@ class _EnhancedRadioSheetState extends State<EnhancedRadioSheet>
               children: [
                 const Icon(Icons.radio, size: 18),
                 const SizedBox(width: 8),
-                Text(
-                  'Radio (${radioQueueData.length})',
-                ), // ✅ Use handler's queue count
+                Text('Radio (${radioQueueData.length})'),
               ],
             ),
           ),
@@ -402,58 +414,49 @@ class _EnhancedRadioSheetState extends State<EnhancedRadioSheet>
   Widget _buildRadioTab() {
     final handler = getAudioHandler();
 
+    // Get theme colors
+    final themeData = Theme.of(context);
+    final primaryColor = themeData.colorScheme.primary;
+    final onSurface = themeData.colorScheme.onSurface;
+    final surfaceVariant = themeData.colorScheme.surfaceVariant;
+
     if (handler == null) {
-      return const Center(
+      return Center(
         child: Text(
           'Audio handler not available',
-          style: TextStyle(color: Colors.white54, fontSize: 16),
+          style: TextStyle(color: onSurface.withOpacity(0.5), fontSize: 16),
         ),
       );
     }
 
-    // ✅ FIX: Use StreamBuilder to rebuild when radio queue updates
     return StreamBuilder<dynamic>(
       stream: handler.customState.stream,
       builder: (context, snapshot) {
-        print('🎨 [RadioSheet] StreamBuilder rebuild:');
-        print('   Has data: ${snapshot.hasData}');
-        print('   Connection: ${snapshot.connectionState}');
-
-        // ✅ FIX: Safely extract radio queue data
         final customState = snapshot.data as Map<String, dynamic>? ?? {};
         final radioQueueData =
             customState['radio_queue'] as List<dynamic>? ?? [];
 
-        print('   Radio queue length: ${radioQueueData.length}');
-        print('   Custom state keys: ${customState.keys.toList()}');
-
-        // ✅ IMPROVED: Better loading state with spinner
+        // Empty state
         if (radioQueueData.isEmpty) {
           return Center(
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                const SizedBox(
+                SizedBox(
                   width: 40,
                   height: 40,
                   child: CircularProgressIndicator(
                     strokeWidth: 3,
-                    valueColor: AlwaysStoppedAnimation<Color>(
-                      AppColors.iconActive,
-                    ),
+                    valueColor: AlwaysStoppedAnimation<Color>(primaryColor),
                   ),
                 ),
                 const SizedBox(height: 24),
-                Icon(
-                  Icons.radio,
-                  size: 48,
-                  color: Colors.white.withOpacity(0.3),
-                ),
+                Icon(Icons.radio, size: 48, color: onSurface.withOpacity(0.3)),
                 const SizedBox(height: 16),
                 Text(
                   'Loading radio queue...',
                   style: TextStyle(
-                    color: Colors.white.withOpacity(0.6),
+                    color: onSurface.withOpacity(0.7),
                     fontSize: 18,
                     fontWeight: FontWeight.w600,
                   ),
@@ -462,19 +465,18 @@ class _EnhancedRadioSheetState extends State<EnhancedRadioSheet>
                 Text(
                   'Finding similar songs for you',
                   style: TextStyle(
-                    color: Colors.white.withOpacity(0.4),
+                    color: onSurface.withOpacity(0.4),
                     fontSize: 14,
                   ),
                 ),
-                // ✅ ADD: Refresh button after 3 seconds
                 const SizedBox(height: 24),
                 ElevatedButton.icon(
                   onPressed: _forceRefreshRadio,
                   icon: const Icon(Icons.refresh),
                   label: const Text('Tap to load radio'),
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: AppColors.iconActive,
-                    foregroundColor: Colors.black,
+                    backgroundColor: primaryColor,
+                    foregroundColor: themeData.colorScheme.onPrimary,
                   ),
                 ),
               ],
@@ -482,7 +484,7 @@ class _EnhancedRadioSheetState extends State<EnhancedRadioSheet>
           );
         }
 
-        // ✅ Convert radio queue data to QuickPick objects
+        // Convert radio queue data to QuickPick objects
         final songs = radioQueueData.map((songData) {
           final data = songData as Map<String, dynamic>;
           final durationMs = data['duration'] as int?;
@@ -497,43 +499,29 @@ class _EnhancedRadioSheetState extends State<EnhancedRadioSheet>
                 : null,
           );
         }).toList();
-        // ✅ ADD THIS DEBUG:
-        print('🔍 [RadioSheet] Duration debug:');
-        for (var i = 0; i < songs.take(3).length; i++) {
-          print('   Song $i: ${songs[i].title}');
-          print('     Duration: ${songs[i].duration}');
-          print('     Raw ms: ${radioQueueData[i]['duration']}');
-        }
-        print('✅ [RadioSheet] Displaying ${songs.length} radio songs');
 
         return Column(
           children: [
-            // Stats bar
+            // Stats bar with theme colors
             Container(
               margin: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
               padding: const EdgeInsets.all(16),
               decoration: BoxDecoration(
-                color: Colors.white.withOpacity(0.05),
+                color: surfaceVariant.withOpacity(0.3),
                 borderRadius: BorderRadius.circular(12),
-                border: Border.all(
-                  color: AppColors.iconActive.withOpacity(0.2),
-                ),
+                border: Border.all(color: primaryColor.withOpacity(0.2)),
               ),
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
                   Row(
                     children: [
-                      Icon(
-                        Icons.music_note,
-                        color: AppColors.iconActive,
-                        size: 20,
-                      ),
+                      Icon(Icons.music_note, color: primaryColor, size: 20),
                       const SizedBox(width: 8),
                       Text(
                         '${songs.length} songs',
-                        style: const TextStyle(
-                          color: Colors.white,
+                        style: TextStyle(
+                          color: onSurface,
                           fontSize: 14,
                           fontWeight: FontWeight.w600,
                         ),
@@ -544,14 +532,14 @@ class _EnhancedRadioSheetState extends State<EnhancedRadioSheet>
                     children: [
                       Icon(
                         Icons.access_time,
-                        color: Colors.white.withOpacity(0.6),
+                        color: onSurface.withOpacity(0.6),
                         size: 18,
                       ),
                       const SizedBox(width: 6),
                       Text(
                         _calculateTotalDuration(songs),
                         style: TextStyle(
-                          color: Colors.white.withOpacity(0.6),
+                          color: onSurface.withOpacity(0.6),
                           fontSize: 14,
                         ),
                       ),
@@ -612,16 +600,21 @@ class _EnhancedRadioSheetState extends State<EnhancedRadioSheet>
   Widget _buildQueueTab() {
     final handler = getAudioHandler();
 
+    // Get theme colors
+    final themeData = Theme.of(context);
+    final primaryColor = themeData.colorScheme.primary;
+    final onSurface = themeData.colorScheme.onSurface;
+    final surfaceVariant = themeData.colorScheme.surfaceVariant;
+
     if (handler == null) {
       return Center(
         child: Text(
           'Audio handler not available',
-          style: TextStyle(color: Colors.white54, fontSize: 16),
+          style: TextStyle(color: onSurface.withOpacity(0.5), fontSize: 16),
         ),
       );
     }
 
-    // ✅ Use StreamBuilder to watch queue changes
     return StreamBuilder<List<MediaItem>>(
       stream: handler.queue.stream,
       builder: (context, snapshot) {
@@ -639,6 +632,7 @@ class _EnhancedRadioSheetState extends State<EnhancedRadioSheet>
           );
         }).toList();
 
+        // Empty state
         if (queueSongs.isEmpty) {
           return Center(
             child: Column(
@@ -647,13 +641,13 @@ class _EnhancedRadioSheetState extends State<EnhancedRadioSheet>
                 Icon(
                   Icons.queue_music,
                   size: 64,
-                  color: Colors.white.withOpacity(0.3),
+                  color: onSurface.withOpacity(0.3),
                 ),
                 const SizedBox(height: 16),
                 Text(
                   'No songs in queue',
                   style: TextStyle(
-                    color: Colors.white.withOpacity(0.6),
+                    color: onSurface.withOpacity(0.7),
                     fontSize: 18,
                     fontWeight: FontWeight.w600,
                   ),
@@ -662,7 +656,7 @@ class _EnhancedRadioSheetState extends State<EnhancedRadioSheet>
                 Text(
                   'Add songs from radio to build your queue',
                   style: TextStyle(
-                    color: Colors.white.withOpacity(0.4),
+                    color: onSurface.withOpacity(0.4),
                     fontSize: 14,
                   ),
                 ),
@@ -671,22 +665,21 @@ class _EnhancedRadioSheetState extends State<EnhancedRadioSheet>
           );
         }
 
-        // Rest of your queue UI code...
         return Column(
           children: [
-            // Stats bar
+            // Stats bar with theme colors
             Container(
               margin: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
               padding: const EdgeInsets.all(16),
               decoration: BoxDecoration(
                 color: _isEditMode
-                    ? AppColors.iconActive.withOpacity(0.1)
-                    : Colors.white.withOpacity(0.05),
+                    ? primaryColor.withOpacity(0.1)
+                    : surfaceVariant.withOpacity(0.3),
                 borderRadius: BorderRadius.circular(12),
                 border: Border.all(
                   color: _isEditMode
-                      ? AppColors.iconActive
-                      : Colors.white.withOpacity(0.1),
+                      ? primaryColor
+                      : onSurface.withOpacity(0.1),
                 ),
               ),
               child: Row(
@@ -696,9 +689,7 @@ class _EnhancedRadioSheetState extends State<EnhancedRadioSheet>
                     children: [
                       Icon(
                         _isEditMode ? Icons.edit : Icons.queue_music,
-                        color: _isEditMode
-                            ? AppColors.iconActive
-                            : Colors.white,
+                        color: _isEditMode ? primaryColor : onSurface,
                         size: 20,
                       ),
                       const SizedBox(width: 8),
@@ -707,9 +698,7 @@ class _EnhancedRadioSheetState extends State<EnhancedRadioSheet>
                             ? 'Drag to reorder'
                             : '${queueSongs.length} songs in queue',
                         style: TextStyle(
-                          color: _isEditMode
-                              ? AppColors.iconActive
-                              : Colors.white,
+                          color: _isEditMode ? primaryColor : onSurface,
                           fontSize: 14,
                           fontWeight: FontWeight.w600,
                         ),
@@ -720,7 +709,7 @@ class _EnhancedRadioSheetState extends State<EnhancedRadioSheet>
                     Text(
                       _calculateTotalDuration(queueSongs),
                       style: TextStyle(
-                        color: Colors.white.withOpacity(0.6),
+                        color: onSurface.withOpacity(0.6),
                         fontSize: 14,
                       ),
                     ),
@@ -728,7 +717,7 @@ class _EnhancedRadioSheetState extends State<EnhancedRadioSheet>
               ),
             ),
 
-            // Queue list with current media awareness
+            // Queue list
             Expanded(
               child: StreamBuilder<MediaItem?>(
                 stream: widget.audioService.mediaItemStream,
@@ -778,17 +767,24 @@ class _EnhancedRadioSheetState extends State<EnhancedRadioSheet>
     required bool showDragHandle,
     bool isEditMode = false,
   }) {
+    // Get theme colors
+    final themeData = Theme.of(context);
+    final primaryColor = themeData.colorScheme.primary;
+    final onSurface = themeData.colorScheme.onSurface;
+    final surfaceVariant = themeData.colorScheme.surfaceVariant;
+    final cardBg = themeData.colorScheme.surface;
+
     return Container(
       key: key,
       margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
       decoration: BoxDecoration(
         color: isCurrentSong
-            ? AppColors.iconActive.withOpacity(0.15)
-            : Colors.white.withOpacity(0.03),
+            ? primaryColor.withOpacity(0.15)
+            : surfaceVariant.withOpacity(0.2),
         borderRadius: BorderRadius.circular(12),
         border: Border.all(
           color: isCurrentSong
-              ? AppColors.iconActive.withOpacity(0.3)
+              ? primaryColor.withOpacity(0.3)
               : Colors.transparent,
           width: 1,
         ),
@@ -802,7 +798,7 @@ class _EnhancedRadioSheetState extends State<EnhancedRadioSheet>
           mainAxisSize: MainAxisSize.min,
           children: [
             if (showDragHandle)
-              Icon(Icons.drag_handle, color: Colors.white.withOpacity(0.5)),
+              Icon(Icons.drag_handle, color: onSurface.withOpacity(0.5)),
             const SizedBox(width: 8),
             Stack(
               alignment: Alignment.center,
@@ -812,24 +808,25 @@ class _EnhancedRadioSheetState extends State<EnhancedRadioSheet>
                   child: Container(
                     width: 56,
                     height: 56,
-                    color: AppColors.cardBackground,
+                    color: cardBg,
                     child: song.thumbnail.isNotEmpty
                         ? Image.network(
                             song.thumbnail,
                             fit: BoxFit.cover,
                             errorBuilder: (context, error, stackTrace) {
-                              return const Icon(
+                              return Icon(
                                 Icons.music_note,
-                                color: AppColors.iconInactive,
+                                color: onSurface.withOpacity(0.3),
                               );
                             },
                           )
-                        : const Icon(
+                        : Icon(
                             Icons.music_note,
-                            color: AppColors.iconInactive,
+                            color: onSurface.withOpacity(0.3),
                           ),
                   ),
                 ),
+                // ✅ UPDATED: Custom visualizer with theme color
                 if (isCurrentSong && isPlaying)
                   Container(
                     width: 56,
@@ -838,9 +835,11 @@ class _EnhancedRadioSheetState extends State<EnhancedRadioSheet>
                       color: Colors.black.withOpacity(0.6),
                       borderRadius: BorderRadius.circular(8),
                     ),
-                    child: const Center(
-                      child: MiniMusicVisualizer(
-                        color: Colors.white,
+                    child: Center(
+                      child: _MiniMusicVisualizer(
+                        // ✅ NEW - uses custom implementation
+                        color:
+                            primaryColor, // ✅ Uses theme color instead of white
                         width: 4,
                         height: 15,
                       ),
@@ -854,9 +853,9 @@ class _EnhancedRadioSheetState extends State<EnhancedRadioSheet>
                       color: Colors.black.withOpacity(0.6),
                       borderRadius: BorderRadius.circular(8),
                     ),
-                    child: const Icon(
+                    child: Icon(
                       Icons.pause,
-                      color: Colors.white,
+                      color: primaryColor, // ✅ Theme-aware color
                       size: 28,
                     ),
                   ),
@@ -890,7 +889,7 @@ class _EnhancedRadioSheetState extends State<EnhancedRadioSheet>
         title: Text(
           song.title,
           style: TextStyle(
-            color: isCurrentSong ? AppColors.iconActive : Colors.white,
+            color: isCurrentSong ? primaryColor : onSurface,
             fontSize: 15,
             fontWeight: isCurrentSong ? FontWeight.w600 : FontWeight.w500,
           ),
@@ -901,8 +900,8 @@ class _EnhancedRadioSheetState extends State<EnhancedRadioSheet>
           song.artists,
           style: TextStyle(
             color: isCurrentSong
-                ? AppColors.iconActive.withOpacity(0.8)
-                : Colors.white.withOpacity(0.6),
+                ? primaryColor.withOpacity(0.8)
+                : onSurface.withOpacity(0.6),
             fontSize: 13,
           ),
           maxLines: 1,
@@ -921,8 +920,8 @@ class _EnhancedRadioSheetState extends State<EnhancedRadioSheet>
                       song.duration!,
                       style: TextStyle(
                         color: isCurrentSong
-                            ? AppColors.iconActive.withOpacity(0.8)
-                            : Colors.white.withOpacity(0.5),
+                            ? primaryColor.withOpacity(0.8)
+                            : onSurface.withOpacity(0.5),
                         fontSize: 12,
                         fontWeight: isCurrentSong
                             ? FontWeight.w600
@@ -933,13 +932,13 @@ class _EnhancedRadioSheetState extends State<EnhancedRadioSheet>
                   if (isCurrentSong)
                     Container(
                       decoration: BoxDecoration(
-                        color: AppColors.iconActive,
+                        color: primaryColor,
                         shape: BoxShape.circle,
                       ),
                       child: IconButton(
                         icon: Icon(
                           isPlaying ? Icons.pause : Icons.play_arrow,
-                          color: Colors.black,
+                          color: themeData.colorScheme.onPrimary,
                           size: 24,
                         ),
                         onPressed: () {
@@ -951,35 +950,35 @@ class _EnhancedRadioSheetState extends State<EnhancedRadioSheet>
                     PopupMenuButton(
                       icon: Icon(
                         Icons.more_vert,
-                        color: Colors.white.withOpacity(0.7),
+                        color: onSurface.withOpacity(0.7),
                       ),
-                      color: const Color(0xFF2A2A2A),
+                      color: cardBg,
                       shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(12),
                       ),
                       itemBuilder: (context) => [
                         PopupMenuItem(
                           onTap: () => _playNow(song),
-                          child: const Row(
+                          child: Row(
                             children: [
-                              Icon(Icons.play_arrow, color: Colors.white),
-                              SizedBox(width: 12),
+                              Icon(Icons.play_arrow, color: onSurface),
+                              const SizedBox(width: 12),
                               Text(
                                 'Play now',
-                                style: TextStyle(color: Colors.white),
+                                style: TextStyle(color: onSurface),
                               ),
                             ],
                           ),
                         ),
                         PopupMenuItem(
                           onTap: () => _addToQueue(song),
-                          child: const Row(
+                          child: Row(
                             children: [
-                              Icon(Icons.queue_music, color: Colors.white),
-                              SizedBox(width: 12),
+                              Icon(Icons.queue_music, color: onSurface),
+                              const SizedBox(width: 12),
                               Text(
                                 'Add to queue',
-                                style: TextStyle(color: Colors.white),
+                                style: TextStyle(color: onSurface),
                               ),
                             ],
                           ),
@@ -997,6 +996,90 @@ class _EnhancedRadioSheetState extends State<EnhancedRadioSheet>
             : () {
                 _playNow(song);
               },
+      ),
+    );
+  }
+}
+
+class _MiniMusicVisualizer extends StatefulWidget {
+  final Color color;
+  final double width;
+  final double height;
+
+  const _MiniMusicVisualizer({
+    required this.color,
+    this.width = 4,
+    this.height = 15,
+  });
+
+  @override
+  State<_MiniMusicVisualizer> createState() => _MiniMusicVisualizerState();
+}
+
+class _MiniMusicVisualizerState extends State<_MiniMusicVisualizer>
+    with SingleTickerProviderStateMixin {
+  late AnimationController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 600),
+    )..repeat();
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _controller,
+      builder: (context, child) {
+        final value = _controller.value;
+        return Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: [
+            _buildBar(_getBarHeight(value, 0)),
+            const SizedBox(width: 2.5),
+            _buildBar(_getBarHeight(value, 0.25)),
+            const SizedBox(width: 2.5),
+            _buildBar(_getBarHeight(value, 0.5)),
+            const SizedBox(width: 2.5),
+            _buildBar(_getBarHeight(value, 0.75)),
+          ],
+        );
+      },
+    );
+  }
+
+  double _getBarHeight(double animationValue, double offset) {
+    // Create a wave effect with phase offset for each bar
+    final phase = (animationValue + offset) % 1.0;
+    // Use sine wave for smooth, natural motion
+    final height = 0.3 + (0.7 * ((1 + math.sin(phase * 2 * math.pi)) / 2));
+    return height;
+  }
+
+  Widget _buildBar(double heightFactor) {
+    return Container(
+      width: widget.width,
+      height: widget.height * heightFactor,
+      decoration: BoxDecoration(
+        color: widget.color,
+        borderRadius: BorderRadius.circular(2),
+        boxShadow: [
+          BoxShadow(
+            color: widget.color.withOpacity(0.3),
+            blurRadius: 2,
+            spreadRadius: 0.5,
+          ),
+        ],
       ),
     );
   }

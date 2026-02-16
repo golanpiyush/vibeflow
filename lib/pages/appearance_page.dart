@@ -10,6 +10,7 @@ import 'package:vibeflow/pages/subpages/settings/cache_page.dart';
 import 'package:vibeflow/pages/subpages/settings/database_page.dart';
 import 'package:vibeflow/pages/subpages/settings/other_page.dart';
 import 'package:vibeflow/pages/subpages/settings/player_settings_page.dart';
+import 'package:vibeflow/providers/immersive_mode_provider.dart';
 import 'package:vibeflow/utils/page_transitions.dart';
 import 'package:vibeflow/utils/settings_provider.dart';
 import 'package:vibeflow/utils/theme_provider.dart';
@@ -30,59 +31,59 @@ class _AppearancePageState extends ConsumerState<AppearancePage> {
 
   @override
   Widget build(BuildContext context) {
-    final backgroundColor = ref.watch(themeBackgroundColorProvider);
+    final themeData = Theme.of(context);
 
     return Scaffold(
-      backgroundColor: backgroundColor,
-      body: SafeArea(
-        child: Column(
-          children: [
-            _buildTopBar(ref),
-            Expanded(
-              child: Row(
-                children: [
-                  _buildSidebar(),
-                  Expanded(
-                    child: SingleChildScrollView(
-                      padding: const EdgeInsets.all(AppSpacing.lg),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          _buildColorsSection(ref),
-                          const SizedBox(height: AppSpacing.xxxl),
-                          _buildShapesSection(ref),
-                          const SizedBox(height: AppSpacing.xxxl),
-                          _buildTextSection(ref),
-                          // const SizedBox(height: 100),
-                          const SizedBox(height: AppSpacing.xxxl),
-                          _buildLyricsSection(ref),
-                        ],
+      body: Row(
+        children: [
+          Expanded(
+            child: Column(
+              children: [
+                const SizedBox(height: AppSpacing.xxxl),
+                _buildTopBar(ref, themeData),
+                Expanded(
+                  child: Row(
+                    children: [
+                      _buildSidebar(themeData),
+                      Expanded(
+                        child: SingleChildScrollView(
+                          padding: const EdgeInsets.all(AppSpacing.lg),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              _buildImmersiveSection(ref),
+                              const SizedBox(height: AppSpacing.xxxl),
+                              _buildColorsSection(ref),
+                              const SizedBox(height: AppSpacing.xxxl),
+                              _buildShapesSection(ref),
+                              const SizedBox(height: AppSpacing.xxxl),
+                              _buildTextSection(ref),
+                              // const SizedBox(height: 100),
+                              const SizedBox(height: AppSpacing.xxxl),
+                              _buildLyricsSection(ref),
+                              const SizedBox(height: AppSpacing.fourxxxl),
+                            ],
+                          ),
+                        ),
                       ),
-                    ),
+                    ],
                   ),
-                ],
-              ),
+                ),
+              ],
             ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }
 
-  Widget _buildTopBar(WidgetRef ref) {
-    final textPrimaryColor = ref.watch(themeTextPrimaryColorProvider);
-
+  Widget _buildTopBar(WidgetRef ref, ThemeData themeData) {
+    final textPrimaryColor = themeData.colorScheme.onSurface;
     final pageTitleStyle = AppTypography.pageTitle(
       context,
     ).copyWith(color: textPrimaryColor);
-
     return Container(
-      padding: const EdgeInsets.only(
-        left: 16,
-        right: 16,
-        top: 60, // Add 70px top padding
-        bottom: 12,
-      ),
+      padding: const EdgeInsets.only(left: 16, right: 16, top: 60, bottom: 12),
       child: Row(
         children: [
           GestureDetector(
@@ -100,11 +101,11 @@ class _AppearancePageState extends ConsumerState<AppearancePage> {
     );
   }
 
-  Widget _buildSidebar() {
-    final iconActiveColor = ref.watch(themeIconActiveColorProvider);
-    final iconInactiveColor = ref.watch(themeTextSecondaryColorProvider);
-    final sidebarLabelColor = ref.watch(themeTextPrimaryColorProvider);
-    final sidebarLabelActiveColor = ref.watch(themeIconActiveColorProvider);
+  Widget _buildSidebar(ThemeData themeData) {
+    final iconActiveColor = themeData.colorScheme.primary;
+    final iconInactiveColor = themeData.colorScheme.onSurfaceVariant;
+    final sidebarLabelColor = themeData.colorScheme.onSurface;
+    final sidebarLabelActiveColor = themeData.colorScheme.primary;
     final double availableHeight = MediaQuery.of(context).size.height;
 
     return SizedBox(
@@ -304,6 +305,46 @@ class _AppearancePageState extends ConsumerState<AppearancePage> {
     );
   }
 
+  String _getThemeModeLabel(AppThemeMode mode) {
+    switch (mode) {
+      case AppThemeMode.light:
+        return 'Light';
+      case AppThemeMode.dark:
+        return 'Dark';
+    }
+  }
+
+  // Add this inside _buildColorsSection or create a new _buildImmersiveSection:
+  Widget _buildImmersiveSection(WidgetRef ref) {
+    final isImmersive = ref.watch(immersiveModeProvider);
+    final iconActiveColor = ref.watch(themeIconActiveColorProvider);
+    final textPrimaryColor = ref.watch(themeTextPrimaryColorProvider);
+    final textSecondaryColor = ref.watch(themeTextSecondaryColorProvider);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'DISPLAY',
+          style: AppTypography.caption(context).copyWith(
+            color: iconActiveColor,
+            fontWeight: FontWeight.w600,
+            letterSpacing: 1.2,
+          ),
+        ),
+        const SizedBox(height: AppSpacing.lg),
+        _buildSwitchItem(
+          title: 'Immersive mode',
+          subtitle: 'Miniplayer covers navigation bar',
+          value: isImmersive,
+          textPrimaryColor: textPrimaryColor,
+          textSecondaryColor: textSecondaryColor,
+          onChanged: (_) => ref.read(immersiveModeProvider.notifier).toggle(),
+        ),
+      ],
+    );
+  }
+
   // Add these helper methods
   String _getThemeTypeLabel(ThemeType type) {
     switch (type) {
@@ -377,229 +418,450 @@ class _AppearancePageState extends ConsumerState<AppearancePage> {
     }
   }
 
-  // Color Picker (only for Material theme)
   void _showColorPicker(WidgetRef ref) {
     final themeNotifier = ref.read(themeProvider.notifier);
     final currentColor = ref.read(themeProvider).seedColor;
-    final cardBackgroundColor = ref.watch(themeCardBackgroundColorProvider);
-    final textPrimaryColor = ref.watch(themeTextPrimaryColorProvider);
-    final textSecondaryColor = ref.watch(themeTextSecondaryColorProvider);
-    final iconActiveColor = ref.watch(themeIconActiveColorProvider);
-
-    final colorOptions = [
-      ('Purple', const Color(0xFF6B4CE8)),
-      ('Blue', const Color(0xFF2196F3)),
-      ('Teal', const Color(0xFF009688)),
-      ('Green', const Color(0xFF4CAF50)),
-      ('Orange', const Color(0xFFFF9800)),
-      ('Red', const Color(0xFFF44336)),
-      ('Pink', const Color(0xFFE91E63)),
-    ];
 
     showModalBottomSheet(
       context: context,
-      backgroundColor: cardBackgroundColor,
+      backgroundColor: Theme.of(context).colorScheme.surface,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
-      builder: (context) => Container(
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              width: 40,
-              height: 4,
-              margin: const EdgeInsets.only(bottom: 20),
-              decoration: BoxDecoration(
-                color: textSecondaryColor.withOpacity(0.3),
-                borderRadius: BorderRadius.circular(2),
+      builder: (context) {
+        final colorScheme = Theme.of(context).colorScheme;
+        final textPrimaryColor = colorScheme.onSurface;
+        final textSecondaryColor = colorScheme.onSurface.withOpacity(0.6);
+        final iconActiveColor = colorScheme.primary;
+
+        final colorOptions = [
+          ('Purple', const Color(0xFF6B4CE8)),
+          ('Blue', const Color(0xFF2196F3)),
+          ('Teal', const Color(0xFF009688)),
+          ('Green', const Color(0xFF4CAF50)),
+          ('Orange', const Color(0xFFFF9800)),
+          ('Red', const Color(0xFFF44336)),
+          ('Pink', const Color(0xFFE91E63)),
+        ];
+
+        return Container(
+          padding: const EdgeInsets.all(20),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 40,
+                height: 4,
+                margin: const EdgeInsets.only(bottom: 20),
+                decoration: BoxDecoration(
+                  color: textSecondaryColor.withOpacity(0.3),
+                  borderRadius: BorderRadius.circular(2),
+                ),
               ),
-            ),
-            Text(
-              'Select Color',
-              style: AppTypography.sectionHeader(
-                context,
-              ).copyWith(color: textPrimaryColor),
-            ),
-            const SizedBox(height: 20),
-            Wrap(
-              spacing: 16,
-              runSpacing: 16,
-              alignment: WrapAlignment.center,
-              children: colorOptions.map((option) {
-                return _buildColorOption(
-                  option.$1,
-                  option.$2,
-                  currentColor,
-                  themeNotifier,
-                  iconActiveColor,
-                  textSecondaryColor,
-                  textPrimaryColor,
-                );
-              }).toList(),
-            ),
-            const SizedBox(height: 20),
-          ],
-        ),
-      ),
+              Text(
+                'Select Color',
+                style: AppTypography.sectionHeader(
+                  context,
+                ).copyWith(color: textPrimaryColor),
+              ),
+              const SizedBox(height: 20),
+              Wrap(
+                spacing: 16,
+                runSpacing: 16,
+                alignment: WrapAlignment.center,
+                children: colorOptions.map((option) {
+                  return _buildColorOption(
+                    option.$1,
+                    option.$2,
+                    currentColor,
+                    themeNotifier,
+                    iconActiveColor,
+                    textSecondaryColor,
+                    textPrimaryColor,
+                  );
+                }).toList(),
+              ),
+              const SizedBox(height: 90),
+            ],
+          ),
+        );
+      },
     );
   }
-  // Update these methods in your AppearancePage:
 
   void _showThemeModePicker(WidgetRef ref) {
     final themeNotifier = ref.read(themeProvider.notifier);
     final currentMode = ref.read(themeProvider).systemThemeMode;
-    final cardBackgroundColor = ref.watch(themeCardBackgroundColorProvider);
-    final textPrimaryColor = ref.watch(themeTextPrimaryColorProvider);
-    final textSecondaryColor = ref.watch(themeTextSecondaryColorProvider);
-    final iconActiveColor = ref.watch(themeIconActiveColorProvider);
 
     showModalBottomSheet(
       context: context,
-      backgroundColor: cardBackgroundColor,
+      backgroundColor: Theme.of(context).colorScheme.surface,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
-      builder: (context) => Container(
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              width: 40,
-              height: 4,
-              margin: const EdgeInsets.only(bottom: 20),
-              decoration: BoxDecoration(
-                color: textSecondaryColor.withOpacity(0.3),
-                borderRadius: BorderRadius.circular(2),
+      builder: (context) {
+        final colorScheme = Theme.of(context).colorScheme;
+        final textPrimaryColor = colorScheme.onSurface;
+        final textSecondaryColor = colorScheme.onSurface.withOpacity(0.6);
+        final iconActiveColor = colorScheme.primary;
+
+        return Container(
+          padding: const EdgeInsets.all(20),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 40,
+                height: 4,
+                margin: const EdgeInsets.only(bottom: 20),
+                decoration: BoxDecoration(
+                  color: textSecondaryColor.withOpacity(0.3),
+                  borderRadius: BorderRadius.circular(2),
+                ),
               ),
-            ),
-            Text(
-              'Select Theme Mode',
-              style: AppTypography.sectionHeader(
-                context,
-              ).copyWith(color: textPrimaryColor),
-            ),
-            const SizedBox(height: 20),
-            ...AppThemeMode.values.map((mode) {
-              final isSelected = currentMode == mode;
-              return ListTile(
-                leading: Icon(
-                  mode == AppThemeMode.light
-                      ? Icons.light_mode
-                      : Icons.dark_mode,
-                  color: isSelected ? iconActiveColor : textPrimaryColor,
-                ),
-                title: Text(
-                  _getThemeModeLabel(mode),
-                  style: AppTypography.subtitle(context).copyWith(
+              Text(
+                'Select Theme Mode',
+                style: AppTypography.sectionHeader(
+                  context,
+                ).copyWith(color: textPrimaryColor),
+              ),
+              const SizedBox(height: 20),
+              ...AppThemeMode.values.map((mode) {
+                final isSelected = currentMode == mode;
+                return ListTile(
+                  leading: Icon(
+                    mode == AppThemeMode.light
+                        ? Icons.light_mode
+                        : Icons.dark_mode,
                     color: isSelected ? iconActiveColor : textPrimaryColor,
-                    fontWeight: isSelected
-                        ? FontWeight.w600
-                        : FontWeight.normal,
                   ),
-                ),
-                trailing: isSelected
-                    ? Icon(Icons.check, color: iconActiveColor)
-                    : null,
-                onTap: () {
-                  themeNotifier.setSystemThemeMode(mode);
-                  Navigator.pop(context);
-                },
-              );
-            }).toList(),
-            const SizedBox(height: 10),
-          ],
-        ),
-      ),
+                  title: Text(
+                    _getThemeModeLabel(mode),
+                    style: AppTypography.subtitle(context).copyWith(
+                      color: isSelected ? iconActiveColor : textPrimaryColor,
+                      fontWeight: isSelected
+                          ? FontWeight.w600
+                          : FontWeight.normal,
+                    ),
+                  ),
+                  trailing: isSelected
+                      ? Icon(Icons.check, color: iconActiveColor)
+                      : null,
+                  onTap: () {
+                    themeNotifier.setSystemThemeMode(mode);
+                    Navigator.pop(context);
+                  },
+                );
+              }).toList(),
+              const SizedBox(height: 90),
+            ],
+          ),
+        );
+      },
     );
   }
 
-  // Theme Mode Picker (only for Material theme)
   void _showThemeTypePicker(WidgetRef ref) {
     final themeNotifier = ref.read(themeProvider.notifier);
     final currentType = ref.read(themeProvider).themeType;
-    final cardBackgroundColor = ref.watch(themeCardBackgroundColorProvider);
-    final textPrimaryColor = ref.watch(themeTextPrimaryColorProvider);
-    final textSecondaryColor = ref.watch(themeTextSecondaryColorProvider);
-    final iconActiveColor = ref.watch(themeIconActiveColorProvider);
 
     showModalBottomSheet(
       context: context,
-      backgroundColor: cardBackgroundColor,
+      backgroundColor: Theme.of(context).colorScheme.surface,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
-      builder: (context) => Container(
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              width: 40,
-              height: 4,
-              margin: const EdgeInsets.only(bottom: 20),
-              decoration: BoxDecoration(
-                color: textSecondaryColor.withOpacity(0.3),
-                borderRadius: BorderRadius.circular(2),
-              ),
-            ),
-            Text(
-              'Select Theme',
-              style: AppTypography.sectionHeader(
-                context,
-              ).copyWith(color: textPrimaryColor),
-            ),
-            const SizedBox(height: 20),
-            ...ThemeType.values.map((type) {
-              final isSelected = currentType == type;
-              final icon = _getThemeTypeIcon(type);
-              final description = _getThemeTypeDescription(type);
+      builder: (context) {
+        final colorScheme = Theme.of(context).colorScheme;
+        final textPrimaryColor = colorScheme.onSurface;
+        final textSecondaryColor = colorScheme.onSurface.withOpacity(0.6);
+        final iconActiveColor = colorScheme.primary;
 
-              return ListTile(
-                leading: Icon(
-                  icon,
-                  color: isSelected ? iconActiveColor : textPrimaryColor,
+        return Container(
+          padding: const EdgeInsets.all(20),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 40,
+                height: 4,
+                margin: const EdgeInsets.only(bottom: 20),
+                decoration: BoxDecoration(
+                  color: textSecondaryColor.withOpacity(0.3),
+                  borderRadius: BorderRadius.circular(2),
                 ),
-                title: Text(
-                  _getThemeTypeLabel(type),
-                  style: AppTypography.subtitle(context).copyWith(
+              ),
+              Text(
+                'Select Theme',
+                style: AppTypography.sectionHeader(
+                  context,
+                ).copyWith(color: textPrimaryColor),
+              ),
+              const SizedBox(height: 20),
+              ...ThemeType.values.map((type) {
+                final isSelected = currentType == type;
+                final icon = _getThemeTypeIcon(type);
+                final description = _getThemeTypeDescription(type);
+
+                return ListTile(
+                  leading: Icon(
+                    icon,
                     color: isSelected ? iconActiveColor : textPrimaryColor,
-                    fontWeight: isSelected
-                        ? FontWeight.w600
-                        : FontWeight.normal,
                   ),
-                ),
-                subtitle: Text(
-                  description,
-                  style: AppTypography.caption(
-                    context,
-                  ).copyWith(color: textSecondaryColor, fontSize: 11),
-                ),
-                trailing: isSelected
-                    ? Icon(Icons.check, color: iconActiveColor)
-                    : null,
-                onTap: () {
-                  themeNotifier.setThemeType(type);
-                  Navigator.pop(context);
-                },
-              );
-            }).toList(),
-            const SizedBox(height: 10),
-          ],
-        ),
-      ),
+                  title: Text(
+                    _getThemeTypeLabel(type),
+                    style: AppTypography.subtitle(context).copyWith(
+                      color: isSelected ? iconActiveColor : textPrimaryColor,
+                      fontWeight: isSelected
+                          ? FontWeight.w600
+                          : FontWeight.normal,
+                    ),
+                  ),
+                  subtitle: Text(
+                    description,
+                    style: AppTypography.caption(
+                      context,
+                    ).copyWith(color: textSecondaryColor, fontSize: 11),
+                  ),
+                  trailing: isSelected
+                      ? Icon(Icons.check, color: iconActiveColor)
+                      : null,
+                  onTap: () {
+                    themeNotifier.setThemeType(type);
+                    Navigator.pop(context);
+                  },
+                );
+              }).toList(),
+              const SizedBox(height: 90),
+            ],
+          ),
+        );
+      },
     );
   }
 
-  String _getThemeModeLabel(AppThemeMode mode) {
-    switch (mode) {
-      case AppThemeMode.light:
-        return 'Light';
-      case AppThemeMode.dark:
-        return 'Dark';
-    }
+  void _showLyricsProviderPicker() {
+    final settingsNotifier = ref.read(settingsProvider.notifier);
+    final currentProvider = ref.read(settingsProvider).lyricsProvider;
+
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Theme.of(context).colorScheme.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (context) {
+        final colorScheme = Theme.of(context).colorScheme;
+        final textPrimaryColor = colorScheme.onSurface;
+        final textSecondaryColor = colorScheme.onSurface.withOpacity(0.6);
+        final iconActiveColor = colorScheme.primary;
+
+        return Container(
+          padding: const EdgeInsets.all(20),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 40,
+                height: 4,
+                margin: const EdgeInsets.only(bottom: 20),
+                decoration: BoxDecoration(
+                  color: textSecondaryColor.withOpacity(0.3),
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+              Text(
+                'Select Lyrics Provider',
+                style: AppTypography.sectionHeader(
+                  context,
+                ).copyWith(color: textPrimaryColor),
+              ),
+              const SizedBox(height: 20),
+              ...lyrics_provider.LyricsSource.values.map((source) {
+                final isSelected = currentProvider == source;
+                return ListTile(
+                  title: Text(
+                    _getLyricsProviderLabel(source),
+                    style: AppTypography.subtitle(context).copyWith(
+                      color: isSelected ? iconActiveColor : textPrimaryColor,
+                      fontWeight: isSelected
+                          ? FontWeight.w600
+                          : FontWeight.normal,
+                    ),
+                  ),
+                  subtitle: Text(
+                    source == lyrics_provider.LyricsSource.kugou
+                        ? 'Synchronized word by word timing'
+                        : 'Simple line by line format',
+                    style: AppTypography.caption(
+                      context,
+                    ).copyWith(color: textSecondaryColor, fontSize: 12),
+                  ),
+                  trailing: isSelected
+                      ? Icon(Icons.check, color: iconActiveColor)
+                      : null,
+                  onTap: () {
+                    settingsNotifier.setLyricsProvider(source);
+                    Navigator.pop(context);
+                  },
+                );
+              }).toList(),
+              const SizedBox(height: 90),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  void _showFontFamilyPicker() {
+    final themeNotifier = ref.read(themeProvider.notifier);
+    final currentFont = ref.read(themeProvider).fontFamily;
+
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Theme.of(context).colorScheme.surface,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (context) {
+        final colorScheme = Theme.of(context).colorScheme;
+        final textPrimaryColor = colorScheme.onSurface;
+        final textSecondaryColor = colorScheme.onSurface.withOpacity(0.6);
+        final iconActiveColor = colorScheme.primary;
+
+        return DraggableScrollableSheet(
+          initialChildSize: 0.7,
+          minChildSize: 0.5,
+          maxChildSize: 0.9,
+          expand: false,
+          builder: (context, scrollController) => Container(
+            padding: const EdgeInsets.all(20),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  width: 40,
+                  height: 4,
+                  margin: const EdgeInsets.only(bottom: 20),
+                  decoration: BoxDecoration(
+                    color: textSecondaryColor.withOpacity(0.3),
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+                Text(
+                  'Select Font Family',
+                  style: AppTypography.sectionHeader(
+                    context,
+                  ).copyWith(color: textPrimaryColor),
+                ),
+                const SizedBox(height: 20),
+                Expanded(
+                  child: SingleChildScrollView(
+                    controller: scrollController,
+                    child: Column(
+                      children: [
+                        Container(
+                          margin: const EdgeInsets.only(bottom: 8),
+                          decoration: BoxDecoration(
+                            border: Border.all(
+                              color: currentFont == AppFontFamily.system
+                                  ? iconActiveColor
+                                  : textSecondaryColor.withOpacity(0.3),
+                              width: currentFont == AppFontFamily.system
+                                  ? 2
+                                  : 1,
+                            ),
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: ListTile(
+                            leading: Icon(
+                              Icons.smartphone,
+                              color: currentFont == AppFontFamily.system
+                                  ? iconActiveColor
+                                  : textPrimaryColor,
+                            ),
+                            title: Text(
+                              'System Default',
+                              style: AppTypography.subtitle(context).copyWith(
+                                color: currentFont == AppFontFamily.system
+                                    ? iconActiveColor
+                                    : textPrimaryColor,
+                                fontWeight: currentFont == AppFontFamily.system
+                                    ? FontWeight.w600
+                                    : FontWeight.normal,
+                              ),
+                            ),
+                            subtitle: Text(
+                              'Use device default font',
+                              style: AppTypography.caption(context).copyWith(
+                                color: textSecondaryColor,
+                                fontSize: 12,
+                              ),
+                            ),
+                            trailing: currentFont == AppFontFamily.system
+                                ? Icon(Icons.check, color: iconActiveColor)
+                                : null,
+                            onTap: () {
+                              themeNotifier.setFontFamily(AppFontFamily.system);
+                              Navigator.pop(context);
+                            },
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                        ...AppFontFamily.values
+                            .where((font) => font != AppFontFamily.system)
+                            .map((font) {
+                              final isSelected = currentFont == font;
+                              return Padding(
+                                padding: const EdgeInsets.only(bottom: 4),
+                                child: ListTile(
+                                  title: Text(
+                                    _getFontFamilyLabel(font),
+                                    style: AppTypography.subtitle(context)
+                                        .copyWith(
+                                          color: isSelected
+                                              ? iconActiveColor
+                                              : textPrimaryColor,
+                                          fontWeight: isSelected
+                                              ? FontWeight.w600
+                                              : FontWeight.normal,
+                                        ),
+                                  ),
+                                  subtitle: Text(
+                                    _getFontFamilyDescription(font),
+                                    style: AppTypography.caption(context)
+                                        .copyWith(
+                                          color: textSecondaryColor,
+                                          fontSize: 12,
+                                        ),
+                                  ),
+                                  trailing: isSelected
+                                      ? Icon(
+                                          Icons.check,
+                                          color: iconActiveColor,
+                                        )
+                                      : null,
+                                  onTap: () {
+                                    themeNotifier.setFontFamily(font);
+                                    Navigator.pop(context);
+                                  },
+                                ),
+                              );
+                            })
+                            .toList(),
+                        const SizedBox(height: 90),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
   }
 
   void _showRoundnessPicker() {
@@ -608,141 +870,77 @@ class _AppearancePageState extends ConsumerState<AppearancePage> {
 
     showModalBottomSheet(
       context: context,
-      backgroundColor: AppColors.cardBackground,
+      backgroundColor: Theme.of(context).colorScheme.surface,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
-      builder: (context) => Container(
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              width: 40,
-              height: 4,
-              margin: const EdgeInsets.only(bottom: 20),
-              decoration: BoxDecoration(
-                color: AppColors.textSecondary.withOpacity(0.3),
-                borderRadius: BorderRadius.circular(2),
+      builder: (context) {
+        final colorScheme = Theme.of(context).colorScheme;
+        final textPrimaryColor = colorScheme.onSurface;
+        final textSecondaryColor = colorScheme.onSurface.withOpacity(0.6);
+        final iconActiveColor = colorScheme.primary;
+
+        return Container(
+          padding: const EdgeInsets.all(20),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 40,
+                height: 4,
+                margin: const EdgeInsets.only(bottom: 20),
+                decoration: BoxDecoration(
+                  color: textSecondaryColor.withOpacity(0.3),
+                  borderRadius: BorderRadius.circular(2),
+                ),
               ),
-            ),
-            Text(
-              'Select Thumbnail Roundness',
-              style: AppTypography.sectionHeader(context),
-            ),
-            const SizedBox(height: 20),
-            ...ThumbnailRoundness.values.map((roundness) {
-              final isSelected = currentRoundness == roundness;
-              final radius = _getRadiusForRoundness(roundness);
-
-              return ListTile(
-                leading: Container(
-                  width: 48,
-                  height: 48,
-                  decoration: BoxDecoration(
-                    color: AppColors.iconActive.withOpacity(0.2),
-                    borderRadius: BorderRadius.circular(48 * radius),
-                    border: Border.all(color: AppColors.iconActive, width: 2),
-                  ),
-                ),
-                title: Text(
-                  _getRoundnessLabel(roundness),
-                  style: AppTypography.subtitle(context).copyWith(
-                    color: isSelected
-                        ? AppColors.iconActive
-                        : AppColors.textPrimary,
-                    fontWeight: isSelected
-                        ? FontWeight.w600
-                        : FontWeight.normal,
-                  ),
-                ),
-                trailing: isSelected
-                    ? const Icon(Icons.check, color: AppColors.iconActive)
-                    : null,
-                onTap: () {
-                  themeNotifier.setThumbnailRoundness(roundness);
-                  setState(() {
-                    thumbnailRoundness = _getRoundnessLabel(roundness);
-                  });
-                  Navigator.pop(context);
-                },
-              );
-            }).toList(),
-            const SizedBox(height: 10),
-          ],
-        ),
-      ),
-    );
-  }
-
-  void _showLyricsProviderPicker() {
-    final settingsNotifier = ref.read(settingsProvider.notifier);
-    final currentProvider = ref.read(settingsProvider).lyricsProvider;
-    final cardBackgroundColor = ref.watch(themeCardBackgroundColorProvider);
-    final textPrimaryColor = ref.watch(themeTextPrimaryColorProvider);
-    final textSecondaryColor = ref.watch(themeTextSecondaryColorProvider);
-    final iconActiveColor = ref.watch(themeIconActiveColorProvider);
-
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: cardBackgroundColor,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      builder: (context) => Container(
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              width: 40,
-              height: 4,
-              margin: const EdgeInsets.only(bottom: 20),
-              decoration: BoxDecoration(
-                color: textSecondaryColor.withOpacity(0.3),
-                borderRadius: BorderRadius.circular(2),
+              Text(
+                'Select Thumbnail Roundness',
+                style: AppTypography.sectionHeader(
+                  context,
+                ).copyWith(color: textPrimaryColor),
               ),
-            ),
-            Text(
-              'Select Lyrics Provider',
-              style: AppTypography.sectionHeader(
-                context,
-              ).copyWith(color: textPrimaryColor),
-            ),
-            const SizedBox(height: 20),
-            ...lyrics_provider.LyricsSource.values.map((source) {
-              final isSelected = currentProvider == source;
-              return ListTile(
-                title: Text(
-                  _getLyricsProviderLabel(source),
-                  style: AppTypography.subtitle(context).copyWith(
-                    color: isSelected ? iconActiveColor : textPrimaryColor,
-                    fontWeight: isSelected
-                        ? FontWeight.w600
-                        : FontWeight.normal,
+              const SizedBox(height: 20),
+              ...ThumbnailRoundness.values.map((roundness) {
+                final isSelected = currentRoundness == roundness;
+                final radius = _getRadiusForRoundness(roundness);
+
+                return ListTile(
+                  leading: Container(
+                    width: 48,
+                    height: 48,
+                    decoration: BoxDecoration(
+                      color: iconActiveColor.withOpacity(0.2),
+                      borderRadius: BorderRadius.circular(48 * radius),
+                      border: Border.all(color: iconActiveColor, width: 2),
+                    ),
                   ),
-                ),
-                subtitle: Text(
-                  source == lyrics_provider.LyricsSource.kugou
-                      ? 'Synchronized word by word timing'
-                      : 'Simple line by line format',
-                  style: AppTypography.caption(
-                    context,
-                  ).copyWith(color: textSecondaryColor, fontSize: 12),
-                ),
-                trailing: isSelected
-                    ? Icon(Icons.check, color: iconActiveColor)
-                    : null,
-                onTap: () {
-                  settingsNotifier.setLyricsProvider(source);
-                  Navigator.pop(context);
-                },
-              );
-            }).toList(),
-            const SizedBox(height: 10),
-          ],
-        ),
-      ),
+                  title: Text(
+                    _getRoundnessLabel(roundness),
+                    style: AppTypography.subtitle(context).copyWith(
+                      color: isSelected ? iconActiveColor : textPrimaryColor,
+                      fontWeight: isSelected
+                          ? FontWeight.w600
+                          : FontWeight.normal,
+                    ),
+                  ),
+                  trailing: isSelected
+                      ? Icon(Icons.check, color: iconActiveColor)
+                      : null,
+                  onTap: () {
+                    themeNotifier.setThumbnailRoundness(roundness);
+                    setState(() {
+                      thumbnailRoundness = _getRoundnessLabel(roundness);
+                    });
+                    Navigator.pop(context);
+                  },
+                );
+              }).toList(),
+              const SizedBox(height: 90),
+            ],
+          ),
+        );
+      },
     );
   }
 
@@ -948,6 +1146,7 @@ class _AppearancePageState extends ConsumerState<AppearancePage> {
             context,
           ).copyWith(color: textSecondaryColor.withOpacity(0.7), fontSize: 12),
         ),
+        const SizedBox(height: AppSpacing.xxxl),
       ],
     );
   }
@@ -1066,160 +1265,6 @@ class _AppearancePageState extends ConsumerState<AppearancePage> {
   }
 
   // Replace your _showFontFamilyPicker method in appearance_page.dart with this:
-
-  void _showFontFamilyPicker() {
-    final themeNotifier = ref.read(themeProvider.notifier);
-    final currentFont = ref.read(themeProvider).fontFamily;
-    final cardBackgroundColor = ref.watch(themeCardBackgroundColorProvider);
-    final textPrimaryColor = ref.watch(themeTextPrimaryColorProvider);
-    final textSecondaryColor = ref.watch(themeTextSecondaryColorProvider);
-    final iconActiveColor = ref.watch(themeIconActiveColorProvider);
-
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: cardBackgroundColor,
-      isScrollControlled: true, // ✅ IMPORTANT: Allows custom height
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      builder: (context) => DraggableScrollableSheet(
-        initialChildSize: 0.7, // Start at 70% of screen height
-        minChildSize: 0.5, // Minimum 50% of screen height
-        maxChildSize: 0.9, // Maximum 90% of screen height
-        expand: false,
-        builder: (context, scrollController) => Container(
-          padding: const EdgeInsets.all(20),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              // Drag handle
-              Container(
-                width: 40,
-                height: 4,
-                margin: const EdgeInsets.only(bottom: 20),
-                decoration: BoxDecoration(
-                  color: textSecondaryColor.withOpacity(0.3),
-                  borderRadius: BorderRadius.circular(2),
-                ),
-              ),
-
-              // Title
-              Text(
-                'Select Font Family',
-                style: AppTypography.sectionHeader(
-                  context,
-                ).copyWith(color: textPrimaryColor),
-              ),
-              const SizedBox(height: 20),
-
-              // ✅ Scrollable content
-              Expanded(
-                child: SingleChildScrollView(
-                  controller: scrollController,
-                  child: Column(
-                    children: [
-                      // System Font Option with special styling
-                      Container(
-                        margin: const EdgeInsets.only(bottom: 8),
-                        decoration: BoxDecoration(
-                          border: Border.all(
-                            color: currentFont == AppFontFamily.system
-                                ? iconActiveColor
-                                : textSecondaryColor.withOpacity(0.3),
-                            width: currentFont == AppFontFamily.system ? 2 : 1,
-                          ),
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        child: ListTile(
-                          leading: Icon(
-                            Icons.smartphone,
-                            color: currentFont == AppFontFamily.system
-                                ? iconActiveColor
-                                : textPrimaryColor,
-                          ),
-                          title: Text(
-                            'System Default',
-                            style: AppTypography.subtitle(context).copyWith(
-                              color: currentFont == AppFontFamily.system
-                                  ? iconActiveColor
-                                  : textPrimaryColor,
-                              fontWeight: currentFont == AppFontFamily.system
-                                  ? FontWeight.w600
-                                  : FontWeight.normal,
-                            ),
-                          ),
-                          subtitle: Text(
-                            'Use device default font',
-                            style: AppTypography.caption(
-                              context,
-                            ).copyWith(color: textSecondaryColor, fontSize: 12),
-                          ),
-                          trailing: currentFont == AppFontFamily.system
-                              ? Icon(Icons.check, color: iconActiveColor)
-                              : null,
-                          onTap: () {
-                            themeNotifier.setFontFamily(AppFontFamily.system);
-                            Navigator.pop(context);
-                          },
-                        ),
-                      ),
-
-                      const SizedBox(height: 12),
-
-                      // Other font options
-                      ...AppFontFamily.values
-                          .where((font) => font != AppFontFamily.system)
-                          .map((font) {
-                            final isSelected = currentFont == font;
-                            return Padding(
-                              padding: const EdgeInsets.only(bottom: 4),
-                              child: ListTile(
-                                title: Text(
-                                  _getFontFamilyLabel(font),
-                                  style: AppTypography.subtitle(context)
-                                      .copyWith(
-                                        color: isSelected
-                                            ? iconActiveColor
-                                            : textPrimaryColor,
-                                        fontWeight: isSelected
-                                            ? FontWeight.w600
-                                            : FontWeight.normal,
-                                      ),
-                                ),
-                                subtitle: Text(
-                                  _getFontFamilyDescription(font),
-                                  style: AppTypography.caption(context)
-                                      .copyWith(
-                                        color: textSecondaryColor,
-                                        fontSize: 12,
-                                      ),
-                                ),
-                                trailing: isSelected
-                                    ? Icon(Icons.check, color: iconActiveColor)
-                                    : null,
-                                onTap: () {
-                                  themeNotifier.setFontFamily(font);
-                                  Navigator.pop(context);
-                                },
-                              ),
-                            );
-                          })
-                          .toList(),
-
-                      // Bottom padding for safe area
-                      SizedBox(
-                        height: MediaQuery.of(context).padding.bottom + 20,
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
 
   String _getRoundnessLabel(ThumbnailRoundness roundness) {
     switch (roundness) {

@@ -98,7 +98,7 @@ class BannedScreen extends StatelessWidget {
                           ),
                           const SizedBox(height: 12),
                           Text(
-                            'If you believe this is a mistake, please contact our support team at support@vibeflow.com',
+                            'If you believe this is a mistake, please contact me golanpiyush32@gmail.com',
                             style: TextStyle(
                               fontSize: 14,
                               color: Colors.white.withOpacity(0.6),

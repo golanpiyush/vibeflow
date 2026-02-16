@@ -313,25 +313,30 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final themeData = Theme.of(context);
     final themeState = ref.watch(themeProvider);
     final isDark =
         themeState.themeType == ThemeType.pureBlack ||
         (themeState.themeType == ThemeType.material &&
             themeState.systemThemeMode == AppThemeMode.dark);
 
-    final bgColor = Theme.of(context).scaffoldBackgroundColor;
+    final bgColor = themeData.scaffoldBackgroundColor;
     final surfaceColor = isDark ? const Color(0xFF1A1A1A) : Colors.grey[100];
     final cardColor = isDark ? const Color(0xFF0A0A0A) : Colors.white;
-    final primaryColor = Theme.of(context).colorScheme.primary;
+    final primaryColor = themeData.colorScheme.primary;
     final accentColor = themeState.themeType == ThemeType.pureBlack
         ? Colors.purple[400]
         : primaryColor;
 
-    final textPrimaryColor = isDark ? Colors.white : Colors.black;
-
-    final textSecondaryColor = isDark ? Colors.grey[400]! : Colors.grey[700]!;
-
-    final textMutedColor = isDark ? Colors.grey[500]! : Colors.grey[600]!;
+    final textPrimaryColor =
+        themeData.textTheme.bodyLarge?.color ??
+        (isDark ? Colors.white : Colors.black);
+    final textSecondaryColor =
+        themeData.textTheme.bodyMedium?.color ??
+        (isDark ? Colors.grey[400]! : Colors.grey[700]!);
+    final textMutedColor =
+        themeData.textTheme.bodySmall?.color ??
+        (isDark ? Colors.grey[500]! : Colors.grey[600]!);
 
     if (_isLoading) {
       return Scaffold(
@@ -344,7 +349,10 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
     final changesRemaining = 3 - _usernameChangesThisMonth;
     final canChangeEmail = _canChangeEmail();
     final daysUntilEmailChange = _daysUntilEmailChange();
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
 
+    final hasImage = _newProfilePicFile != null || _currentProfilePic != null;
     return Scaffold(
       backgroundColor: bgColor,
       body: SingleChildScrollView(
@@ -364,21 +372,20 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
                       children: [
                         CircleAvatar(
                           radius: 64,
-                          backgroundColor: surfaceColor,
+                          backgroundColor: hasImage
+                              ? surfaceColor
+                              : colorScheme.surface, // ✅ use card bg when null
                           foregroundImage: _newProfilePicFile != null
                               ? FileImage(_newProfilePicFile!)
                               : (_currentProfilePic != null
                                     ? NetworkImage(_currentProfilePic!)
                                     : null),
-                          child:
-                              (_newProfilePicFile == null &&
-                                  _currentProfilePic == null)
+                          child: !hasImage
                               ? Icon(
                                   Icons.person,
                                   size: 64,
-                                  color: isDark
-                                      ? Colors.grey[700]
-                                      : Colors.grey[400],
+                                  color: colorScheme
+                                      .onSurfaceVariant, // ✅ better than grey
                                 )
                               : null,
                         ),
@@ -484,13 +491,13 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
               SizedBox(height: AppSpacing.xl),
 
               // Email Field
-              // Email Field
               Text(
                 'Email',
                 style: AppTypography.songTitle(
                   context,
                 ).copyWith(color: textSecondaryColor),
               ),
+
               SizedBox(height: AppSpacing.sm),
               TextFormField(
                 controller: _emailController,
@@ -808,6 +815,7 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
                         ),
                 ),
               ),
+              SizedBox(height: AppSpacing.fourxxxl),
             ],
           ),
         ),
