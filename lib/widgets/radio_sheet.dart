@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:audio_service/audio_service.dart';
 import 'package:mini_music_visualizer/mini_music_visualizer.dart';
 import 'package:vibeflow/api_base/yt_radio.dart';
+import 'package:vibeflow/api_base/ytradionew.dart';
 import 'package:vibeflow/constants/app_colors.dart';
 import 'package:vibeflow/models/quick_picks_model.dart';
 import 'package:vibeflow/services/audio_service.dart';
@@ -29,7 +30,8 @@ class EnhancedRadioSheet extends StatefulWidget {
 
 class _EnhancedRadioSheetState extends State<EnhancedRadioSheet>
     with SingleTickerProviderStateMixin {
-  final RadioService _radioService = RadioService();
+  // final RadioService _radioService = RadioService();
+  final NewYTRadio _newradioService = NewYTRadio();
   List<QuickPick> radioSongs = [];
   List<QuickPick> queueSongs = [];
   bool isLoading = true;
@@ -44,10 +46,15 @@ class _EnhancedRadioSheetState extends State<EnhancedRadioSheet>
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 2, vsync: this);
-    // ❌ DELETE: _loadRadio();
-    _loadQueue();
-
+    final handler = getAudioHandler();
+    final cs = handler?.customState.value as Map<String, dynamic>? ?? {};
+    final isPlaylistMode = cs['is_playlist_mode'] == true;
+    _tabController = TabController(
+      length: 2,
+      vsync: this,
+      initialIndex: isPlaylistMode ? 1 : 0,
+    );
+    // ✅ REMOVED: _loadQueue() — queue tab now reads from customState stream directly
     _tabController.addListener(() {
       if (mounted) setState(() {});
     });
@@ -162,26 +169,16 @@ class _EnhancedRadioSheetState extends State<EnhancedRadioSheet>
   }
 
   void _reorderQueue(int oldIndex, int newIndex) {
-    setState(() {
-      if (newIndex > oldIndex) {
-        newIndex -= 1;
-      }
-      final item = queueSongs.removeAt(oldIndex);
-      queueSongs.insert(newIndex, item);
-    });
+    // This is now handled directly in the ReorderableListView via handler
   }
 
   Future<void> _saveQueueOrder() async {
-    final videoIds = queueSongs.map((s) => s.videoId).toList();
-    print('💾 Saving queue order: $videoIds');
-
     setState(() {
       _isEditMode = false;
     });
 
     if (mounted) {
       final primaryColor = Theme.of(context).colorScheme.primary;
-
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: const Text('Queue order saved'),
@@ -192,24 +189,66 @@ class _EnhancedRadioSheetState extends State<EnhancedRadioSheet>
     }
   }
 
+  void _applyReorder(List<QuickPick> currentSongs, int oldIndex, int newIndex) {
+    final handler = getAudioHandler();
+    if (handler == null) return;
+
+    if (newIndex > oldIndex) newIndex -= 1;
+
+    // Reorder in the handler's radio queue via customState
+    final customState =
+        handler.customState.value as Map<String, dynamic>? ?? {};
+    final radioQueueData = List<dynamic>.from(
+      customState['radio_queue'] as List<dynamic>? ?? [],
+    );
+
+    if (oldIndex >= radioQueueData.length || newIndex >= radioQueueData.length)
+      return;
+
+    final item = radioQueueData.removeAt(oldIndex);
+    radioQueueData.insert(newIndex, item);
+
+    // Push back to handler — use the public updateCustomState equivalent
+    // Since _updateCustomState is private, we update via a workaround:
+    // rebuild the state map and add it
+    final updated = Map<String, dynamic>.from(customState);
+    updated['radio_queue'] = radioQueueData;
+    updated['radio_queue_count'] = radioQueueData.length;
+    handler.customState.add(updated);
+
+    print('✅ [Queue] Reordered: $oldIndex → $newIndex');
+  }
+
   Future<void> _playNow(QuickPick song) async {
     try {
-      // Use playSongFromRadio to maintain radio queue
-      await widget.audioService.playSongFromRadio(song);
-      if (mounted) Navigator.pop(context);
+      final handler = getAudioHandler();
+      if (handler == null) return;
+
+      Navigator.pop(context);
+
+      // Find song in the audio_service queue by videoId
+      final queue = handler.queue.value;
+      final queueIndex = queue.indexWhere((item) => item.id == song.videoId);
+
+      if (queueIndex != -1) {
+        // Song exists in queue — jump directly, no re-fetch
+        await handler.skipToQueueItem(queueIndex);
+      } else {
+        // Not in queue — find in radio queue and play via radio path
+        await handler.playSongFromRadio(song);
+      }
     } catch (e) {
-      print('Error playing song: $e');
+      print('❌ [PlayNow] Error: $e');
     }
   }
 
   Future<void> _addToQueue(QuickPick song) async {
     try {
       await widget.audioService.addToQueue(song);
-      await _loadQueue();
+      // ✅ REMOVED: await _loadQueue() — UI updates via customState stream
 
       if (mounted) {
         final primaryColor = Theme.of(context).colorScheme.primary;
-
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text('Added "${song.title}" to queue'),
@@ -242,7 +281,8 @@ class _EnhancedRadioSheetState extends State<EnhancedRadioSheet>
   @override
   void dispose() {
     _tabController.dispose();
-    _radioService.dispose();
+    // _radioService.dispose();
+    _newradioService.dispose();
     super.dispose();
   }
 
@@ -402,7 +442,19 @@ class _EnhancedRadioSheetState extends State<EnhancedRadioSheet>
               children: [
                 const Icon(Icons.queue_music, size: 18),
                 const SizedBox(width: 8),
-                Text('Queue (${queueSongs.length})'),
+                Builder(
+                  builder: (context) {
+                    final handler = getAudioHandler();
+                    final cs =
+                        handler?.customState.value as Map<String, dynamic>? ??
+                        {};
+                    final isPlaylist = cs['is_playlist_mode'] == true;
+                    final count = isPlaylist
+                        ? (cs['playlist_songs_count'] as int? ?? 0)
+                        : (cs['explicit_queue_count'] as int? ?? 0);
+                    return Text('Queue ($count)');
+                  },
+                ),
               ],
             ),
           ),
@@ -413,8 +465,6 @@ class _EnhancedRadioSheetState extends State<EnhancedRadioSheet>
 
   Widget _buildRadioTab() {
     final handler = getAudioHandler();
-
-    // Get theme colors
     final themeData = Theme.of(context);
     final primaryColor = themeData.colorScheme.primary;
     final onSurface = themeData.colorScheme.onSurface;
@@ -435,205 +485,343 @@ class _EnhancedRadioSheetState extends State<EnhancedRadioSheet>
         final customState = snapshot.data as Map<String, dynamic>? ?? {};
         final radioQueueData =
             customState['radio_queue'] as List<dynamic>? ?? [];
-        final radioDecision = customState['radio_decision'] as String?;
-        final radioDecisionType = customState['radio_decision_type'] as String?;
-        final isRadioLoading = customState['radio_loading'] as bool? ?? false;
-        final isPlaylistMode =
-            customState['is_playlist_mode'] as bool? ?? false;
 
-        // ✅ Show decision messages based on state
-        if (isPlaylistMode && radioDecision != null) {
-          return Center(
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(
-                  Icons.playlist_play,
-                  size: 64,
-                  color: onSurface.withOpacity(0.3),
-                ),
-                const SizedBox(height: 16),
-                Text(
-                  radioDecision,
-                  style: TextStyle(
-                    color: onSurface.withOpacity(0.7),
-                    fontSize: 18,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  'Radio will be available when playlist ends',
-                  style: TextStyle(
-                    color: onSurface.withOpacity(0.4),
-                    fontSize: 14,
-                  ),
-                ),
-              ],
-            ),
-          );
-        }
+        // ✅ NEW: Get playlist mode and source info
+        final isPlaylistMode = customState['is_playlist_mode'] == true;
+        final radioSource = customState['radio_source'] as String?;
+        final playlistQueueCount =
+            customState['playlist_queue_count'] as int? ?? 0;
+        final playlistCurrentIndex =
+            customState['playlist_current_index'] as int? ?? -1;
 
-        if (isRadioLoading) {
-          return Center(
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                SizedBox(
-                  width: 40,
-                  height: 40,
-                  child: CircularProgressIndicator(
-                    strokeWidth: 3,
-                    valueColor: AlwaysStoppedAnimation<Color>(primaryColor),
-                  ),
-                ),
-                const SizedBox(height: 24),
-                Text(
-                  radioDecision ?? 'Loading radio...',
-                  style: TextStyle(
-                    color: onSurface.withOpacity(0.7),
-                    fontSize: 18,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  'Finding similar songs for you',
-                  style: TextStyle(
-                    color: onSurface.withOpacity(0.4),
-                    fontSize: 14,
-                  ),
-                ),
-              ],
-            ),
-          );
-        }
-
-        if (radioDecision != null && radioDecisionType == 'cleared') {
-          return Center(
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(Icons.radio, size: 64, color: onSurface.withOpacity(0.3)),
-                const SizedBox(height: 16),
-                Text(
-                  radioDecision,
-                  style: TextStyle(
-                    color: onSurface.withOpacity(0.7),
-                    fontSize: 18,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  'Radio will load after this song',
-                  style: TextStyle(
-                    color: onSurface.withOpacity(0.4),
-                    fontSize: 14,
-                  ),
-                ),
-              ],
-            ),
-          );
-        }
-
-        if (radioDecision != null && radioDecisionType == 'existing') {
-          if (radioQueueData.isEmpty) {
-            return Center(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Icon(
-                    Icons.radio,
-                    size: 64,
-                    color: onSurface.withOpacity(0.3),
-                  ),
-                  const SizedBox(height: 16),
-                  Text(
-                    radioDecision,
-                    style: TextStyle(
-                      color: onSurface.withOpacity(0.7),
-                      fontSize: 18,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    'Tap refresh to load new radio',
-                    style: TextStyle(
-                      color: onSurface.withOpacity(0.4),
-                      fontSize: 14,
-                    ),
-                  ),
-                  const SizedBox(height: 24),
-                  ElevatedButton.icon(
-                    onPressed: _forceRefreshRadio,
-                    icon: const Icon(Icons.refresh),
-                    label: const Text('Refresh Radio'),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: primaryColor,
-                      foregroundColor: themeData.colorScheme.onPrimary,
-                    ),
-                  ),
-                ],
-              ),
-            );
-          }
-        }
-
-        // Empty state (no decision message)
+        // EMPTY STATE with detailed reasons
         if (radioQueueData.isEmpty) {
           return Center(
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                SizedBox(
-                  width: 40,
-                  height: 40,
-                  child: CircularProgressIndicator(
-                    strokeWidth: 3,
-                    valueColor: AlwaysStoppedAnimation<Color>(primaryColor),
-                  ),
+            child: SingleChildScrollView(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 24),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    const SizedBox(height: 40),
+
+                    // === SCENARIO 1: PLAYLIST MODE ===
+                    if (isPlaylistMode) ...[
+                      Container(
+                        padding: const EdgeInsets.all(20),
+                        decoration: BoxDecoration(
+                          color: primaryColor.withOpacity(0.1),
+                          shape: BoxShape.circle,
+                        ),
+                        child: Icon(
+                          Icons.playlist_play,
+                          size: 56,
+                          color: primaryColor.withOpacity(0.7),
+                        ),
+                      ),
+                      const SizedBox(height: 24),
+                      Text(
+                        'Radio Paused',
+                        style: TextStyle(
+                          color: onSurface,
+                          fontSize: 24,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      Text(
+                        'You\'re playing from a playlist',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          color: onSurface.withOpacity(0.65),
+                          fontSize: 16,
+                          height: 1.4,
+                        ),
+                      ),
+                      const SizedBox(height: 24),
+
+                      // Playlist progress indicator
+                      if (playlistQueueCount > 0) ...[
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 16,
+                            vertical: 12,
+                          ),
+                          decoration: BoxDecoration(
+                            color: surfaceVariant.withOpacity(0.5),
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(
+                              color: onSurface.withOpacity(0.1),
+                            ),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(
+                                Icons.playlist_play,
+                                size: 18,
+                                color: onSurface.withOpacity(0.7),
+                              ),
+                              const SizedBox(width: 8),
+                              Text(
+                                'Song ${playlistCurrentIndex + 1} of $playlistQueueCount',
+                                style: TextStyle(
+                                  color: onSurface.withOpacity(0.8),
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(height: 20),
+                      ],
+
+                      // Info box explaining why
+                      Container(
+                        padding: const EdgeInsets.all(18),
+                        decoration: BoxDecoration(
+                          color: surfaceVariant.withOpacity(0.5),
+                          borderRadius: BorderRadius.circular(16),
+                          border: Border.all(
+                            color: onSurface.withOpacity(0.1),
+                            width: 1.5,
+                          ),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                Container(
+                                  padding: const EdgeInsets.all(8),
+                                  decoration: BoxDecoration(
+                                    color: primaryColor.withOpacity(0.15),
+                                    borderRadius: BorderRadius.circular(8),
+                                  ),
+                                  child: Icon(
+                                    Icons.info_outline,
+                                    color: primaryColor,
+                                    size: 20,
+                                  ),
+                                ),
+                                const SizedBox(width: 12),
+                                Expanded(
+                                  child: Text(
+                                    'Why no radio?',
+                                    style: TextStyle(
+                                      color: onSurface.withOpacity(0.9),
+                                      fontSize: 15,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 14),
+                            Text(
+                              'Radio is automatically paused during playlist playback to preserve your listening order.',
+                              style: TextStyle(
+                                color: onSurface.withOpacity(0.65),
+                                fontSize: 14,
+                                height: 1.5,
+                              ),
+                            ),
+                            const SizedBox(height: 10),
+                            Row(
+                              children: [
+                                Icon(
+                                  Icons.auto_awesome,
+                                  size: 16,
+                                  color: primaryColor.withOpacity(0.7),
+                                ),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: Text(
+                                    'Radio will resume automatically when the playlist ends',
+                                    style: TextStyle(
+                                      color: primaryColor.withOpacity(0.8),
+                                      fontSize: 13,
+                                      fontWeight: FontWeight.w500,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 24),
+
+                      // Status badge
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 20,
+                          vertical: 12,
+                        ),
+                        decoration: BoxDecoration(
+                          color: primaryColor.withOpacity(0.15),
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(
+                            color: primaryColor.withOpacity(0.3),
+                            width: 1.5,
+                          ),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(
+                              Icons.check_circle_outline,
+                              color: primaryColor,
+                              size: 18,
+                            ),
+                            const SizedBox(width: 10),
+                            Text(
+                              'Playlist mode active',
+                              style: TextStyle(
+                                color: primaryColor,
+                                fontSize: 14,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ]
+                    // === SCENARIO 2: LOADING RADIO ===
+                    else ...[
+                      SizedBox(
+                        width: 52,
+                        height: 52,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 3.5,
+                          valueColor: AlwaysStoppedAnimation<Color>(
+                            primaryColor,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 32),
+                      Icon(
+                        Icons.radio,
+                        size: 64,
+                        color: onSurface.withOpacity(0.25),
+                      ),
+                      const SizedBox(height: 20),
+                      Text(
+                        'Loading Radio Queue',
+                        style: TextStyle(
+                          color: onSurface,
+                          fontSize: 22,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      Text(
+                        'Discovering similar songs based on\nwhat you\'re listening to',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          color: onSurface.withOpacity(0.55),
+                          fontSize: 15,
+                          height: 1.4,
+                        ),
+                      ),
+                      const SizedBox(height: 28),
+
+                      // Loading process info box
+                      Container(
+                        padding: const EdgeInsets.all(18),
+                        decoration: BoxDecoration(
+                          color: surfaceVariant.withOpacity(0.5),
+                          borderRadius: BorderRadius.circular(16),
+                          border: Border.all(
+                            color: onSurface.withOpacity(0.1),
+                            width: 1.5,
+                          ),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                Icon(
+                                  Icons.psychology_outlined,
+                                  color: primaryColor,
+                                  size: 22,
+                                ),
+                                const SizedBox(width: 10),
+                                Text(
+                                  'Smart Radio Loading',
+                                  style: TextStyle(
+                                    color: onSurface.withOpacity(0.9),
+                                    fontSize: 15,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 16),
+                            _buildLoadingStep(
+                              context,
+                              '1',
+                              'Analyzing current song',
+                              onSurface,
+                              primaryColor,
+                            ),
+                            const SizedBox(height: 10),
+                            _buildLoadingStep(
+                              context,
+                              '2',
+                              'Finding similar tracks',
+                              onSurface,
+                              primaryColor,
+                            ),
+                            const SizedBox(height: 10),
+                            _buildLoadingStep(
+                              context,
+                              '3',
+                              'Building personalized queue',
+                              onSurface,
+                              primaryColor,
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 28),
+                      ElevatedButton.icon(
+                        onPressed: _forceRefreshRadio,
+                        icon: const Icon(Icons.refresh, size: 20),
+                        label: const Text(
+                          'Refresh Radio',
+                          style: TextStyle(
+                            fontSize: 15,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: primaryColor,
+                          foregroundColor: themeData.colorScheme.onPrimary,
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 28,
+                            vertical: 14,
+                          ),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                        ),
+                      ),
+                    ],
+                    const SizedBox(height: 40),
+                  ],
                 ),
-                const SizedBox(height: 24),
-                Icon(Icons.radio, size: 48, color: onSurface.withOpacity(0.3)),
-                const SizedBox(height: 16),
-                Text(
-                  'Loading radio queue...',
-                  style: TextStyle(
-                    color: onSurface.withOpacity(0.7),
-                    fontSize: 18,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  'Finding similar songs for you',
-                  style: TextStyle(
-                    color: onSurface.withOpacity(0.4),
-                    fontSize: 14,
-                  ),
-                ),
-                const SizedBox(height: 24),
-                ElevatedButton.icon(
-                  onPressed: _forceRefreshRadio,
-                  icon: const Icon(Icons.refresh),
-                  label: const Text('Tap to load radio'),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: primaryColor,
-                    foregroundColor: themeData.colorScheme.onPrimary,
-                  ),
-                ),
-              ],
+              ),
             ),
           );
         }
 
-        // Convert radio queue data to QuickPick objects
+        // RADIO LOADED - convert to QuickPick and show songs
         final songs = radioQueueData.map((songData) {
           final data = songData as Map<String, dynamic>;
           final durationMs = data['duration'] as int?;
-
           return QuickPick(
             videoId: data['id'] as String,
             title: data['title'] as String,
@@ -647,7 +835,7 @@ class _EnhancedRadioSheetState extends State<EnhancedRadioSheet>
 
         return Column(
           children: [
-            // Stats bar with theme colors
+            // Stats bar with radio source info
             Container(
               margin: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
               padding: const EdgeInsets.all(16),
@@ -656,57 +844,99 @@ class _EnhancedRadioSheetState extends State<EnhancedRadioSheet>
                 borderRadius: BorderRadius.circular(12),
                 border: Border.all(color: primaryColor.withOpacity(0.2)),
               ),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              child: Column(
                 children: [
                   Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      Icon(Icons.music_note, color: primaryColor, size: 20),
-                      const SizedBox(width: 8),
-                      Text(
-                        '${songs.length} songs',
-                        style: TextStyle(
-                          color: onSurface,
-                          fontSize: 14,
-                          fontWeight: FontWeight.w600,
-                        ),
+                      Row(
+                        children: [
+                          Icon(Icons.music_note, color: primaryColor, size: 20),
+                          const SizedBox(width: 8),
+                          Text(
+                            '${songs.length} songs',
+                            style: TextStyle(
+                              color: onSurface,
+                              fontSize: 14,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ],
+                      ),
+                      Row(
+                        children: [
+                          Icon(
+                            Icons.access_time,
+                            color: onSurface.withOpacity(0.6),
+                            size: 18,
+                          ),
+                          const SizedBox(width: 6),
+                          Text(
+                            _calculateTotalDuration(songs),
+                            style: TextStyle(
+                              color: onSurface.withOpacity(0.6),
+                              fontSize: 14,
+                            ),
+                          ),
+                        ],
                       ),
                     ],
                   ),
-                  Row(
-                    children: [
-                      Icon(
-                        Icons.access_time,
-                        color: onSurface.withOpacity(0.6),
-                        size: 18,
+
+                  // ✅ NEW: Radio source indicator
+                  if (radioSource != null) ...[
+                    const SizedBox(height: 12),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 8,
                       ),
-                      const SizedBox(width: 6),
-                      Text(
-                        _calculateTotalDuration(songs),
-                        style: TextStyle(
-                          color: onSurface.withOpacity(0.6),
-                          fontSize: 14,
+                      decoration: BoxDecoration(
+                        color: primaryColor.withOpacity(0.12),
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(
+                          color: primaryColor.withOpacity(0.25),
                         ),
                       ),
-                    ],
-                  ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            _getRadioSourceIcon(radioSource),
+                            color: primaryColor,
+                            size: 15,
+                          ),
+                          const SizedBox(width: 8),
+                          Flexible(
+                            child: Text(
+                              _getRadioSourceText(radioSource),
+                              style: TextStyle(
+                                color: primaryColor,
+                                fontSize: 12,
+                                fontWeight: FontWeight.w600,
+                              ),
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
                 ],
               ),
             ),
 
-            // Song list
+            // Song list (existing code)
             Expanded(
               child: StreamBuilder<MediaItem?>(
                 stream: widget.audioService.mediaItemStream,
                 builder: (context, mediaSnapshot) {
                   final currentMedia = mediaSnapshot.data;
-
                   return StreamBuilder<PlaybackState>(
                     stream: widget.audioService.playbackStateStream,
                     builder: (context, playbackSnapshot) {
                       final playbackState = playbackSnapshot.data;
                       final isPlaying = playbackState?.playing ?? false;
-
                       return ListView.builder(
                         itemCount: songs.length,
                         padding: const EdgeInsets.only(bottom: 20),
@@ -714,7 +944,6 @@ class _EnhancedRadioSheetState extends State<EnhancedRadioSheet>
                           final song = songs[index];
                           final isCurrentSong =
                               currentMedia?.id == song.videoId;
-
                           return _buildSongItem(
                             song: song,
                             isCurrentSong: isCurrentSong,
@@ -735,6 +964,87 @@ class _EnhancedRadioSheetState extends State<EnhancedRadioSheet>
     );
   }
 
+  // ✅ NEW HELPER METHODS
+
+  Widget _buildLoadingStep(
+    BuildContext context,
+    String number,
+    String text,
+    Color textColor,
+    Color accentColor,
+  ) {
+    return Row(
+      children: [
+        Container(
+          width: 26,
+          height: 26,
+          decoration: BoxDecoration(
+            color: accentColor.withOpacity(0.15),
+            shape: BoxShape.circle,
+            border: Border.all(color: accentColor.withOpacity(0.3), width: 1.5),
+          ),
+          child: Center(
+            child: Text(
+              number,
+              style: TextStyle(
+                color: accentColor,
+                fontSize: 12,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Text(
+            text,
+            style: TextStyle(
+              color: textColor.withOpacity(0.7),
+              fontSize: 13,
+              height: 1.3,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  IconData _getRadioSourceIcon(String? source) {
+    if (source == null) return Icons.radio;
+    switch (source) {
+      case 'playlist_continuation':
+        return Icons.playlist_play;
+      case 'search':
+        return Icons.search;
+      case 'quickPick':
+        return Icons.bolt;
+      case 'savedSongs':
+        return Icons.favorite;
+      case 'communityPlaylist':
+        return Icons.people;
+      default:
+        return Icons.radio;
+    }
+  }
+
+  String _getRadioSourceText(String? source) {
+    if (source == null) return 'Smart radio queue';
+    switch (source) {
+      case 'playlist_continuation':
+        return 'Radio from playlist continuation';
+      case 'search':
+        return 'Radio based on search result';
+      case 'quickPick':
+        return 'Radio based on quick pick';
+      case 'savedSongs':
+        return 'Radio based on saved song';
+      case 'communityPlaylist':
+        return 'Radio from community playlist';
+      default:
+        return 'Smart radio queue';
+    }
+  }
+
   // Add helper method for duration formatting
   String _formatDuration(Duration duration) {
     final minutes = duration.inMinutes;
@@ -744,8 +1054,6 @@ class _EnhancedRadioSheetState extends State<EnhancedRadioSheet>
 
   Widget _buildQueueTab() {
     final handler = getAudioHandler();
-
-    // Get theme colors
     final themeData = Theme.of(context);
     final primaryColor = themeData.colorScheme.primary;
     final onSurface = themeData.colorScheme.onSurface;
@@ -760,25 +1068,140 @@ class _EnhancedRadioSheetState extends State<EnhancedRadioSheet>
       );
     }
 
-    return StreamBuilder<List<MediaItem>>(
-      stream: handler.queue.stream,
+    return StreamBuilder<dynamic>(
+      stream: handler.customState.stream,
       builder: (context, snapshot) {
-        final queue = snapshot.data ?? [];
+        final customState = snapshot.data as Map<String, dynamic>? ?? {};
+        final isPlaylistMode = customState['is_playlist_mode'] == true;
 
-        final queueSongs = queue.map((mediaItem) {
-          return QuickPick(
-            videoId: mediaItem.id,
-            title: mediaItem.title,
-            artists: mediaItem.artist ?? 'Unknown Artist',
-            thumbnail: mediaItem.artUri?.toString() ?? '',
-            duration: mediaItem.duration != null
-                ? _formatDuration(mediaItem.duration!)
-                : null,
+        // ── PLAYLIST MODE: show playlist songs ──────────────────────────
+        if (isPlaylistMode) {
+          final playlistData =
+              customState['playlist_songs'] as List<dynamic>? ?? [];
+          final currentIndex =
+              customState['playlist_current_index'] as int? ?? -1;
+
+          if (playlistData.isEmpty) {
+            return Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(
+                    Icons.queue_music,
+                    size: 64,
+                    color: onSurface.withOpacity(0.3),
+                  ),
+                  const SizedBox(height: 16),
+                  Text(
+                    'Loading playlist...',
+                    style: TextStyle(
+                      color: onSurface.withOpacity(0.7),
+                      fontSize: 18,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
+              ),
+            );
+          }
+
+          final songs = playlistData.map((data) {
+            final d = data as Map<String, dynamic>;
+            final durationMs = d['duration'] as int?;
+            return QuickPick(
+              videoId: d['id'] as String,
+              title: d['title'] as String,
+              artists: d['artist'] as String? ?? 'Unknown Artist',
+              thumbnail: d['artUri'] as String? ?? '',
+              duration: durationMs != null
+                  ? _formatDuration(Duration(milliseconds: durationMs))
+                  : null,
+            );
+          }).toList();
+
+          return Column(
+            children: [
+              Container(
+                margin: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: surfaceVariant.withOpacity(0.3),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: primaryColor.withOpacity(0.2)),
+                ),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Row(
+                      children: [
+                        Icon(
+                          Icons.playlist_play,
+                          color: primaryColor,
+                          size: 20,
+                        ),
+                        const SizedBox(width: 8),
+                        Text(
+                          '${songs.length} songs in playlist',
+                          style: TextStyle(
+                            color: onSurface,
+                            fontSize: 14,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ],
+                    ),
+                    Text(
+                      currentIndex >= 0
+                          ? 'Playing ${currentIndex + 1} of ${songs.length}'
+                          : '',
+                      style: TextStyle(
+                        color: onSurface.withOpacity(0.6),
+                        fontSize: 13,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Expanded(
+                child: StreamBuilder<MediaItem?>(
+                  stream: widget.audioService.mediaItemStream,
+                  builder: (context, mediaSnapshot) {
+                    final currentMedia = mediaSnapshot.data;
+                    return StreamBuilder<PlaybackState>(
+                      stream: widget.audioService.playbackStateStream,
+                      builder: (context, playbackSnapshot) {
+                        final isPlaying =
+                            playbackSnapshot.data?.playing ?? false;
+                        return ListView.builder(
+                          itemCount: songs.length,
+                          padding: const EdgeInsets.only(bottom: 20),
+                          itemBuilder: (context, index) {
+                            final song = songs[index];
+                            final isCurrentSong =
+                                currentMedia?.id == song.videoId;
+                            return _buildSongItem(
+                              song: song,
+                              isCurrentSong: isCurrentSong,
+                              isPlaying: isPlaying,
+                              index: index + 1,
+                              showDragHandle: false,
+                            );
+                          },
+                        );
+                      },
+                    );
+                  },
+                ),
+              ),
+            ],
           );
-        }).toList();
+        }
 
-        // Empty state
-        if (queueSongs.isEmpty) {
+        // ── RADIO MODE: show explicit queue ─────────────────────────────
+        final explicitData =
+            customState['explicit_queue'] as List<dynamic>? ?? [];
+
+        if (explicitData.isEmpty) {
           return Center(
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
@@ -790,7 +1213,7 @@ class _EnhancedRadioSheetState extends State<EnhancedRadioSheet>
                 ),
                 const SizedBox(height: 16),
                 Text(
-                  'No songs in queue',
+                  'Queue is empty',
                   style: TextStyle(
                     color: onSurface.withOpacity(0.7),
                     fontSize: 18,
@@ -799,7 +1222,7 @@ class _EnhancedRadioSheetState extends State<EnhancedRadioSheet>
                 ),
                 const SizedBox(height: 8),
                 Text(
-                  'Add songs from radio to build your queue',
+                  'Add songs from radio to play next',
                   style: TextStyle(
                     color: onSurface.withOpacity(0.4),
                     fontSize: 14,
@@ -810,71 +1233,66 @@ class _EnhancedRadioSheetState extends State<EnhancedRadioSheet>
           );
         }
 
+        final queueSongs = explicitData.map((data) {
+          final d = data as Map<String, dynamic>;
+          final durationMs = d['duration'] as int?;
+          return QuickPick(
+            videoId: d['id'] as String,
+            title: d['title'] as String,
+            artists: d['artist'] as String? ?? 'Unknown Artist',
+            thumbnail: d['artUri'] as String? ?? '',
+            duration: durationMs != null
+                ? _formatDuration(Duration(milliseconds: durationMs))
+                : null,
+          );
+        }).toList();
+
         return Column(
           children: [
-            // Stats bar with theme colors
             Container(
               margin: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
               padding: const EdgeInsets.all(16),
               decoration: BoxDecoration(
-                color: _isEditMode
-                    ? primaryColor.withOpacity(0.1)
-                    : surfaceVariant.withOpacity(0.3),
+                color: surfaceVariant.withOpacity(0.3),
                 borderRadius: BorderRadius.circular(12),
-                border: Border.all(
-                  color: _isEditMode
-                      ? primaryColor
-                      : onSurface.withOpacity(0.1),
-                ),
+                border: Border.all(color: primaryColor.withOpacity(0.2)),
               ),
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
                   Row(
                     children: [
-                      Icon(
-                        _isEditMode ? Icons.edit : Icons.queue_music,
-                        color: _isEditMode ? primaryColor : onSurface,
-                        size: 20,
-                      ),
+                      Icon(Icons.queue_music, color: primaryColor, size: 20),
                       const SizedBox(width: 8),
                       Text(
-                        _isEditMode
-                            ? 'Drag to reorder'
-                            : '${queueSongs.length} songs in queue',
+                        '${queueSongs.length} songs up next',
                         style: TextStyle(
-                          color: _isEditMode ? primaryColor : onSurface,
+                          color: onSurface,
                           fontSize: 14,
                           fontWeight: FontWeight.w600,
                         ),
                       ),
                     ],
                   ),
-                  if (!_isEditMode)
-                    Text(
-                      _calculateTotalDuration(queueSongs),
-                      style: TextStyle(
-                        color: onSurface.withOpacity(0.6),
-                        fontSize: 14,
-                      ),
+                  Text(
+                    _calculateTotalDuration(queueSongs),
+                    style: TextStyle(
+                      color: onSurface.withOpacity(0.6),
+                      fontSize: 14,
                     ),
+                  ),
                 ],
               ),
             ),
-
-            // Queue list
             Expanded(
               child: StreamBuilder<MediaItem?>(
                 stream: widget.audioService.mediaItemStream,
                 builder: (context, mediaSnapshot) {
                   final currentMedia = mediaSnapshot.data;
-
                   return StreamBuilder<PlaybackState>(
                     stream: widget.audioService.playbackStateStream,
                     builder: (context, playbackSnapshot) {
-                      final playbackState = playbackSnapshot.data;
-                      final isPlaying = playbackState?.playing ?? false;
-
+                      final isPlaying = playbackSnapshot.data?.playing ?? false;
                       return ListView.builder(
                         itemCount: queueSongs.length,
                         padding: const EdgeInsets.only(bottom: 20),
@@ -882,8 +1300,8 @@ class _EnhancedRadioSheetState extends State<EnhancedRadioSheet>
                           final song = queueSongs[index];
                           final isCurrentSong =
                               currentMedia?.id == song.videoId;
-
                           return _buildSongItem(
+                            key: ValueKey(song.videoId),
                             song: song,
                             isCurrentSong: isCurrentSong,
                             isPlaying: isPlaying,

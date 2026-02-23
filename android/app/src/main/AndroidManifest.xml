@@ -45,6 +45,16 @@
         android:largeHeap="true"
         android:hardwareAccelerated="true">
 
+        <!-- ==================== NOTIFICATION ICON ==================== -->
+        <!-- ✅ ADD THESE TWO META-DATA TAGS HERE -->
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_icon"
+            android:resource="@drawable/ic_logo_notification" />
+        
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_color"
+            android:resource="@android:color/white" />
+
         <!-- ==================== MAIN ACTIVITY ==================== -->
         <activity
             android:name=".MainActivity"

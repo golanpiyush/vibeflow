@@ -8,8 +8,10 @@ import 'package:vibeflow/constants/app_spacing.dart';
 import 'package:vibeflow/constants/app_typography.dart';
 import 'package:vibeflow/constants/theme_colors.dart';
 import 'package:vibeflow/installer_services/update_manager_service.dart';
+import 'package:vibeflow/pages/appearance_page.dart';
 
 import 'package:vibeflow/pages/subpages/settings/cache_page.dart';
+import 'package:vibeflow/pages/subpages/settings/changelog_page.dart';
 import 'package:vibeflow/pages/subpages/settings/database_page.dart';
 import 'package:vibeflow/pages/subpages/settings/other_page.dart';
 import 'package:vibeflow/pages/subpages/settings/player_settings_page.dart';
@@ -209,8 +211,20 @@ class _AboutPageState extends ConsumerState<AboutPage> {
                             },
                           ),
 
-                          // const SizedBox(height: AppSpacing.xl),
-
+                          const SizedBox(height: AppSpacing.xl),
+                          _buildClickableItem(
+                            context,
+                            'View Changelog',
+                            'See what\'s new in recent updates',
+                            ref: ref,
+                            onTap: () {
+                              Navigator.of(context).push(
+                                MaterialPageRoute(
+                                  builder: (_) => const ChangelogPage(),
+                                ),
+                              );
+                            },
+                          ),
                           // // UPDATE SETTINGS Section
                           // Text(
                           //   'UPDATE SETTINGS',
@@ -391,17 +405,9 @@ class _AboutPageState extends ConsumerState<AboutPage> {
               iconActiveColor: iconActiveColor,
               iconInactiveColor: iconInactiveColor,
               labelStyle: sidebarLabelStyle,
-              index: -1,
-            ),
-            const SizedBox(height: 32),
-            _buildSidebarItem(
-              context,
-              label: 'Appearance',
-              iconActiveColor: iconActiveColor,
-              iconInactiveColor: iconInactiveColor,
-              labelStyle: sidebarLabelStyle,
               index: 0,
             ),
+
             const SizedBox(height: 24),
             _buildSidebarItem(
               context,
@@ -489,7 +495,9 @@ class _AboutPageState extends ConsumerState<AboutPage> {
               child: Text(
                 label,
                 textAlign: TextAlign.center,
-                style: labelStyle.copyWith(fontSize: 16),
+                style: labelStyle.copyWith(
+                  fontSize: 16,
+                ), // Increased from 16 to 18
               ),
             ),
           ],
@@ -600,8 +608,8 @@ class _AboutPageState extends ConsumerState<AboutPage> {
         Navigator.popUntil(context, (route) => route.isFirst);
         return;
       case 0:
-        // Appearance page - add your page here
-        return;
+        page = const AppearancePage();
+        break;
       case 1:
         page = const PlayerSettingsPage();
         break;

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:ui';
 
 import 'package:awesome_notifications/awesome_notifications.dart';
@@ -16,7 +17,10 @@ import 'package:vibeflow/managers/download_manager.dart';
 import 'package:vibeflow/models/DBSong.dart';
 import 'package:vibeflow/models/quick_picks_model.dart';
 import 'package:vibeflow/pages/audio_equalizer_page.dart';
+import 'package:vibeflow/pages/subpages/songs/playlists.dart';
+import 'package:vibeflow/pages/user_taste_screen.dart';
 import 'package:vibeflow/services/audio_service.dart';
+import 'package:vibeflow/services/audio_ui_sync.dart';
 import 'package:vibeflow/services/bg_audio_handler.dart';
 import 'package:vibeflow/services/haptic_feedback_service.dart';
 import 'package:vibeflow/utils/album_color_generator.dart';
@@ -52,7 +56,9 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
   String? _currentArtworkUrl;
 
   AlbumPalette? _albumPalette;
-
+  Timer? _sleepTimer;
+  Duration? _sleepTimerDuration;
+  DateTime? _sleepTimerEndTime;
   late AnimationController _lyricsController;
   late AnimationController _pauseOverlayController;
   bool _showLyrics = false;
@@ -67,11 +73,22 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
   bool _isSaved = false;
   bool _isDownloading = false;
 
+  MediaItem? _currentDisplayMedia;
+  String? _currentVideoId;
+  String? _pendingSideEffectId;
+  bool _isSideEffectRunning = false;
+  String? _lastArtworkUrl; // rename from _currentArtworkUrl for palette guard
+  bool _isCheckingLiked = false;
+  bool _isLiked = false;
+
   @override
   void initState() {
     super.initState();
     isMiniplayerVisible.value = false;
-
+    _currentDisplayMedia =
+        AudioUISync.instance.currentMedia ?? getAudioHandler()?.mediaItem.value;
+    _currentVideoId = _currentDisplayMedia?.id;
+    AudioUISync.instance.addListener(_onAudioSyncChanged);
     _albumArtController = AnimationController(
       duration: const Duration(milliseconds: 1200),
       vsync: this,
@@ -112,33 +129,68 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
 
   Future<void> _playInitialSong() async {
     try {
-      print('🎵 [PlayerScreen] Checking if song needs to be played');
+      final handler = getAudioHandler();
+      if (handler == null) return;
+      final currentMedia = handler.mediaItem.value;
+      final hasAudioSource = handler.audioSource != null;
+      final isPlaying = handler.isPlaying;
 
-      final currentMedia = await _audioService.mediaItemStream.first;
-
-      // Only play if it's a different song
-      if (currentMedia == null || currentMedia.id != widget.song.videoId) {
-        print('🎵 [PlayerScreen] Playing new song: ${widget.song.title}');
-        await _audioService.playSong(widget.song);
-      } else {
-        print('✅ [PlayerScreen] Song already playing: ${widget.song.title}');
+      if (currentMedia?.id == widget.song.videoId && hasAudioSource) {
+        print(
+          '✅ [PlayerScreen] Song already loaded: ${_currentDisplayMedia?.title}',
+        );
+        if (!isPlaying) await _audioService.play();
+        return;
       }
+      print(
+        '🎵 [PlayerScreen] Playing new song: ${_currentDisplayMedia?.title}',
+      );
+      await _audioService.playSong(widget.song);
     } catch (e, stackTrace) {
       print('❌ [PlayerScreen] Playback error: $e');
       await HapticFeedbackService().vibrateCriticalError();
-
       setState(() {
         _hasAudioError = true;
         _errorMessage = 'Playback Error';
         _detailedError =
-            'An error occurred while trying to play "${widget.song.title}".\n\n'
-            'Error Details:\n'
-            '${e.toString()}\n\n'
-            'Video ID: ${widget.song.videoId}\n\n'
-            'Stack Trace:\n'
-            '${stackTrace.toString().split('\n').take(5).join('\n')}';
+            'Error: $e\n\nStack:\n${stackTrace.toString().split('\n').take(5).join('\n')}';
       });
       _errorOverlayController.forward();
+    }
+  }
+
+  void _onAudioSyncChanged() {
+    final item = AudioUISync.instance.currentMedia;
+    if (item == null || !mounted) return;
+    _currentDisplayMedia = item;
+    if (item.id != _currentVideoId) {
+      _currentVideoId = item.id;
+      _dispatchSideEffects(item);
+    }
+    setState(() {});
+  }
+
+  void _dispatchSideEffects(MediaItem item) {
+    _pendingSideEffectId = item.id;
+    _currentArtworkUrl =
+        item.artUri?.toString() ??
+        _currentArtworkUrl ??
+        widget.song.thumbnail; // ADD
+    final artUrl = item.artUri?.toString() ?? '';
+    if (artUrl.isNotEmpty && artUrl != _lastArtworkUrl) {
+      _lastArtworkUrl = artUrl;
+      _loadAlbumColorsFromUrl(artUrl);
+    }
+    _checkIfSongIsSaved(item.id);
+  }
+
+  Future<void> _loadAlbumColorsFromUrl(String url) async {
+    if (url.isEmpty) return;
+    try {
+      final palette = await AlbumColorGenerator.fromAnySource(url);
+      if (mounted) setState(() => _albumPalette = palette);
+    } catch (e) {
+      print('Error loading album colors: $e');
     }
   }
 
@@ -149,33 +201,51 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
     return '$minutes:${seconds.toString().padLeft(2, '0')}';
   }
 
-  Future<void> _loadAlbumColors() async {
-    if (widget.song.thumbnail.isEmpty) return;
+  Future<void> _loadAlbumColors({String? artUrl}) async {
+    final url = artUrl ?? _currentArtworkUrl ?? widget.song.thumbnail;
+    if (url.isEmpty) return;
+
+    // Capture the videoId now — discard result if song changed during await
+    final expectedId = _currentVideoId;
 
     try {
-      final palette = await AlbumColorGenerator.fromAnySource(
-        widget.song.thumbnail,
-      );
-      if (mounted) {
-        setState(() {
-          _albumPalette = palette;
-        });
+      final palette = await AlbumColorGenerator.fromAnySource(url);
+      if (mounted && _currentVideoId == expectedId) {
+        setState(() => _albumPalette = palette);
       }
     } catch (e) {
       print('Error loading album colors: $e');
     }
   }
 
-  Future<void> _checkIfSongIsSaved() async {
-    final downloadedSongs = await DownloadService.instance.getDownloadedSongs();
-    final isSaved = downloadedSongs.any(
-      (s) => s.videoId == widget.song.videoId,
-    );
+  Future<void> _checkIfSongIsSaved([String? videoId]) async {
+    final id = videoId ?? _currentVideoId ?? widget.song.videoId;
 
-    if (mounted) {
+    _pendingSideEffectId = id;
+    if (_isSideEffectRunning) return;
+    _isSideEffectRunning = true;
+
+    try {
+      final downloadService = DownloadService.instance;
+      final savedSongs = await downloadService.getDownloadedSongs();
+
+      if (!mounted || id != _pendingSideEffectId) return;
+
       setState(() {
-        _isSaved = isSaved;
+        _isLiked = savedSongs.any((s) => s.videoId == id); // ← uses correct id
+        _isCheckingLiked = false;
       });
+    } catch (e) {
+      if (mounted && id == _pendingSideEffectId) {
+        setState(() => _isCheckingLiked = false);
+      }
+    } finally {
+      _isSideEffectRunning = false;
+      if (_pendingSideEffectId != null && _pendingSideEffectId != id) {
+        final next = _pendingSideEffectId!;
+        _pendingSideEffectId = null;
+        _checkIfSongIsSaved(next);
+      }
     }
   }
 
@@ -184,10 +254,11 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
       final handler = AudioServices.handler;
       final currentMedia = await handler.mediaItem.first;
 
-      if (currentMedia?.id == widget.song.videoId) {
-        final core = VibeFlowCore();
-        await core.initialize();
-        final url = await core.getAudioUrlWithRetry(widget.song.videoId);
+      final targetId = _currentDisplayMedia?.id ?? widget.song.videoId;
+      final core = VibeFlowCore();
+
+      if (currentMedia?.id == targetId) {
+        final url = await core.getAudioUrlWithRetry(targetId);
         return url;
       }
 
@@ -203,10 +274,8 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
 
     if (_isSaved) {
       // Remove from saved songs
-      final success = await DownloadService.instance.deleteDownload(
-        widget.song.videoId,
-      );
-
+      final videoId = _currentDisplayMedia?.id ?? widget.song.videoId;
+      final success = await DownloadService.instance.deleteDownload(videoId);
       if (success && mounted) {
         setState(() {
           _isSaved = false;
@@ -503,7 +572,9 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
                       if (!_hasAudioError)
                         _buildLyricsOverlay(
                           actualAlbumSize,
-                          currentMedia?.title ?? widget.song.title,
+                          currentMedia?.title ??
+                              _currentDisplayMedia?.title ??
+                              widget.song.title,
                         ),
                     ],
                   ),
@@ -576,9 +647,9 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
                   width: actualAlbumSize - 40,
                   height: actualAlbumSize - 60,
                   child: CenteredLyricsWidget(
-                    title: widget.song.title,
-                    artist: widget.song.artists,
-                    videoId: widget.song.videoId,
+                    title: _currentDisplayMedia?.title ?? widget.song.title,
+                    artist: _currentDisplayMedia?.artist ?? widget.song.artists,
+                    videoId: _currentDisplayMedia?.id ?? widget.song.videoId,
                     duration: widget.song.duration != null
                         ? int.tryParse(widget.song.duration!) ?? -1
                         : -1,
@@ -597,6 +668,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
 
   Widget _buildErrorOverlay(double size) {
     final themeData = Theme.of(context);
+    final colorScheme = themeData.colorScheme;
     final radiusMultiplier = ref.watch(thumbnailRadiusProvider);
 
     return AnimatedBuilder(
@@ -609,7 +681,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
             height: size,
             decoration: BoxDecoration(
               borderRadius: BorderRadius.circular(size * radiusMultiplier),
-              color: themeData.shadowColor.withOpacity(0.85),
+              color: colorScheme.surface.withOpacity(0.85),
             ),
             child: Padding(
               padding: const EdgeInsets.all(24.0),
@@ -620,7 +692,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
                   Icon(
                     Icons.error_outline_rounded,
                     size: 64,
-                    color: themeData.colorScheme.error,
+                    color: colorScheme.error,
                   ),
                   const SizedBox(height: 16),
 
@@ -628,7 +700,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
                   Text(
                     _errorMessage ?? 'Playback Error',
                     style: themeData.textTheme.titleLarge?.copyWith(
-                      color: themeData.colorScheme.onPrimary,
+                      color: colorScheme.onSurface,
                     ),
                     textAlign: TextAlign.center,
                   ),
@@ -638,7 +710,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
                   Text(
                     'Unable to load audio source',
                     style: themeData.textTheme.bodyMedium?.copyWith(
-                      color: themeData.colorScheme.onPrimary.withOpacity(0.7),
+                      color: colorScheme.onSurface.withOpacity(0.7),
                     ),
                     textAlign: TextAlign.center,
                   ),
@@ -656,19 +728,15 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
                         icon: Icon(
                           Icons.info_outline_rounded,
                           size: 18,
-                          color: themeData.colorScheme.onPrimary,
+                          color: colorScheme.onSurface,
                         ),
                         label: Text(
                           'More Info',
-                          style: TextStyle(
-                            color: themeData.colorScheme.onPrimary,
-                          ),
+                          style: TextStyle(color: colorScheme.onSurface),
                         ),
                         style: OutlinedButton.styleFrom(
                           side: BorderSide(
-                            color: themeData.colorScheme.onPrimary.withOpacity(
-                              0.3,
-                            ),
+                            color: colorScheme.onSurface.withOpacity(0.3),
                           ),
                           shape: RoundedRectangleBorder(
                             borderRadius: BorderRadius.circular(8),
@@ -691,8 +759,8 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
                         icon: const Icon(Icons.refresh_rounded, size: 18),
                         label: const Text('Retry'),
                         style: ElevatedButton.styleFrom(
-                          backgroundColor: themeData.colorScheme.error,
-                          foregroundColor: themeData.colorScheme.onPrimary,
+                          backgroundColor: colorScheme.error,
+                          foregroundColor: colorScheme.onError,
                           shape: RoundedRectangleBorder(
                             borderRadius: BorderRadius.circular(8),
                           ),
@@ -730,10 +798,16 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
   @override
   Widget build(BuildContext context) {
     final themeData = Theme.of(context);
-    final backgroundColor = themeData.scaffoldBackgroundColor;
-    final iconActiveColor =
-        themeData.iconTheme.color ?? themeData.colorScheme.primary;
-    final iconInactiveColor = themeData.disabledColor;
+    final colorScheme = themeData.colorScheme;
+
+    // Use colorScheme for all colors
+    final backgroundColor = colorScheme.surface;
+    final textPrimary = colorScheme.onSurface;
+    final textSecondary = colorScheme.onSurface.withOpacity(0.7);
+    final textMuted = colorScheme.onSurface.withOpacity(0.5);
+    final iconActiveColor = colorScheme.primary;
+    final iconInactiveColor = colorScheme.onSurface.withOpacity(0.3);
+    final errorColor = colorScheme.error;
 
     return Scaffold(
       backgroundColor: backgroundColor,
@@ -776,19 +850,15 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
                                   icon: Icon(
                                     Icons.keyboard_arrow_down_rounded,
                                     size: 32,
-                                    color: themeData.textTheme.bodyLarge?.color,
+                                    color: textPrimary,
                                   ),
                                   onPressed: () => Navigator.pop(context),
                                 ),
-
-                                // Option 2: Public sharing (no access code needed)
-                                const SizedBox(width: 8),
-
                                 IconButton(
                                   icon: Icon(
                                     Icons.more_horiz_rounded,
                                     size: 28,
-                                    color: themeData.textTheme.bodyLarge?.color,
+                                    color: textPrimary,
                                   ),
                                   onPressed: _showMoreOptions,
                                 ),
@@ -815,26 +885,28 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
                           child: Column(
                             children: [
                               AutoSizeText(
-                                currentMedia?.title ?? widget.song.title,
+                                _currentDisplayMedia?.title ??
+                                    widget.song.title,
                                 maxLines: 2,
                                 textAlign: TextAlign.center,
                                 style: GoogleFonts.cabin(
                                   fontSize: 24,
                                   fontWeight: FontWeight.w400,
                                   letterSpacing: 0.6,
-                                  color: themeData.textTheme.bodyLarge?.color,
+                                  color: textPrimary,
                                 ),
                               ),
                               const SizedBox(height: 6),
                               AutoSizeText(
-                                currentMedia?.artist ?? widget.song.artists,
+                                _currentDisplayMedia?.artist ??
+                                    widget.song.artists,
                                 maxLines: 1,
                                 textAlign: TextAlign.center,
                                 style: GoogleFonts.dancingScript(
                                   fontSize: 16,
                                   fontWeight: FontWeight.w800,
                                   letterSpacing: 0.7,
-                                  color: themeData.textTheme.bodyMedium?.color,
+                                  color: textSecondary,
                                 ),
                               ),
                             ],
@@ -864,8 +936,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
                                       data: SliderThemeData(
                                         trackHeight: 4,
                                         activeTrackColor: iconActiveColor,
-                                        inactiveTrackColor: iconInactiveColor
-                                            .withOpacity(0.25),
+                                        inactiveTrackColor: iconInactiveColor,
                                         thumbColor: iconActiveColor,
                                       ),
                                       child: Slider(
@@ -894,14 +965,14 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
                                             _formatDuration(position),
                                             style: GoogleFonts.pacifico(
                                               fontSize: 14,
-                                              color: iconInactiveColor,
+                                              color: textMuted,
                                             ),
                                           ),
                                           Text(
                                             _formatDuration(duration),
                                             style: GoogleFonts.pacifico(
                                               fontSize: 14,
-                                              color: iconInactiveColor,
+                                              color: textMuted,
                                             ),
                                           ),
                                         ],
@@ -942,15 +1013,38 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
                                   ),
                                 ],
                               ),
-                              child: IconButton(
-                                icon: Icon(
-                                  isPlaying
-                                      ? Icons.pause_rounded
-                                      : Icons.play_arrow_rounded,
-                                  size: 40,
-                                  color: backgroundColor,
-                                ),
-                                onPressed: _audioService.playPause,
+                              child: StreamBuilder<PlaybackState>(
+                                stream: _audioService.playbackStateStream,
+                                builder: (context, snap) {
+                                  final state = snap.data;
+                                  final isLoading =
+                                      state?.processingState ==
+                                          AudioProcessingState.loading ||
+                                      state?.processingState ==
+                                          AudioProcessingState.buffering;
+
+                                  return IconButton(
+                                    icon: isLoading
+                                        ? SizedBox(
+                                            width: 24,
+                                            height: 24,
+                                            child: CircularProgressIndicator(
+                                              strokeWidth: 2.5,
+                                              color: backgroundColor,
+                                            ),
+                                          )
+                                        : Icon(
+                                            isPlaying
+                                                ? Icons.pause_rounded
+                                                : Icons.play_arrow_rounded,
+                                            size: 40,
+                                            color: backgroundColor,
+                                          ),
+                                    onPressed: isLoading
+                                        ? null
+                                        : _audioService.playPause,
+                                  );
+                                },
                               ),
                             ),
                             const SizedBox(width: 20),
@@ -1005,7 +1099,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
                                     ? Icons.favorite_rounded
                                     : Icons.favorite_border_rounded,
                                 color: widget.song.isFavorite
-                                    ? themeData.colorScheme.error
+                                    ? errorColor
                                     : iconInactiveColor,
                               ),
                               onPressed: () {
@@ -1043,13 +1137,14 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
 
   void _showMoreOptions() {
     final themeData = Theme.of(context);
+    final colorScheme = themeData.colorScheme;
 
     showModalBottomSheet(
       context: context,
       backgroundColor: Colors.transparent,
       builder: (context) => Container(
         decoration: BoxDecoration(
-          color: themeData.cardColor,
+          color: colorScheme.surface,
           borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
         ),
         child: SafeArea(
@@ -1062,11 +1157,67 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
                 width: 40,
                 height: 4,
                 decoration: BoxDecoration(
-                  color: themeData.disabledColor.withOpacity(0.3),
+                  color: colorScheme.onSurface.withOpacity(0.3),
                   borderRadius: BorderRadius.circular(2),
                 ),
               ),
               const SizedBox(height: 20),
+
+              // Sleep Timer Option
+              ListTile(
+                leading: Container(
+                  width: 40,
+                  height: 40,
+                  decoration: BoxDecoration(
+                    color: colorScheme.onSurface.withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Icon(
+                    _sleepTimer != null && _sleepTimer!.isActive
+                        ? Icons.bedtime
+                        : Icons.bedtime_outlined,
+                    color: _sleepTimer != null && _sleepTimer!.isActive
+                        ? Colors.blue.shade300
+                        : colorScheme.onSurface,
+                    size: 22,
+                  ),
+                ),
+                title: Text(
+                  'Sleep Timer',
+                  style: GoogleFonts.inter(
+                    color: colorScheme.onSurface,
+                    fontSize: 16,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+                subtitle: Text(
+                  _sleepTimer != null && _sleepTimer!.isActive
+                      ? 'Active: ${_getRemainingTime()}'
+                      : 'Pause music after a set time',
+                  style: GoogleFonts.inter(
+                    color: _sleepTimer != null && _sleepTimer!.isActive
+                        ? Colors.blue.shade300
+                        : colorScheme.onSurface.withOpacity(0.6),
+                    fontSize: 13,
+                  ),
+                ),
+                trailing: Icon(
+                  Icons.arrow_forward_ios,
+                  color: colorScheme.onSurface.withOpacity(0.4),
+                  size: 16,
+                ),
+                onTap: () {
+                  Navigator.pop(context);
+                  _showSleepTimerDialog();
+                },
+              ),
+
+              Divider(
+                color: colorScheme.onSurface.withOpacity(0.1),
+                height: 1,
+                indent: 20,
+                endIndent: 20,
+              ),
 
               // EQ Option
               ListTile(
@@ -1074,19 +1225,19 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
                   width: 40,
                   height: 40,
                   decoration: BoxDecoration(
-                    color: themeData.disabledColor.withOpacity(0.1),
+                    color: colorScheme.onSurface.withOpacity(0.1),
                     borderRadius: BorderRadius.circular(10),
                   ),
                   child: Icon(
                     Icons.equalizer_rounded,
-                    color: themeData.iconTheme.color,
+                    color: colorScheme.onSurface,
                     size: 22,
                   ),
                 ),
                 title: Text(
                   'Equalizer',
                   style: GoogleFonts.inter(
-                    color: themeData.textTheme.bodyLarge?.color,
+                    color: colorScheme.onSurface,
                     fontSize: 16,
                     fontWeight: FontWeight.w500,
                   ),
@@ -1094,15 +1245,13 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
                 subtitle: Text(
                   'Adjust audio settings',
                   style: GoogleFonts.inter(
-                    color: themeData.textTheme.bodyMedium?.color?.withOpacity(
-                      0.6,
-                    ),
+                    color: colorScheme.onSurface.withOpacity(0.6),
                     fontSize: 13,
                   ),
                 ),
                 trailing: Icon(
                   Icons.arrow_forward_ios,
-                  color: themeData.disabledColor.withOpacity(0.4),
+                  color: colorScheme.onSurface.withOpacity(0.4),
                   size: 16,
                 ),
                 onTap: () {
@@ -1112,7 +1261,60 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
               ),
 
               Divider(
-                color: themeData.dividerColor,
+                color: colorScheme.onSurface.withOpacity(0.1),
+                height: 1,
+                indent: 20,
+                endIndent: 20,
+              ),
+
+              // ✅ ADD THIS: User Taste Option
+              ListTile(
+                leading: Container(
+                  width: 40,
+                  height: 40,
+                  decoration: BoxDecoration(
+                    color: colorScheme.onSurface.withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Icon(
+                    Icons.emoji_emotions_outlined,
+                    color: colorScheme.onSurface,
+                    size: 22,
+                  ),
+                ),
+                title: Text(
+                  'User Taste',
+                  style: GoogleFonts.inter(
+                    color: colorScheme.onSurface,
+                    fontSize: 16,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+                subtitle: Text(
+                  'Personalize your music preferences',
+                  style: GoogleFonts.inter(
+                    color: colorScheme.onSurface.withOpacity(0.6),
+                    fontSize: 13,
+                  ),
+                ),
+                trailing: Icon(
+                  Icons.arrow_forward_ios,
+                  color: colorScheme.onSurface.withOpacity(0.4),
+                  size: 16,
+                ),
+                onTap: () {
+                  Navigator.pop(context);
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => const UserTasteScreen(),
+                    ),
+                  );
+                },
+              ),
+
+              Divider(
+                color: colorScheme.onSurface.withOpacity(0.1),
                 height: 1,
                 indent: 20,
                 endIndent: 20,
@@ -1124,19 +1326,19 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
                   width: 40,
                   height: 40,
                   decoration: BoxDecoration(
-                    color: themeData.disabledColor.withOpacity(0.1),
+                    color: colorScheme.onSurface.withOpacity(0.1),
                     borderRadius: BorderRadius.circular(10),
                   ),
                   child: Icon(
                     Icons.playlist_add_rounded,
-                    color: themeData.iconTheme.color,
+                    color: colorScheme.onSurface,
                     size: 22,
                   ),
                 ),
                 title: Text(
                   'Add to Playlist',
                   style: GoogleFonts.inter(
-                    color: themeData.textTheme.bodyLarge?.color,
+                    color: colorScheme.onSurface,
                     fontSize: 16,
                     fontWeight: FontWeight.w500,
                   ),
@@ -1144,15 +1346,13 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
                 subtitle: Text(
                   'Save to your collection',
                   style: GoogleFonts.inter(
-                    color: themeData.textTheme.bodyMedium?.color?.withOpacity(
-                      0.6,
-                    ),
+                    color: colorScheme.onSurface.withOpacity(0.6),
                     fontSize: 13,
                   ),
                 ),
                 trailing: Icon(
                   Icons.arrow_forward_ios,
-                  color: themeData.disabledColor.withOpacity(0.4),
+                  color: colorScheme.onSurface.withOpacity(0.4),
                   size: 16,
                 ),
                 onTap: () {
@@ -1160,25 +1360,26 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
                   _showAddToPlaylistSheet();
                 },
               ),
+
               // Share Option
               ListTile(
                 leading: Container(
                   width: 40,
                   height: 40,
                   decoration: BoxDecoration(
-                    color: themeData.disabledColor.withOpacity(0.1),
+                    color: colorScheme.onSurface.withOpacity(0.1),
                     borderRadius: BorderRadius.circular(10),
                   ),
                   child: Icon(
                     Icons.share_rounded,
-                    color: themeData.iconTheme.color,
+                    color: colorScheme.onSurface,
                     size: 22,
                   ),
                 ),
                 title: Text(
                   'Share',
                   style: GoogleFonts.inter(
-                    color: themeData.textTheme.bodyLarge?.color,
+                    color: colorScheme.onSurface,
                     fontSize: 16,
                     fontWeight: FontWeight.w500,
                   ),
@@ -1186,15 +1387,13 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
                 subtitle: Text(
                   'Share this song',
                   style: GoogleFonts.inter(
-                    color: themeData.textTheme.bodyMedium?.color?.withOpacity(
-                      0.6,
-                    ),
+                    color: colorScheme.onSurface.withOpacity(0.6),
                     fontSize: 13,
                   ),
                 ),
                 trailing: Icon(
                   Icons.arrow_forward_ios,
-                  color: themeData.disabledColor.withOpacity(0.4),
+                  color: colorScheme.onSurface.withOpacity(0.4),
                   size: 16,
                 ),
                 onTap: () async {
@@ -1210,7 +1409,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
                             'Failed to share song: ${e.toString()}',
                             style: GoogleFonts.inter(),
                           ),
-                          backgroundColor: themeData.colorScheme.error,
+                          backgroundColor: colorScheme.error,
                           behavior: SnackBarBehavior.floating,
                         ),
                       );
@@ -1268,10 +1467,366 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
       backgroundColor: Colors.transparent,
       isScrollControlled: true,
       builder: (context) => EnhancedRadioSheet(
-        currentVideoId: widget.song.videoId,
-        currentTitle: widget.song.title,
-        currentArtist: widget.song.artists,
+        currentVideoId: _currentDisplayMedia?.id ?? widget.song.videoId,
+        currentTitle: _currentDisplayMedia?.title ?? widget.song.title,
+        currentArtist: _currentDisplayMedia?.artist ?? widget.song.artists,
         audioService: _audioService,
+      ),
+    );
+  }
+
+  // ✅ NEW: Get remaining time for display
+  String _getRemainingTime() {
+    if (_sleepTimerEndTime == null) return '';
+
+    final remaining = _sleepTimerEndTime!.difference(DateTime.now());
+
+    if (remaining.isNegative) return '0 min';
+
+    final hours = remaining.inHours;
+    final minutes = remaining.inMinutes.remainder(60);
+
+    if (hours > 0) {
+      return '$hours hr ${minutes} min';
+    } else {
+      return '$minutes min';
+    }
+  }
+
+  // ✅ NEW: Start sleep timer
+  void _startSleepTimer(Duration duration, String label) {
+    // Cancel existing timer if any
+    _sleepTimer?.cancel();
+
+    setState(() {
+      _sleepTimerDuration = duration;
+      _sleepTimerEndTime = DateTime.now().add(duration);
+    });
+
+    _sleepTimer = Timer(duration, () {
+      if (mounted) {
+        // Pause the music
+        _audioService.pause();
+
+        // Show notification
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Row(
+              children: [
+                Icon(Icons.bedtime, color: Colors.blue.shade300, size: 20),
+                const SizedBox(width: 12),
+                const Expanded(
+                  child: Text(
+                    'Sleep timer ended - Music paused',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            backgroundColor: Colors.blue.shade900,
+            duration: const Duration(seconds: 3),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+
+        setState(() {
+          _sleepTimer = null;
+          _sleepTimerDuration = null;
+          _sleepTimerEndTime = null;
+        });
+      }
+    });
+
+    // Show confirmation
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Row(
+          children: [
+            Icon(Icons.bedtime, color: Colors.blue.shade300, size: 20),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                'Sleep timer set for $label',
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ),
+          ],
+        ),
+        backgroundColor: Colors.blue.shade900,
+        duration: const Duration(seconds: 2),
+        behavior: SnackBarBehavior.floating,
+        action: SnackBarAction(
+          label: 'CANCEL',
+          textColor: Colors.white,
+          onPressed: _cancelSleepTimer,
+        ),
+      ),
+    );
+  }
+
+  // ✅ NEW: Cancel sleep timer
+  void _cancelSleepTimer() {
+    _sleepTimer?.cancel();
+
+    if (mounted) {
+      setState(() {
+        _sleepTimer = null;
+        _sleepTimerDuration = null;
+        _sleepTimerEndTime = null;
+      });
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Row(
+            children: [
+              const Icon(Icons.cancel_outlined, color: Colors.white, size: 20),
+              const SizedBox(width: 12),
+              const Expanded(
+                child: Text(
+                  'Sleep timer cancelled',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          backgroundColor: Colors.grey.shade800,
+          duration: const Duration(seconds: 2),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    }
+  }
+
+  // ✅ NEW: Show sleep timer dialog
+  void _showSleepTimerDialog() {
+    final durations = [
+      {'label': '15 minutes', 'duration': const Duration(minutes: 15)},
+      {'label': '30 minutes', 'duration': const Duration(minutes: 30)},
+      {'label': '45 minutes', 'duration': const Duration(minutes: 45)},
+      {'label': '1 hour', 'duration': const Duration(hours: 1)},
+      {'label': '2 hours', 'duration': const Duration(hours: 2)},
+      {'label': '3 hours', 'duration': const Duration(hours: 3)},
+      {'label': '5 hours', 'duration': const Duration(hours: 5)},
+    ];
+
+    // Get theme colors
+    final themeData = Theme.of(context);
+    final cardBg = themeData.colorScheme.surface;
+    final textPrimary = themeData.colorScheme.onSurface;
+    final textSecondary = textPrimary.withOpacity(0.7);
+
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (context) => Container(
+        constraints: BoxConstraints(
+          maxHeight: MediaQuery.of(context).size.height * 0.8,
+        ),
+        decoration: BoxDecoration(
+          color: cardBg,
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+        ),
+        child: SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // Drag handle
+              const SizedBox(height: 12),
+              Container(
+                width: 40,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: textSecondary.withOpacity(0.5),
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+              const SizedBox(height: 20),
+
+              // Header
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 20),
+                child: Row(
+                  children: [
+                    Icon(
+                      Icons.bedtime_rounded,
+                      color: Colors.blue.shade300,
+                      size: 24,
+                    ),
+                    const SizedBox(width: 12),
+                    Text(
+                      'Sleep Timer',
+                      style: GoogleFonts.inter(
+                        color: textPrimary,
+                        fontSize: 20,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 8),
+
+              // Active timer info (if running)
+              if (_sleepTimer != null && _sleepTimer!.isActive)
+                Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 20,
+                    vertical: 12,
+                  ),
+                  child: Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: Colors.blue.withOpacity(0.1),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(
+                        color: Colors.blue.withOpacity(0.3),
+                        width: 1,
+                      ),
+                    ),
+                    child: Row(
+                      children: [
+                        Icon(
+                          Icons.timer_rounded,
+                          color: Colors.blue.shade300,
+                          size: 20,
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Text(
+                            'Timer active: Music will pause in ${_getRemainingTime()}',
+                            style: GoogleFonts.inter(
+                              color: Colors.blue.shade300,
+                              fontSize: 13,
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+
+              const SizedBox(height: 8),
+
+              // Scrollable duration options
+              Flexible(
+                child: SingleChildScrollView(
+                  padding: EdgeInsets.only(
+                    bottom: (_sleepTimer != null && _sleepTimer!.isActive)
+                        ? 0
+                        : 20,
+                  ),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: durations.map((item) {
+                      final duration = item['duration'] as Duration;
+                      final label = item['label'] as String;
+                      final isActive =
+                          _sleepTimerDuration == duration &&
+                          _sleepTimer != null &&
+                          _sleepTimer!.isActive;
+
+                      return Column(
+                        children: [
+                          ListTile(
+                            leading: Container(
+                              width: 40,
+                              height: 40,
+                              decoration: BoxDecoration(
+                                color: isActive
+                                    ? Colors.blue.withOpacity(0.2)
+                                    : textSecondary.withOpacity(0.1),
+                                borderRadius: BorderRadius.circular(10),
+                              ),
+                              child: Icon(
+                                Icons.access_time_rounded,
+                                color: isActive
+                                    ? Colors.blue.shade300
+                                    : textSecondary,
+                                size: 20,
+                              ),
+                            ),
+                            title: Text(
+                              label,
+                              style: GoogleFonts.inter(
+                                color: isActive
+                                    ? Colors.blue.shade300
+                                    : textPrimary,
+                                fontSize: 16,
+                                fontWeight: isActive
+                                    ? FontWeight.w600
+                                    : FontWeight.w500,
+                              ),
+                            ),
+                            trailing: isActive
+                                ? Icon(
+                                    Icons.check_circle,
+                                    color: Colors.blue.shade300,
+                                    size: 20,
+                                  )
+                                : null,
+                            onTap: () {
+                              Navigator.pop(context);
+                              _startSleepTimer(duration, label);
+                            },
+                          ),
+                          if (item != durations.last)
+                            Divider(
+                              color: textSecondary.withOpacity(0.1),
+                              height: 1,
+                              indent: 20,
+                              endIndent: 20,
+                            ),
+                        ],
+                      );
+                    }).toList(),
+                  ),
+                ),
+              ),
+
+              // Cancel timer button (if active)
+              if (_sleepTimer != null && _sleepTimer!.isActive)
+                Padding(
+                  padding: const EdgeInsets.all(20),
+                  child: SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton.icon(
+                      onPressed: () {
+                        Navigator.pop(context);
+                        _cancelSleepTimer();
+                      },
+                      icon: const Icon(Icons.cancel_outlined, size: 20),
+                      label: Text(
+                        'Cancel Timer',
+                        style: GoogleFonts.inter(
+                          fontSize: 15,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.red.shade700,
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -1425,7 +1980,6 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
       return;
     }
 
-    // Convert current MediaItem to DbSong
     final dbSong = DbSong(
       videoId: currentMedia.id,
       title: currentMedia.title,
@@ -1439,7 +1993,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
       backgroundColor: Colors.transparent,
       isScrollControlled: true,
       builder: (context) => AddToPlaylistSheet(song: dbSong),
-    );
+    ).then((_) => PlaylistCoverCache.invalidateAll());
   }
 
   void _handleAlbumArtChange(String? newArtUrl) {
@@ -1534,6 +2088,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
   @override
   void dispose() {
     isMiniplayerVisible.value = true; // ✅ VERIFY THIS EXISTS
+    AudioUISync.instance.removeListener(_onAudioSyncChanged);
     _albumArtController.dispose();
     _albumRotationController.dispose();
     _lyricsController.dispose();

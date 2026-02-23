@@ -124,9 +124,9 @@ class _AccessCodeManagementScreenState
       appBar: AppBar(
         title: Text(
           'Access Code',
-          style: AppTypography.sectionHeader(
-            context,
-          ).copyWith(color: colorScheme.onSurface),
+          style: AppTypography.sectionHeader(context).copyWith(
+            color: colorScheme.onSurface, // ADD THIS
+          ),
         ),
       ),
       body: Stack(
@@ -177,6 +177,7 @@ class _AccessCodeManagementScreenState
         ),
         const SizedBox(height: AppSpacing.xxxl),
         _faqSection(colorScheme),
+        const SizedBox(height: AppSpacing.fourxxxl),
       ],
     );
   }
@@ -194,6 +195,7 @@ class _AccessCodeManagementScreenState
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(AppSpacing.radiusLarge),
       ),
+      color: colorScheme.surface, // ADD THIS
       child: Padding(
         padding: const EdgeInsets.all(AppSpacing.xl),
         child: Column(
@@ -204,14 +206,16 @@ class _AccessCodeManagementScreenState
               children: [
                 Text(
                   'Access Status',
-                  style: AppTypography.sectionHeader(context),
+                  style: AppTypography.sectionHeader(context).copyWith(
+                    color: colorScheme.onSurface, // ADD THIS
+                  ),
                 ),
                 _pill(
                   text: isAuthenticated
                       ? 'AUTHENTICATED'
                       : (isValid ? 'ACTIVE' : 'EXPIRED'),
                   color: isAuthenticated
-                      ? Colors.blue
+                      ? const Color.fromARGB(255, 33, 243, 79)
                       : (isValid ? Colors.green : Colors.orange),
                 ),
               ],
@@ -270,7 +274,6 @@ class _AccessCodeManagementScreenState
       ),
     );
   }
-
   // =======================
   // INFO ROW
   // =======================
@@ -300,15 +303,17 @@ class _AccessCodeManagementScreenState
             children: [
               Text(
                 title,
-                style: AppTypography.caption(
-                  context,
-                ).copyWith(color: colorScheme.onSurface.withOpacity(0.6)),
+                style: AppTypography.caption(context).copyWith(
+                  color: colorScheme.onSurface.withOpacity(0.6), // ADD THIS
+                ),
               ),
               const SizedBox(height: 4),
               Text(
                 value,
                 style: AppTypography.subtitle(context).copyWith(
-                  color: warning ? Colors.orange : colorScheme.onSurface,
+                  color: warning
+                      ? Colors.orange
+                      : colorScheme.onSurface, // ADD THIS
                 ),
               ),
             ],
@@ -319,13 +324,19 @@ class _AccessCodeManagementScreenState
             icon: Icon(
               Icons.copy,
               size: 18,
-              color: colorScheme.onSurface.withOpacity(0.7),
+              color: colorScheme.onSurface.withOpacity(0.7), // ADD THIS
             ),
             onPressed: () {
               Clipboard.setData(ClipboardData(text: value));
-              ScaffoldMessenger.of(
-                context,
-              ).showSnackBar(const SnackBar(content: Text('Copied')));
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text(
+                    'Copied',
+                    style: TextStyle(color: colorScheme.onPrimary), // ADD THIS
+                  ),
+                  backgroundColor: colorScheme.primary, // ADD THIS
+                ),
+              );
             },
           ),
       ],
@@ -341,19 +352,25 @@ class _AccessCodeManagementScreenState
 
   Widget _buildNoAccessCard(ColorScheme scheme) {
     return Card(
+      color: scheme.surface, // ADD THIS
       child: Padding(
         padding: const EdgeInsets.all(AppSpacing.xxl),
         child: Column(
           children: [
             Icon(Icons.lock_open, size: 64, color: scheme.primary),
             const SizedBox(height: AppSpacing.lg),
-            Text('No Access Code', style: AppTypography.sectionHeader(context)),
+            Text(
+              'No Access Code',
+              style: AppTypography.sectionHeader(context).copyWith(
+                color: scheme.onSurface, // ADD THIS
+              ),
+            ),
             const SizedBox(height: AppSpacing.sm),
             Text(
               'Enter an access code to unlock social features.',
-              style: AppTypography.subtitle(
-                context,
-              ).copyWith(color: scheme.onSurface.withOpacity(0.7)),
+              style: AppTypography.subtitle(context).copyWith(
+                color: scheme.onSurface.withOpacity(0.7), // ADD THIS
+              ),
               textAlign: TextAlign.center,
             ),
             const SizedBox(height: AppSpacing.xl),
@@ -375,7 +392,6 @@ class _AccessCodeManagementScreenState
       ),
     );
   }
-
   // =======================
   // WARNING CARD
   // =======================
@@ -405,9 +421,9 @@ class _AccessCodeManagementScreenState
               Expanded(
                 child: Text(
                   'You are logged in. Logging out will remove social features.',
-                  style: AppTypography.subtitle(
-                    context,
-                  ).copyWith(color: textColor),
+                  style: AppTypography.subtitle(context).copyWith(
+                    color: textColor, // Keep functional color
+                  ),
                 ),
               ),
             ],
@@ -443,9 +459,9 @@ class _AccessCodeManagementScreenState
                 isValid
                     ? 'Clearing the access code will remove social features and sign you out.'
                     : 'Your access code has expired.',
-                style: AppTypography.subtitle(
-                  context,
-                ).copyWith(color: textColor),
+                style: AppTypography.subtitle(context).copyWith(
+                  color: textColor, // Keep functional color
+                ),
               ),
             ),
           ],
@@ -453,7 +469,6 @@ class _AccessCodeManagementScreenState
       ),
     );
   }
-
   // =======================
   // CLEAR BUTTON
   // =======================
@@ -487,34 +502,45 @@ class _AccessCodeManagementScreenState
     final colorScheme = Theme.of(context).colorScheme;
 
     return AlertDialog(
+      backgroundColor: colorScheme.surface, // ADD THIS
       title: Text(
         isAuthenticated ? 'Sign Out' : 'Clear Access Code',
-        style: AppTypography.dialogTitle(
-          context,
-        ).copyWith(color: colorScheme.onSurface),
+        style: AppTypography.dialogTitle(context).copyWith(
+          color: colorScheme.onSurface, // ADD THIS
+        ),
       ),
       content: Text(
         isAuthenticated
             ? 'You will be logged out and lose access to social features.'
             : 'This action cannot be undone. And you will be logged out.',
-        style: AppTypography.subtitle(
-          context,
-        ).copyWith(color: colorScheme.onSurface.withOpacity(0.7)),
+        style: AppTypography.subtitle(context).copyWith(
+          color: colorScheme.onSurface.withOpacity(0.7), // ADD THIS
+        ),
       ),
       actions: [
         TextButton(
           onPressed: () => setState(() => _showConfirmation = false),
-          child: const Text('Cancel'),
+          child: Text(
+            'Cancel',
+            style: TextStyle(color: colorScheme.primary), // ADD THIS
+          ),
         ),
         ElevatedButton(
           onPressed: _isClearing ? null : _clearAccessCodeData,
+          style: ElevatedButton.styleFrom(
+            backgroundColor: colorScheme.error, // ADD THIS
+            foregroundColor: colorScheme.onError, // ADD THIS
+          ),
           child: _isClearing
               ? const SizedBox(
                   height: 18,
                   width: 18,
                   child: CircularProgressIndicator(strokeWidth: 2),
                 )
-              : Text(isAuthenticated ? 'Sign Out' : 'Clear'),
+              : Text(
+                  isAuthenticated ? 'Sign Out' : 'Clear',
+                  style: TextStyle(color: colorScheme.onError), // ADD THIS
+                ),
         ),
       ],
     );
@@ -523,10 +549,10 @@ class _AccessCodeManagementScreenState
   // =======================
   // FAQ
   // =======================
-
   Widget _faqSection(ColorScheme colorScheme) {
     return Card(
       elevation: 0,
+      color: colorScheme.surface, // ADD THIS
       child: Padding(
         padding: const EdgeInsets.all(AppSpacing.lg),
         child: Column(
@@ -534,7 +560,9 @@ class _AccessCodeManagementScreenState
           children: [
             Text(
               'About Access Codes',
-              style: AppTypography.sectionHeader(context),
+              style: AppTypography.sectionHeader(context).copyWith(
+                color: colorScheme.onSurface, // ADD THIS
+              ),
             ),
             const SizedBox(height: AppSpacing.lg),
             _faq(
@@ -542,7 +570,7 @@ class _AccessCodeManagementScreenState
               'Unlocks social and shared playlist features.',
               colorScheme,
             ),
-            _faq('Validity?', 'Valid for 30 days.', colorScheme),
+            // _faq('Validity?', 'Valid for 30 days.', colorScheme),
             _faq('Multiple codes?', 'Only one at a time.', colorScheme),
           ],
         ),
@@ -560,15 +588,15 @@ class _AccessCodeManagementScreenState
             q,
             style: AppTypography.subtitle(context).copyWith(
               fontWeight: FontWeight.w600,
-              color: colorScheme.onSurface,
+              color: colorScheme.onSurface, // ADD THIS
             ),
           ),
           const SizedBox(height: 4),
           Text(
             a,
-            style: AppTypography.caption(
-              context,
-            ).copyWith(color: colorScheme.onSurface.withOpacity(0.7)),
+            style: AppTypography.caption(context).copyWith(
+              color: colorScheme.onSurface.withOpacity(0.7), // ADD THIS
+            ),
           ),
         ],
       ),
@@ -584,9 +612,10 @@ class _AccessCodeManagementScreenState
       ),
       child: Text(
         text,
-        style: AppTypography.caption(
-          context,
-        ).copyWith(color: color, fontWeight: FontWeight.w600),
+        style: AppTypography.caption(context).copyWith(
+          color: color, // Keep functional color for status
+          fontWeight: FontWeight.w600,
+        ),
       ),
     );
   }

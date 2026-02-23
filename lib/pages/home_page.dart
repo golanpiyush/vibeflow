@@ -42,6 +42,7 @@ import 'package:vibeflow/utils/album_color_generator.dart';
 import 'package:vibeflow/utils/material_transitions.dart';
 import 'package:vibeflow/utils/page_transitions.dart';
 import 'package:vibeflow/utils/theme_provider.dart';
+import 'package:vibeflow/utils/user_preference_tracker.dart';
 import 'package:vibeflow/widgets/recent_listening_speed_dial.dart';
 import 'package:vibeflow/widgets/search_suggestions_widget.dart';
 import 'package:vibeflow/widgets/shimmer_loadings.dart';
@@ -72,8 +73,9 @@ class _HomePageState extends ConsumerState<HomePage>
   final FocusNode _searchFocusNode = FocusNode();
   final _engineLogger = VibeFlowEngineLogger();
   final _vibeFlowCore = VibeFlowCore();
-
+  String _activeSidebarItem = 'Quick picks';
   late final ValueNotifier<QuickPick?> _lastPlayedNotifier;
+  String _activeLabel = 'Quick picks';
 
   Timer? _debounceTimer;
   final Duration _debounceDuration = const Duration(milliseconds: 500);
@@ -107,7 +109,7 @@ class _HomePageState extends ConsumerState<HomePage>
   String _currentQuery = '';
   List<CommunityPlaylist> communityPlaylists = [];
   bool isLoadingCommunityPlaylists = false;
-
+  final _userPrefs = UserPreferenceTracker();
   static const List<String> _featuredPlaylistIds = [
     'PLeSOpHVuLnrj3GiP9cYPgbCsDBZviWJab',
     'PL7op4eJJ-4qhnDYjf3yKWDhvd307jbGK6',
@@ -120,7 +122,7 @@ class _HomePageState extends ConsumerState<HomePage>
   @override
   void initState() {
     super.initState();
-
+    _userPrefs.initialize();
     // // ✅ CRITICAL FIX: Use addPostFrameCallback correctly
     // WidgetsBinding.instance.addPostFrameCallback((_) {
     //   if (mounted) {
@@ -175,22 +177,117 @@ class _HomePageState extends ConsumerState<HomePage>
   // Replace these methods in your _HomePageState class:
 
   Future<void> _loadQuickPicks() async {
-    if (!mounted) return; // ✅ Check before setState
+    if (!mounted) return;
     setState(() => isLoadingQuickPicks = true);
 
     try {
-      final songs = await _scraper.getQuickPicks(limit: 40);
+      await _userPrefs.initialize();
+      final topArtists = _userPrefs.getTopArtists(limit: 10); // get more
+      final mostPlayed = _userPrefs
+          .getMostPlayedArtists(limit: 5)
+          .map((e) => e.key)
+          .toList();
 
-      if (!mounted) return; // ✅ Check after async operation
+      // Combine: top scored + most actually played, deduplicated
+      final seedArtists = {...topArtists, ...mostPlayed}.toList();
+
+      List<QuickPick> preferredPicks = [];
+
+      if (seedArtists.isNotEmpty) {
+        print(
+          '🎯 [QuickPicks] Seeding from ${seedArtists.length} liked artists',
+        );
+
+        // Search all liked artists in parallel for speed
+        final futures = seedArtists
+            .take(8)
+            .map(
+              (artist) => _searchHelper
+                  .searchSongs(artist, limit: 5)
+                  .catchError((_) => <Song>[]),
+            );
+        final results = await Future.wait(futures);
+
+        for (final songs in results) {
+          preferredPicks.addAll(songs.map((s) => QuickPick.fromSong(s)));
+        }
+
+        // Shuffle so it's not always same artist first
+        preferredPicks.shuffle();
+      }
+
+      // YouTube defaults as fallback filler
+      final defaultPicks = await _scraper.getQuickPicks(limit: 60);
+      final defaultQuickPicks = defaultPicks
+          .map((s) => QuickPick.fromSong(s))
+          .toList();
+
+      // Merge with 3-per-artist diversity cap
+      final seen = <String>{};
+      final artistCount = <String, int>{};
+      final merged = <QuickPick>[];
+
+      for (final pick in [...preferredPicks, ...defaultQuickPicks]) {
+        if (merged.length >= 40) break;
+        if (seen.contains(pick.videoId)) continue;
+        final artistKey = pick.artists.toLowerCase();
+        final count = artistCount[artistKey] ?? 0;
+        if (count >= 3) continue;
+        seen.add(pick.videoId);
+        artistCount[artistKey] = count + 1;
+        merged.add(pick);
+      }
+
+      if (!mounted) return;
       setState(() {
-        quickPicks = songs.map((song) => QuickPick.fromSong(song)).toList();
+        quickPicks = merged;
         isLoadingQuickPicks = false;
       });
+
+      print(
+        '✅ [QuickPicks] ${merged.length} songs from ${artistCount.keys.length} artists',
+      );
+      print('   Preferred artist songs: ${preferredPicks.length}');
     } catch (e) {
-      print('Error loading quick picks: $e');
-      if (!mounted) return; // ✅ Check before setState in catch
+      print('❌ [QuickPicks] Error: $e');
+      if (!mounted) return;
       setState(() => isLoadingQuickPicks = false);
     }
+  }
+
+  List<QuickPick> _rankQuickPicksByPreference(List<QuickPick> picks) {
+    // Separate liked, neutral, disliked
+    final liked = <QuickPick>[];
+    final neutral = <QuickPick>[];
+    final disliked = <QuickPick>[];
+
+    for (final pick in picks) {
+      final score = _userPrefs.getArtistScore(pick.artists);
+      if (score > 15)
+        liked.add(pick);
+      else if (score < -15)
+        disliked.add(pick);
+      else
+        neutral.add(pick);
+    }
+
+    // Liked first, then neutral, disliked at bottom
+    // Shuffle within groups to keep variety
+    liked.shuffle();
+    neutral.shuffle();
+
+    // Interleave: 2 liked, 3 neutral, repeat
+    final result = <QuickPick>[];
+    int li = 0, ni = 0;
+    while (result.length < picks.length) {
+      for (int i = 0; i < 2 && li < liked.length; i++) result.add(liked[li++]);
+      for (int i = 0; i < 3 && ni < neutral.length; i++)
+        result.add(neutral[ni++]);
+      if (li >= liked.length && ni >= neutral.length) break;
+    }
+    result.addAll(disliked); // disliked at end
+
+    return result.take(40).toList();
   }
 
   Future<void> _checkAccessCodeAndLoadPlaylist() async {
@@ -236,7 +333,7 @@ class _HomePageState extends ConsumerState<HomePage>
     setState(() => isLoadingAlbums = true);
 
     try {
-      final albums = await _albumsScraper.getMixedRandomAlbums(limit: 25);
+      final albums = await _albumsScraper.getVevoAlbums(limit: 25);
 
       print('✅ Found ${albums.length} albums');
 
@@ -504,6 +601,7 @@ class _HomePageState extends ConsumerState<HomePage>
         if (mounted) {
           setState(() {
             searchResults = results;
+            searchResults = _rankSearchResultsByPreference(results);
             isSearching = false;
           });
 
@@ -644,6 +742,7 @@ class _HomePageState extends ConsumerState<HomePage>
                                 child: Column(
                                   crossAxisAlignment: CrossAxisAlignment.start,
                                   children: [
+                                    _buildPreferenceHint(),
                                     _buildQuickPicks(),
                                     const SizedBox(height: 36),
                                     // _buildFeaturedPlaylists(), // ✅ ADD THIS LINE
@@ -2469,6 +2568,36 @@ class _HomePageState extends ConsumerState<HomePage>
                   ).copyWith(color: textSecondaryColor, fontSize: 11),
                 ),
               ),
+            if (_userPrefs.getArtistScore(subtitle) > 20)
+              // Using Consumer widget to access the theme
+              Consumer(
+                builder: (context, ref, _) {
+                  // Get the current theme
+                  final theme = Theme.of(context);
+
+                  return Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 4,
+                      vertical: 2,
+                    ),
+                    decoration: BoxDecoration(
+                      color: theme.colorScheme.primary.withOpacity(
+                        0.15,
+                      ), // Using theme primary color
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                    child: Text(
+                      '★ fav',
+                      style: TextStyle(
+                        color: theme
+                            .colorScheme
+                            .primary, // Using theme primary color
+                        fontSize: 9,
+                      ),
+                    ),
+                  );
+                },
+              ),
           ],
         ),
       ),
@@ -2506,20 +2635,19 @@ class _HomePageState extends ConsumerState<HomePage>
     );
   }
 
-  // Replace _buildSidebar() and _buildSidebarItem() in home_page.dart
-
   Widget _buildSidebar(BuildContext context) {
     final iconActiveColor = ref.watch(themeIconActiveColorProvider);
     final iconInactiveColor = ref.watch(themeTextSecondaryColorProvider);
     final sidebarLabelColor = ref.watch(themeTextPrimaryColorProvider);
-    final sidebarLabelActiveColor = ref.watch(themeIconActiveColorProvider);
 
     final sidebarLabelStyle = AppTypography.sidebarLabel(
       context,
-    ).copyWith(color: sidebarLabelColor);
+    ).copyWith(color: iconActiveColor);
+
+    // Active items use white
     final sidebarLabelActiveStyle = AppTypography.sidebarLabelActive(
       context,
-    ).copyWith(color: sidebarLabelActiveColor);
+    ).copyWith(color: Colors.white);
 
     final hasAccessCodeAsync = ref.watch(hasAccessCodeProvider);
 
@@ -2562,8 +2690,7 @@ class _HomePageState extends ConsumerState<HomePage>
               crossAxisAlignment: CrossAxisAlignment.center,
               children: [
                 SizedBox(height: screenHeight * 0.042),
-                // ← was 0.13, moves icon up
-                // Right-aligned edit/appearance icon
+                // Right-aligned settings icon
                 Align(
                   alignment: Alignment.centerRight,
                   child: GestureDetector(
@@ -2585,72 +2712,96 @@ class _HomePageState extends ConsumerState<HomePage>
 
                 _buildSidebarItem(
                   label: 'Quick picks',
+                  isActive: _activeLabel == 'Quick picks',
                   iconActiveColor: iconActiveColor,
                   iconInactiveColor: iconInactiveColor,
-                  labelStyle: sidebarLabelStyle,
+                  activeLabelStyle: sidebarLabelActiveStyle,
+                  inactiveLabelStyle: sidebarLabelStyle,
                   sidebarWidth: sidebarWidth,
                   screenHeight: screenHeight,
+                  onTap: () => setState(() => _activeLabel = 'Quick picks'),
                 ),
 
                 SizedBox(height: itemSpacing),
 
                 _buildSidebarItem(
                   label: 'Songs',
+                  isActive: _activeLabel == 'Songs',
                   iconActiveColor: iconActiveColor,
                   iconInactiveColor: iconInactiveColor,
-                  labelStyle: sidebarLabelStyle,
+                  activeLabelStyle: sidebarLabelActiveStyle,
+                  inactiveLabelStyle: sidebarLabelStyle,
                   sidebarWidth: sidebarWidth,
                   screenHeight: screenHeight,
-                  onTap: () => Navigator.of(context).pushMaterialVertical(
-                    const SavedSongsScreen(),
-                    slideUp: true,
-                    enableParallax: true,
-                  ),
+                  onTap: () {
+                    setState(() => _activeLabel = 'Songs');
+                    Navigator.of(context).pushMaterialVertical(
+                      const SavedSongsScreen(),
+                      slideUp: true,
+                      enableParallax: true,
+                    );
+                  },
                 ),
 
                 SizedBox(height: itemSpacing),
 
                 _buildSidebarItem(
                   label: 'Playlists',
+                  isActive: _activeLabel == 'Playlists',
                   iconActiveColor: iconActiveColor,
                   iconInactiveColor: iconInactiveColor,
-                  labelStyle: sidebarLabelStyle,
+                  activeLabelStyle: sidebarLabelActiveStyle,
+                  inactiveLabelStyle: sidebarLabelStyle,
                   sidebarWidth: sidebarWidth,
                   screenHeight: screenHeight,
-                  onTap: () => Navigator.of(context).pushMaterialVertical(
-                    const IntegratedPlaylistsScreen(),
-                    slideUp: true,
-                    enableParallax: true,
-                  ),
+                  onTap: () {
+                    setState(() => _activeLabel = 'Playlists');
+                    Navigator.of(context).pushMaterialVertical(
+                      const IntegratedPlaylistsScreen(),
+                      slideUp: true,
+                      enableParallax: true,
+                    );
+                  },
                 ),
 
                 SizedBox(height: itemSpacing),
 
                 _buildSidebarItem(
                   label: 'Artists',
+                  isActive: _activeLabel == 'Artists',
                   iconActiveColor: iconActiveColor,
                   iconInactiveColor: iconInactiveColor,
-                  labelStyle: sidebarLabelStyle,
+                  activeLabelStyle: sidebarLabelActiveStyle,
+                  inactiveLabelStyle: sidebarLabelStyle,
                   sidebarWidth: sidebarWidth,
                   screenHeight: screenHeight,
-                  onTap: () => Navigator.of(context).pushMaterialVertical(
-                    const ArtistsGridPage(),
-                    slideUp: true,
-                  ),
+                  onTap: () {
+                    setState(() => _activeLabel = 'Artists');
+                    Navigator.of(context).pushMaterialVertical(
+                      const ArtistsGridPage(),
+                      slideUp: true,
+                    );
+                  },
                 ),
 
                 SizedBox(height: itemSpacing),
 
                 _buildSidebarItem(
                   label: 'Albums',
+                  isActive: _activeLabel == 'Albums',
                   iconActiveColor: iconActiveColor,
                   iconInactiveColor: iconInactiveColor,
-                  labelStyle: sidebarLabelStyle,
+                  activeLabelStyle: sidebarLabelActiveStyle,
+                  inactiveLabelStyle: sidebarLabelStyle,
                   sidebarWidth: sidebarWidth,
                   screenHeight: screenHeight,
-                  onTap: () => Navigator.of(
-                    context,
-                  ).pushMaterialVertical(const AlbumsGridPage(), slideUp: true),
+                  onTap: () {
+                    setState(() => _activeLabel = 'Albums');
+                    Navigator.of(context).pushMaterialVertical(
+                      const AlbumsGridPage(),
+                      slideUp: true,
+                    );
+                  },
                 ),
 
                 hasAccessCodeAsync.when(
@@ -2661,17 +2812,21 @@ class _HomePageState extends ConsumerState<HomePage>
                         SizedBox(height: itemSpacing),
                         _buildSidebarItem(
                           label: 'Social',
+                          isActive: _activeLabel == 'Social',
                           iconActiveColor: iconActiveColor,
                           iconInactiveColor: iconInactiveColor,
-                          labelStyle: sidebarLabelStyle,
+                          activeLabelStyle: sidebarLabelActiveStyle,
+                          inactiveLabelStyle: sidebarLabelStyle,
                           sidebarWidth: sidebarWidth,
                           screenHeight: screenHeight,
-                          onTap: () =>
-                              Navigator.of(context).pushMaterialVertical(
-                                const SocialScreen(),
-                                slideUp: true,
-                                enableParallax: true,
-                              ),
+                          onTap: () {
+                            setState(() => _activeLabel = 'Social');
+                            Navigator.of(context).pushMaterialVertical(
+                              const SocialScreen(),
+                              slideUp: true,
+                              enableParallax: true,
+                            );
+                          },
                         ),
                       ],
                     );
@@ -2695,12 +2850,12 @@ class _HomePageState extends ConsumerState<HomePage>
     bool isActive = false,
     required Color iconActiveColor,
     required Color iconInactiveColor,
-    required TextStyle labelStyle,
+    required TextStyle activeLabelStyle,
+    required TextStyle inactiveLabelStyle,
     required double sidebarWidth,
     required double screenHeight,
     VoidCallback? onTap,
   }) {
-    // Font size scales with screen height
     final fontSize = screenHeight < 680
         ? 13.0
         : screenHeight < 740
@@ -2709,7 +2864,6 @@ class _HomePageState extends ConsumerState<HomePage>
         ? 15.0
         : 16.0;
 
-    // Icon size scales too
     final iconSize = screenHeight < 680
         ? 20.0
         : screenHeight < 740
@@ -2729,7 +2883,8 @@ class _HomePageState extends ConsumerState<HomePage>
               Icon(
                 icon,
                 size: iconSize,
-                color: isActive ? iconActiveColor : iconInactiveColor,
+                // Active icons use white, inactive use their default color
+                color: isActive ? Colors.white : iconInactiveColor,
               )
             else
               RotatedBox(
@@ -2737,11 +2892,14 @@ class _HomePageState extends ConsumerState<HomePage>
                 child: Text(
                   label,
                   textAlign: TextAlign.center,
-                  style: labelStyle.copyWith(
-                    fontSize: fontSize,
-                    letterSpacing: 0.4,
-                    fontWeight: isActive ? FontWeight.w600 : FontWeight.w400,
-                  ),
+                  style: (isActive ? activeLabelStyle : inactiveLabelStyle)
+                      .copyWith(
+                        fontSize: fontSize,
+                        letterSpacing: 0.4,
+                        fontWeight: isActive
+                            ? FontWeight.w600
+                            : FontWeight.w400,
+                      ),
                   maxLines: 1,
                   overflow: TextOverflow.visible,
                 ),
@@ -3183,6 +3341,34 @@ class _HomePageState extends ConsumerState<HomePage>
     );
   }
 
+  Widget _buildPreferenceHint() {
+    final topArtists = _userPrefs.getTopArtists(limit: 3);
+    final iconactiveColor = ref.watch(themeTextSecondaryColorProvider);
+    if (topArtists.isEmpty) return const SizedBox.shrink();
+    final textSecondaryColor = ref.watch(themeTextSecondaryColorProvider);
+
+    return Padding(
+      padding: const EdgeInsets.only(left: 16, bottom: 8),
+      child: Row(
+        children: [
+          Icon(
+            Icons.favorite,
+            size: 12,
+            color: iconactiveColor.withOpacity(0.6),
+          ),
+          const SizedBox(width: 4),
+          Text(
+            'Tuned for ${topArtists.take(2).join(", ")}',
+            style: TextStyle(
+              color: textSecondaryColor.withOpacity(0.6),
+              fontSize: 11,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildQuickPickListItem(QuickPick quickPick) {
     // ✅ ADD THESE LINES at the start:
     final textPrimaryColor = ref.watch(themeTextPrimaryColorProvider);
@@ -3197,6 +3383,16 @@ class _HomePageState extends ConsumerState<HomePage>
 
     return GestureDetector(
       onTap: () async {
+        // Record preference data
+        await _userPrefs.recordListen(
+          quickPick.artists,
+          quickPick.title,
+          listenDuration: const Duration(seconds: 0), // will update on skip
+          totalDuration: Duration(
+            seconds: _parseDurationToSeconds(quickPick.duration ?? '0:00') ?? 0,
+          ),
+        );
+
         await LastPlayedService.saveLastPlayed(quickPick);
         if (mounted) {
           setState(() => _lastPlayedSong = quickPick);
@@ -4326,292 +4522,30 @@ class _HomePageState extends ConsumerState<HomePage>
   // Enhanced Miniplayer with Album Colors - Matching Reference Design
   // Replace your _buildMiniPlayer method with this code
 
-  Widget _buildMiniPlayer(QuickPick song, MediaItem? currentMedia) {
-    final thumbnailRadius = ref.watch(thumbnailRadiusProvider);
+  // Add this method to _HomePageState
+  List<Song> _rankSearchResultsByPreference(List<Song> results) {
+    final prefs = UserPreferenceTracker();
 
-    // Get artwork URL
-    final artworkUrl = currentMedia?.artUri?.toString() ?? song.thumbnail;
+    final scored = results.map((song) {
+      final artist = song.artists.join(', ');
+      double score = 0;
 
-    return FutureBuilder<AlbumPalette?>(
-      future: artworkUrl.isNotEmpty
-          ? AlbumColorGenerator.fromAnySource(artworkUrl).catchError((e) {
-              print('❌ Error extracting colors: $e');
-              return null;
-            })
-          : Future.value(null),
-      builder: (context, colorSnapshot) {
-        // Get theme colors as fallback
-        final themeData = Theme.of(context);
-        final surfaceColor = themeData.colorScheme.surface;
-        final onSurface = themeData.colorScheme.onSurface;
+      // Artist preference score (-100 to +100)
+      score += prefs.getArtistScore(artist) * 0.5;
 
-        // Show loading state while extracting colors
-        if (colorSnapshot.connectionState == ConnectionState.waiting) {
-          return Container(
-            height: _miniplayerMinHeight,
-            color: surfaceColor,
-            child: Center(
-              child: CircularProgressIndicator(
-                strokeWidth: 2,
-                valueColor: AlwaysStoppedAnimation<Color>(
-                  onSurface.withOpacity(0.5),
-                ),
-              ),
-            ),
-          );
-        }
+      // Boost if artist is in top artists
+      if (prefs.getTopArtists(limit: 10).contains(artist.toLowerCase())) {
+        score += 30;
+      }
 
-        // Use album colors if available, otherwise use theme colors
-        final palette = colorSnapshot.data;
-        final dominantColor = palette?.dominant ?? surfaceColor;
-        final mutedColor = palette?.muted ?? surfaceColor.withOpacity(0.8);
+      // Penalize avoided artists
+      if (prefs.shouldAvoidArtist(artist)) score -= 50;
 
-        // Use theme colors for text and controls
-        const titleColor = Colors.white;
-        const subtitleColor = Colors.white70;
-        const controlColor = Colors.white;
+      return MapEntry(song, score);
+    }).toList();
 
-        return GestureDetector(
-          onTap: () {
-            NewPlayerPage.open(
-              context,
-              song,
-              heroTag: 'miniplayer-thumbnail-${song.videoId}',
-            );
-          },
-          child: Container(
-            height: _miniplayerMinHeight,
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                begin: Alignment.centerLeft,
-                end: Alignment.centerRight,
-                colors: [
-                  dominantColor.withOpacity(0.95),
-                  mutedColor.withOpacity(0.85),
-                ],
-              ),
-            ),
-            child: StreamBuilder<PlaybackState>(
-              stream: _audioService.playbackStateStream,
-              builder: (context, playbackSnapshot) {
-                final playbackState = playbackSnapshot.data;
-                final isPlaying = playbackState?.playing ?? false;
-                final processingState =
-                    playbackState?.processingState ?? AudioProcessingState.idle;
-                final isLoading =
-                    processingState == AudioProcessingState.loading;
-
-                return Stack(
-                  children: [
-                    // Progress bar as gradient overlay
-                    StreamBuilder<Duration>(
-                      stream: _audioService.positionStream,
-                      builder: (context, positionSnapshot) {
-                        final position = positionSnapshot.data ?? Duration.zero;
-                        final duration =
-                            currentMedia?.duration ?? Duration.zero;
-                        final progress = duration.inMilliseconds > 0
-                            ? position.inMilliseconds / duration.inMilliseconds
-                            : 0.0;
-
-                        return Positioned.fill(
-                          child: Row(
-                            children: [
-                              // PLAYED portion
-                              if (progress > 0)
-                                Expanded(
-                                  flex: (progress * 100).round().clamp(1, 100),
-                                  child: Container(
-                                    decoration: BoxDecoration(
-                                      gradient: LinearGradient(
-                                        begin: Alignment.centerLeft,
-                                        end: Alignment.centerRight,
-                                        colors: [
-                                          dominantColor.withOpacity(0.95),
-                                          mutedColor.withOpacity(0.85),
-                                        ],
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                              // UNPLAYED portion
-                              if (progress < 1)
-                                Expanded(
-                                  flex: ((1 - progress) * 100).round().clamp(
-                                    1,
-                                    100,
-                                  ),
-                                  child: Container(
-                                    decoration: BoxDecoration(
-                                      gradient: LinearGradient(
-                                        begin: Alignment.centerLeft,
-                                        end: Alignment.centerRight,
-                                        colors: [
-                                          dominantColor.withOpacity(0.4),
-                                          mutedColor.withOpacity(0.3),
-                                        ],
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                            ],
-                          ),
-                        );
-                      },
-                    ),
-
-                    // Main content
-                    Padding(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 16,
-                        vertical: 8,
-                      ),
-                      child: Row(
-                        children: [
-                          // Album Art
-                          Hero(
-                            tag: 'miniplayer-thumbnail-${song.videoId}',
-                            child: ClipRRect(
-                              borderRadius: BorderRadius.circular(6),
-                              child: Container(
-                                width: 54,
-                                height: 54,
-                                color: surfaceColor,
-                                child: artworkUrl.isNotEmpty
-                                    ? buildAlbumArtImage(
-                                        artworkUrl: artworkUrl,
-                                        fit: BoxFit.cover,
-                                        errorBuilder: (_, __, ___) =>
-                                            _buildMiniThumbnailFallback(
-                                              ref,
-                                              thumbnailRadius,
-                                            ),
-                                      )
-                                    : _buildMiniThumbnailFallback(
-                                        ref,
-                                        thumbnailRadius,
-                                      ),
-                              ),
-                            ),
-                          ),
-
-                          const SizedBox(width: 14),
-
-                          // Song Info
-                          Expanded(
-                            child: Column(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  currentMedia?.title ?? song.title,
-                                  style: const TextStyle(
-                                    color: titleColor,
-                                    fontSize: 15,
-                                    fontWeight: FontWeight.w600,
-                                  ),
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                ),
-                                const SizedBox(height: 4),
-                                Text(
-                                  currentMedia?.artist ?? song.artists,
-                                  style: const TextStyle(
-                                    color: subtitleColor,
-                                    fontSize: 13,
-                                  ),
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                ),
-                              ],
-                            ),
-                          ),
-
-                          const SizedBox(width: 12),
-
-                          // Play/Pause Button
-                          SizedBox(
-                            width: 40,
-                            height: 40,
-                            child: isLoading
-                                ? const Center(
-                                    child: SizedBox(
-                                      width: 24,
-                                      height: 24,
-                                      child: CircularProgressIndicator(
-                                        strokeWidth: 2.5,
-                                        valueColor:
-                                            AlwaysStoppedAnimation<Color>(
-                                              controlColor,
-                                            ),
-                                      ),
-                                    ),
-                                  )
-                                : IconButton(
-                                    icon: Icon(
-                                      isPlaying
-                                          ? Icons.pause
-                                          : Icons.play_arrow,
-                                      color: controlColor,
-                                      size: 28,
-                                    ),
-                                    padding: EdgeInsets.zero,
-                                    onPressed: () async {
-                                      if (isPlaying) {
-                                        await _audioService.pause();
-                                      } else {
-                                        if (processingState ==
-                                                AudioProcessingState.idle ||
-                                            processingState ==
-                                                AudioProcessingState.error) {
-                                          await _audioService.playSong(song);
-                                        } else {
-                                          await _audioService.play();
-                                        }
-                                      }
-                                    },
-                                  ),
-                          ),
-
-                          const SizedBox(width: 4),
-
-                          // Next Button
-                          SizedBox(
-                            width: 40,
-                            height: 40,
-                            child: IconButton(
-                              icon: const Icon(
-                                Icons.skip_next,
-                                color: controlColor,
-                                size: 28,
-                              ),
-                              padding: EdgeInsets.zero,
-                              onPressed: () => _audioService.skipToNext(),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                );
-              },
-            ),
-          ),
-        );
-      },
-    );
-  }
-
-  Widget _buildMiniThumbnailFallback(WidgetRef ref, double thumbnailRadius) {
-    final backgroundColor = ref.watch(themeBackgroundColorProvider);
-    final iconInactiveColor = ref.watch(themeTextSecondaryColorProvider);
-
-    return Container(
-      color: backgroundColor,
-      child: Center(
-        child: Icon(Icons.music_note, color: iconInactiveColor, size: 28),
-      ),
-    );
+    scored.sort((a, b) => b.value.compareTo(a.value));
+    return scored.map((e) => e.key).toList();
   }
 
   String _formatDuration(int seconds) {

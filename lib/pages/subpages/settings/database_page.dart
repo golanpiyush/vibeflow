@@ -9,6 +9,7 @@ import 'package:vibeflow/constants/theme_colors.dart';
 import 'package:vibeflow/constants/app_spacing.dart';
 import 'package:vibeflow/constants/app_typography.dart';
 import 'package:vibeflow/database/database_service.dart';
+import 'package:vibeflow/pages/appearance_page.dart';
 import 'package:vibeflow/pages/subpages/settings/about_page.dart';
 import 'package:vibeflow/pages/subpages/settings/cache_page.dart';
 import 'package:vibeflow/pages/subpages/settings/other_page.dart';
@@ -17,6 +18,7 @@ import 'package:vibeflow/utils/page_transitions.dart';
 import 'package:sqflite/sqflite.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter/services.dart';
+import 'package:vibeflow/utils/user_preference_tracker.dart';
 
 class DatabasePage extends StatefulWidget {
   const DatabasePage({Key? key}) : super(key: key);
@@ -47,22 +49,29 @@ class _DatabasePageState extends State<DatabasePage> {
   }
 
   Future<void> _resetQuickPicks() async {
+    final colorScheme = Theme.of(context).colorScheme;
+
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Reset Quick Picks'),
-        content: const Text(
+        backgroundColor: colorScheme.surface,
+        title: Text(
+          'Reset Quick Picks',
+          style: TextStyle(color: colorScheme.onSurface),
+        ),
+        content: Text(
           'This will clear your quick picks history and recommendations.\n\n'
           'Your saved songs and playlists will not be affected.',
+          style: TextStyle(color: colorScheme.onSurface.withOpacity(0.87)),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancel'),
+            child: Text('Cancel', style: TextStyle(color: colorScheme.primary)),
           ),
           TextButton(
             onPressed: () => Navigator.pop(context, true),
-            style: TextButton.styleFrom(foregroundColor: Colors.orange),
+            style: TextButton.styleFrom(foregroundColor: colorScheme.error),
             child: const Text('Reset'),
           ),
         ],
@@ -74,19 +83,22 @@ class _DatabasePageState extends State<DatabasePage> {
     setState(() => _isResettingQuickPicks = true);
 
     try {
-      // Clear quick picks from SharedPreferences
+      // Clear quick picks cache
       final prefs = await SharedPreferences.getInstance();
       await prefs.remove('quick_picks_cache');
       await prefs.remove('quick_picks_last_update');
       await prefs.remove('recommended_songs');
 
-      if (!mounted) return;
+      // ✅ ADD THIS: Reset user preference tracker data
+      final userPrefs = UserPreferenceTracker();
+      await userPrefs.resetAllPreferences();
 
+      if (!mounted) return;
       setState(() => _isResettingQuickPicks = false);
 
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('Quick picks reset successfully'),
+          content: Text('Quick picks and taste profile reset'),
           backgroundColor: Colors.green,
           behavior: SnackBarBehavior.floating,
         ),
@@ -273,13 +285,21 @@ class _DatabasePageState extends State<DatabasePage> {
 
   Future<void> _restoreDatabase() async {
     final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final textTheme = theme.textTheme;
 
     // Show warning dialog first
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        backgroundColor: theme.dialogBackgroundColor,
-        title: Text('⚠️ Warning', style: theme.textTheme.titleMedium),
+        backgroundColor: colorScheme.surface, // UPDATED
+        title: Text(
+          '⚠️ Warning',
+          style: textTheme.titleMedium?.copyWith(
+            color: colorScheme.onSurface, // ADD THIS
+            fontWeight: FontWeight.bold,
+          ),
+        ),
         content: Text(
           'Restoring from backup will:\n\n'
           '• Overwrite all existing data\n'
@@ -287,27 +307,32 @@ class _DatabasePageState extends State<DatabasePage> {
           '• Cannot be undone\n\n'
           'The app will restart after restoration.\n\n'
           'Are you sure you want to continue?',
-          style: theme.textTheme.bodyMedium,
+          style: textTheme.bodyMedium?.copyWith(
+            color: colorScheme.onSurface.withOpacity(0.8), // ADD THIS
+          ),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
             child: Text(
               'Cancel',
-              style: theme.textTheme.labelLarge?.copyWith(
-                color: theme.colorScheme.primary,
+              style: textTheme.labelLarge?.copyWith(
+                color: colorScheme.primary, // UPDATED
+                fontWeight: FontWeight.w600,
               ),
             ),
           ),
           ElevatedButton(
             onPressed: () => Navigator.pop(context, true),
             style: ElevatedButton.styleFrom(
-              backgroundColor: theme.colorScheme.error,
+              backgroundColor: colorScheme.error,
+              foregroundColor: colorScheme.onError,
             ),
             child: Text(
               'Restore',
-              style: theme.textTheme.labelLarge?.copyWith(
-                color: theme.colorScheme.onError,
+              style: textTheme.labelLarge?.copyWith(
+                color: colorScheme.onError, // ADD THIS
+                fontWeight: FontWeight.w600,
               ),
             ),
           ),
@@ -377,23 +402,35 @@ class _DatabasePageState extends State<DatabasePage> {
         context: context,
         barrierDismissible: false,
         builder: (context) => AlertDialog(
-          backgroundColor: theme.dialogBackgroundColor,
-          title: Text('✓ Restore Complete', style: theme.textTheme.titleMedium),
+          backgroundColor: colorScheme.surface, // UPDATED
+          title: Text(
+            '✓ Restore Complete',
+            style: textTheme.titleMedium?.copyWith(
+              color: Colors.green, // Keep green for success
+              fontWeight: FontWeight.bold,
+            ),
+          ),
           content: Text(
             'Database restored successfully!\n\n'
             'The app will now restart to apply changes.',
-            style: theme.textTheme.bodyMedium,
+            style: textTheme.bodyMedium?.copyWith(
+              color: colorScheme.onSurface.withOpacity(0.8), // ADD THIS
+            ),
           ),
           actions: [
             ElevatedButton(
               onPressed: () {
                 SystemNavigator.pop();
               },
-              style: ElevatedButton.styleFrom(backgroundColor: Colors.amber),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.amber, // Keep amber for warning/action
+                foregroundColor: colorScheme.onPrimary,
+              ),
               child: Text(
                 'Close App',
-                style: theme.textTheme.labelLarge?.copyWith(
-                  color: theme.colorScheme.onPrimary,
+                style: textTheme.labelLarge?.copyWith(
+                  color: colorScheme.onPrimary, // ADD THIS
+                  fontWeight: FontWeight.w600,
                 ),
               ),
             ),
@@ -410,11 +447,11 @@ class _DatabasePageState extends State<DatabasePage> {
         SnackBar(
           content: Text(
             'Restore failed: ${e.toString()}',
-            style: theme.textTheme.bodyMedium?.copyWith(
-              color: theme.colorScheme.onError,
+            style: textTheme.bodyMedium?.copyWith(
+              color: colorScheme.onError, // UPDATED
             ),
           ),
-          backgroundColor: theme.colorScheme.error,
+          backgroundColor: colorScheme.error,
           behavior: SnackBarBehavior.floating,
           duration: const Duration(seconds: 4),
         ),
@@ -519,7 +556,7 @@ class _DatabasePageState extends State<DatabasePage> {
           const SizedBox(height: AppSpacing.md),
           Text(
             'Personal preferences (i.e. the theme mode) and the cache are excluded.',
-            style: AppTypography.subtitle(
+            style: AppTypography.caption(
               context,
             ).copyWith(color: textSecondaryColor, height: 1.5),
           ),
@@ -556,13 +593,7 @@ class _DatabasePageState extends State<DatabasePage> {
             ),
           ),
           const SizedBox(height: AppSpacing.md),
-          Text(
-            'Existing data will be overwritten.\nVibeFlow will automatically close itself after restoring the database.',
-            style: AppTypography.subtitle(
-              context,
-            ).copyWith(color: warningColor, height: 1.5),
-          ),
-          const SizedBox(height: AppSpacing.lg),
+
           _buildActionItem(
             context,
             'Restore',
@@ -573,6 +604,15 @@ class _DatabasePageState extends State<DatabasePage> {
             textSecondaryColor: textSecondaryColor,
             iconActiveColor: iconActiveColor,
           ),
+          const SizedBox(height: AppSpacing.md),
+
+          Text(
+            'Existing data will be overwritten.\nvibeFlow will automatically close itself after restoring the database.',
+            style: AppTypography.caption(
+              context,
+            ).copyWith(color: warningColor, height: 1.5),
+          ),
+          const SizedBox(height: AppSpacing.lg),
         ],
       ),
     );
@@ -854,8 +894,8 @@ class _SettingsPageTemplate extends ConsumerWidget {
     Widget page;
     switch (targetIndex) {
       case -1:
-        Navigator.popUntil(context, (route) => route.isFirst);
-        return;
+        page = const AppearancePage();
+        break;
       case 0:
         page = const PlayerSettingsPage();
         break;

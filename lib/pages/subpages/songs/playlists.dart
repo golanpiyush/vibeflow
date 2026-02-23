@@ -9,6 +9,7 @@ import 'package:flutter_riverpod/legacy.dart';
 import 'package:http/http.dart' as http;
 import 'package:lottie/lottie.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:shimmer/shimmer.dart';
 
 import 'package:vibeflow/constants/app_spacing.dart';
@@ -83,7 +84,10 @@ class _IntegratedPlaylistsScreenState
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (context) => const _YTMusicImportSheet(),
-    ).then((_) => ref.invalidate(playlistsProvider));
+    ).then((_) {
+      ref.invalidate(playlistsProvider);
+      PlaylistCoverCache.invalidateAll();
+    });
   }
 
   @override
@@ -628,7 +632,10 @@ class _IntegratedPlaylistsScreenState
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (context) => const _SpotifyImportSheet(),
-    ).then((_) => ref.invalidate(playlistsProvider));
+    ).then((_) {
+      ref.invalidate(playlistsProvider);
+      PlaylistCoverCache.invalidateAll();
+    });
   }
 
   Future<void> _createNewPlaylist() async {
@@ -728,13 +735,15 @@ class _IntegratedPlaylistsScreenState
     if (result != null && result['name']!.trim().isNotEmpty) {
       try {
         final repo = await ref.read(playlistRepositoryFutureProvider.future);
-        await repo.createPlaylist(
+        final playlist = await repo.createPlaylist(
           name: result['name']!.trim(),
           description: result['description']?.trim().isNotEmpty == true
               ? result['description']!.trim()
               : null,
         );
         ref.invalidate(playlistsProvider);
+        PlaylistCoverCache.invalidateOne(playlist.id!);
+
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
@@ -2253,16 +2262,13 @@ class _ErrorBanner extends StatelessWidget {
 }
 
 // ─── Playlist card ────────────────────────────────────────────────────────────
-
 class _PlaylistCard extends ConsumerWidget {
-  // Changed to ConsumerWidget
   final Playlist playlist;
   final VoidCallback onTap;
   const _PlaylistCard({required this.playlist, required this.onTap});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    // Added WidgetRef
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
 
@@ -2270,7 +2276,7 @@ class _PlaylistCard extends ConsumerWidget {
       onTap: onTap,
       child: Container(
         decoration: BoxDecoration(
-          color: const Color.fromARGB(41, 0, 0, 0), // Transparent background
+          color: const Color.fromARGB(41, 0, 0, 0),
           borderRadius: BorderRadius.circular(12),
         ),
         child: Column(
@@ -2282,7 +2288,7 @@ class _PlaylistCard extends ConsumerWidget {
                 borderRadius: const BorderRadius.vertical(
                   top: Radius.circular(12),
                 ),
-                child: _buildCover(theme, colorScheme), // Pass theme
+                child: _buildCover(ref),
               ),
             ),
             Expanded(
@@ -2331,45 +2337,120 @@ class _PlaylistCard extends ConsumerWidget {
     );
   }
 
-  Widget _buildCover(ThemeData theme, ColorScheme colorScheme) {
+  Widget _buildCover(WidgetRef ref) {
+    // Custom cover image takes priority
     if (playlist.coverImagePath != null) {
-      return ClipRRect(
-        borderRadius: BorderRadius.circular(12),
-        child: Image.file(
-          File(playlist.coverImagePath!),
-          fit: BoxFit.cover,
-          errorBuilder: (_, __, ___) => ClipRRect(
-            borderRadius: BorderRadius.circular(12),
-            child: _buildGradient(theme, colorScheme),
-          ),
-        ),
+      return Image.file(
+        File(playlist.coverImagePath!),
+        fit: BoxFit.cover,
+        errorBuilder: (_, __, ___) =>
+            _PlaylistFirstSongCover(playlistId: playlist.id!),
       );
     }
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(12),
-      child: _buildGradient(theme, colorScheme),
-    );
+
+    return _PlaylistFirstSongCover(playlistId: playlist.id!);
+  }
+}
+
+// ─── First-song thumbnail cover with persistent cache ────────────────────────
+
+class _PlaylistFirstSongCover extends ConsumerStatefulWidget {
+  final int playlistId;
+  const _PlaylistFirstSongCover({required this.playlistId});
+
+  @override
+  ConsumerState<_PlaylistFirstSongCover> createState() =>
+      _PlaylistFirstSongCoverState();
+}
+
+class _PlaylistFirstSongCoverState
+    extends ConsumerState<_PlaylistFirstSongCover> {
+  static final Map<int, String?> _memoryCache = {};
+  String? _url;
+  bool _ready = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
   }
 
-  Widget _buildGradient(ThemeData theme, ColorScheme colorScheme) {
-    final colors = playlist.isFavorite
-        ? [colorScheme.error, colorScheme.error.withOpacity(0.7)]
-        : [colorScheme.primary, colorScheme.secondary];
+  Future<void> _load() async {
+    // 1. In-memory cache (instant, no flicker on list scroll)
+    if (_memoryCache.containsKey(widget.playlistId)) {
+      if (mounted) {
+        setState(() {
+          _url = _memoryCache[widget.playlistId];
+          _ready = true;
+        });
+      }
+      return;
+    }
 
+    // 2. Persistent cache via shared_preferences
+    final prefs = await SharedPreferences.getInstance();
+    final key = 'playlist_cover_${widget.playlistId}';
+    final cached = prefs.getString(key);
+
+    if (cached != null && cached.isNotEmpty) {
+      _memoryCache[widget.playlistId] = cached;
+      if (mounted)
+        setState(() {
+          _url = cached;
+          _ready = true;
+        });
+      return;
+    }
+
+    // 3. Load from DB, persist forever (until cache cleared)
+    try {
+      final repo = await ref.read(playlistRepositoryFutureProvider.future);
+      final songs = await repo.getPlaylistSongs(widget.playlistId);
+      String? url;
+      if (songs.isNotEmpty) {
+        for (final song in songs) {
+          if (song.thumbnail.isNotEmpty) {
+            url = song.thumbnail.split('=').first;
+            break;
+          }
+        }
+      }
+      _memoryCache[widget.playlistId] = url;
+      if (url != null) await prefs.setString(key, url);
+    } catch (_) {
+      _memoryCache[widget.playlistId] = null;
+    }
+
+    if (mounted)
+      setState(() {
+        _url = _memoryCache[widget.playlistId];
+        _ready = true;
+      });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (!_ready) {
+      // Skeleton while loading
+      return Container(color: const Color(0xFF1E1E1E));
+    }
+
+    if (_url != null) {
+      return Image.network(
+        _url!,
+        fit: BoxFit.cover,
+        errorBuilder: (_, __, ___) => _defaultCover(),
+      );
+    }
+
+    return _defaultCover();
+  }
+
+  Widget _defaultCover() {
     return Container(
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: colors,
-        ),
-      ),
-      child: Center(
-        child: Icon(
-          playlist.isFavorite ? Icons.favorite : Icons.playlist_play,
-          size: 50,
-          color: colorScheme.onPrimary.withOpacity(0.8),
-        ),
+      color: const Color(0xFF1E1E1E),
+      child: const Center(
+        child: Icon(Icons.playlist_play, size: 50, color: Colors.white24),
       ),
     );
   }
@@ -3205,6 +3286,8 @@ class _YTMusicImportSheetState extends ConsumerState<_YTMusicImportSheet> {
         songs: dbSongs,
       );
       ref.invalidate(playlistsProvider);
+      PlaylistCoverCache.invalidateOne(playlist.id!);
+
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -3254,6 +3337,8 @@ class _YTMusicImportSheetState extends ConsumerState<_YTMusicImportSheet> {
         playlistId: playlist.id!,
         songs: dbSongs,
       );
+      PlaylistCoverCache.invalidateOne(playlist.id!);
+
       if (mounted) {
         Navigator.pop(context);
         Navigator.pop(context);
@@ -3662,5 +3747,24 @@ class _YTMusicTrackPreviewTile extends StatelessWidget {
     final m = d.inMinutes.remainder(60).toString();
     final s = d.inSeconds.remainder(60).toString().padLeft(2, '0');
     return '$m:$s';
+  }
+}
+
+/// Public helper to invalidate playlist cover cache from anywhere
+class PlaylistCoverCache {
+  static Future<void> invalidateAll() async {
+    _PlaylistFirstSongCoverState._memoryCache.clear();
+    final prefs = await SharedPreferences.getInstance();
+    final keys = prefs
+        .getKeys()
+        .where((k) => k.startsWith('playlist_cover_'))
+        .toList();
+    for (final k in keys) prefs.remove(k);
+  }
+
+  static Future<void> invalidateOne(int playlistId) async {
+    _PlaylistFirstSongCoverState._memoryCache.remove(playlistId);
+    final prefs = await SharedPreferences.getInstance();
+    prefs.remove('playlist_cover_$playlistId');
   }
 }

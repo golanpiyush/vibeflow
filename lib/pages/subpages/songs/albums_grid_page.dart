@@ -473,7 +473,7 @@ class _AlbumsGridPageState extends ConsumerState<AlbumsGridPage> {
       },
       child: Container(
         decoration: BoxDecoration(
-          color: cardBackgroundColor.withOpacity(0.1),
+          color: Colors.transparent,
           borderRadius: BorderRadius.circular(AppSpacing.radiusMedium),
         ),
         child: Column(

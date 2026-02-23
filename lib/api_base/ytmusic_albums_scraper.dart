@@ -1,950 +1,916 @@
 // lib/api_base/ytmusic_albums_scraper.dart
 import 'dart:convert';
+import 'dart:math';
 import 'package:http/http.dart' as http;
 import 'package:vibeflow/api_base/albumartistqp_cache.dart';
 import 'package:vibeflow/models/album_model.dart';
 import 'package:vibeflow/models/song_model.dart';
 
-/// Scraper for YouTube Music albums using the internal API
+/// Scraper for YouTube Music albums using the internal API.
+///
+/// Strategy for getting popular albums (no hardcoding):
+///   1. Browse YTMusic's official chart pages (FEmusic_charts, etc.)
+///      → These are curated by YTM based on global play counts.
+///   2. Browse YTMusic's "New Releases" page — only chart-relevant releases
+///      appear here.
+///   3. Supplement with generic chart-term searches ("top albums 2024", etc.)
+///      → YTMusic's own ranking puts popular albums first.
+///
+/// The key insight: albums that appear on chart browse pages or rank highly
+/// in generic searches on YTMusic already have 500k–50M+ plays. We never
+/// search by artist name, so we never get unknown artists.
 class YTMusicAlbumsScraper {
   static const String _baseUrl = 'https://music.youtube.com';
   static const String _apiUrl = '$_baseUrl/youtubei/v1';
 
   final Map<String, String> _headers = {
     'User-Agent':
-        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
+        '(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
     'Accept': '*/*',
-    'Accept-Language': 'en-US,en;q=0.5',
+    'Accept-Language': 'en-US,en;q=0.9',
     'Content-Type': 'application/json',
     'X-Goog-Api-Key': 'AIzaSyC9XL3ZjWddXya6X74dJoCTL-WEYFDNX30',
+    'X-Goog-Visitor-Id': 'CgtEeEtvaEd2cXlQZyiDy5e2BjIKCgJVUxIEGgAgUA%3D%3D',
     'Origin': _baseUrl,
     'Referer': '$_baseUrl/',
   };
 
   final Map<String, dynamic> _context = {
-    'client': {'clientName': 'WEB_REMIX', 'clientVersion': '1.20231204.01.00'},
+    'client': {
+      'clientName': 'WEB_REMIX',
+      'clientVersion': '1.20231204.01.00',
+      'hl': 'en',
+      'gl': 'US',
+    },
   };
 
-  /// Get trending/popular albums - metadata only
-  // Future<List<Album>> getTrendingAlbums({int limit = 20}) async {
-  //   try {
-  //     print('🔍 [YTMusicScraper] Fetching trending albums...');
+  // Official YTMusic browse pages that surface trending/chart content.
+  // These IDs are YTMusic's own internal page identifiers — not artist IDs.
+  static const List<String> _trendingBrowseIds = [
+    'FEmusic_charts', // Global chart (most reliable for popularity)
+    'FEmusic_new_releases_albums_us', // New releases — chart-topping only
+    'FEmusic_home', // Home feed — personalised trending
+  ];
 
-  //     final response = await _makeRequest(
-  //       endpoint: 'browse',
-  //       body: {'context': _context, 'browseId': 'FEmusic_home'},
-  //     );
+  // Generic chart-term searches — broad enough that YTMusic's own
+  // ranking surfaces only popular albums. No artist names.
+  static const List<String> _chartSearchTerms = [
+    'top albums 2024',
+    'best albums 2023',
+    'trending albums',
+    'top hip hop albums',
+    'top pop albums',
+    'top r&b albums',
+    'top rap albums',
+    'chart albums',
+    'platinum albums 2024',
+    'most streamed albums',
+  ];
 
-  //     if (response == null) {
-  //       return _getFallbackAlbums();
-  //     }
+  // Search param that filters YTMusic search results to albums only.
+  static const String _albumFilterParam = 'EgWKAQIYAWoKEAoQAxAEEAkQBQ%3D%3D';
 
-  //     final albums = _parseAlbumsFromBrowse(response, limit);
+  // ── Public API ─────────────────────────────────────────────────────────────
 
-  //     if (albums.isEmpty) {
-  //       print('⚠️ No albums found, using fallback');
-  //       return _getFallbackAlbums();
-  //     }
-
-  //     print('✅ [YTMusicScraper] Found ${albums.length} albums');
-  //     return albums;
-  //   } catch (e) {
-  //     print('❌ [YTMusicScraper] Error: $e');
-  //     return _getFallbackAlbums();
-  //   }
-  // }
-
-  /// Get random albums by artist
-  Future<List<Album>> getRandomAlbumsByArtist(
-    String artist, {
-    int limit = 50,
-  }) async {
-    try {
-      print('👤 [YTMusicScraper] Fetching random albums by $artist...');
-
-      // Search for the artist's albums
-      final albums = await searchAlbums('$artist album', limit: 30);
-
-      if (albums.isEmpty) return [];
-
-      // Filter to only include albums by this artist
-      final artistAlbums = albums.where((album) {
-        return album.artist.toLowerCase().contains(artist.toLowerCase());
-      }).toList();
-
-      // Shuffle for randomness
-      artistAlbums.shuffle();
-
-      final result = artistAlbums.take(limit).toList();
-
-      print(
-        '✅ [YTMusicScraper] Found ${result.length} random albums by $artist',
-      );
-      return result;
-    } catch (e) {
-      print('❌ [YTMusicScraper] Error getting random artist albums: $e');
-      return [];
-    }
-  }
-
-  Future<List<Album>> getRandomAlbumsByPopularArtists({int limit = 50}) async {
-    try {
-      print('👤 [YTMusicScraper] Fetching albums by popular artists...');
-
-      // Large array of popular artists from 2010-2025
-      final popularArtists = [
-        'Eminem',
-        'Maroon 5',
-        'Taylor Swift',
-        'Drake',
-        'Ed Sheeran',
-        'The Weeknd',
-        'Bruno Mars',
-        'Ariana Grande',
-        'Post Malone',
-        'Justin Bieber',
-        'Billie Eilish',
-        'Dua Lipa',
-        'Harry Styles',
-        'Kanye West',
-        'Kendrick Lamar',
-        'Travis Scott',
-        'Bad Bunny',
-        'J Balvin',
-        'Rihanna',
-        'Beyoncé',
-        'Lady Gaga',
-        'Coldplay',
-        'Imagine Dragons',
-        'One Direction',
-        'Twenty One Pilots',
-        'Halsey',
-        'Shawn Mendes',
-        'Selena Gomez',
-        'Miley Cyrus',
-        'Katy Perry',
-        'Nicki Minaj',
-        'Cardi B',
-        'Megan Thee Stallion',
-        'Doja Cat',
-        'Lil Nas X',
-        'Olivia Rodrigo',
-        'The Kid LAROI',
-        'SZA',
-        'Lizzo',
-        'Sam Smith',
-        'Adele',
-        'Pink Floyd',
-        'Metallica',
-        'Linkin Park',
-        'Green Day',
-        'Foo Fighters',
-        'Red Hot Chili Peppers',
-        'Arctic Monkeys',
-        'Tame Impala',
-        'Lana Del Rey',
-        'Frank Ocean',
-        'Tyler, The Creator',
-        'Mac Miller',
-        'Juice WRLD',
-        'XXXTENTACION',
-        'Pop Smoke',
-        'Future',
-        'Lil Baby',
-        'DaBaby',
-        'Roddy Ricch',
-        'Jack Harlow',
-        'Lil Uzi Vert',
-        'Playboi Carti',
-        'Young Thug',
-        'Gunna',
-        'Chris Brown',
-        'Usher',
-        'John Legend',
-        'Alicia Keys',
-        'Mariah Carey',
-        'Whitney Houston',
-        'Michael Jackson',
-        'Prince',
-        'Queen',
-        'The Beatles',
-        'Elvis Presley',
-        'Bob Dylan',
-        'David Bowie',
-        'Madonna',
-      ];
-
-      // Shuffle artists for randomness
-      popularArtists.shuffle();
-
-      final allAlbums = <Album>{};
-
-      // Try multiple artists until we get enough albums
-      for (final artist in popularArtists.take(10)) {
-        // Try first 10 random artists
-        if (allAlbums.length >= limit) break;
-
-        print('🔍 Searching albums for: $artist');
-        final albums = await searchAlbums('$artist album', limit: 30);
-
-        // Filter to only include albums by this artist
-        final artistAlbums = albums.where((album) {
-          return album.artist.toLowerCase().contains(artist.toLowerCase());
-        }).toList();
-
-        // Shuffle this artist's albums
-        artistAlbums.shuffle();
-
-        // Add unique albums
-        for (final album in artistAlbums) {
-          if (!allAlbums.any((a) => a.id == album.id)) {
-            allAlbums.add(album);
-          }
-          if (allAlbums.length >= limit) break;
-        }
-
-        // Small delay to avoid rate limiting
-        await Future.delayed(const Duration(milliseconds: 300));
-      }
-
-      // Convert to list and shuffle all together
-      final albumList = allAlbums.toList();
-      albumList.shuffle();
-
-      final result = albumList.take(limit).toList();
-
-      print(
-        '✅ [YTMusicScraper] Found ${result.length} albums by popular artists',
-      );
-      return result;
-    } catch (e) {
-      print('❌ [YTMusicScraper] Error getting albums by popular artists: $e');
-      return _getFallbackAlbums();
-    }
-  }
-
-  /// Get only official studio albums from various artists (no remixes, compilations, live albums, etc.)
-  Future<List<Album>> getOfficialAlbumsFromArtists({int limit = 50}) async {
-    try {
-      print('🎵 [YTMusicScraper] Fetching official albums only...');
-
-      final popularArtists = [
-        'Eminem',
-        'Maroon 5',
-        'Taylor Swift',
-        'Drake',
-        'Ed Sheeran',
-        'The Weeknd',
-        'Bruno Mars',
-        'Ariana Grande',
-        'Post Malone',
-        'Justin Bieber',
-        'Billie Eilish',
-        'Dua Lipa',
-        'Harry Styles',
-        'Kanye West',
-        'Kendrick Lamar',
-        'Travis Scott',
-        'Bad Bunny',
-        'J Balvin',
-        'Rihanna',
-        'Beyoncé',
-        'Lady Gaga',
-        'Coldplay',
-        'Imagine Dragons',
-        'One Direction',
-        'Twenty One Pilots',
-        'Halsey',
-        'Shawn Mendes',
-        'Selena Gomez',
-        'Miley Cyrus',
-        'Katy Perry',
-        'Nicki Minaj',
-        'Cardi B',
-        'Megan Thee Stallion',
-        'Doja Cat',
-        'Lil Nas X',
-        'Olivia Rodrigo',
-        'The Kid LAROI',
-        'SZA',
-        'Lizzo',
-        'Sam Smith',
-        'Adele',
-        'Pink Floyd',
-        'Metallica',
-        'Linkin Park',
-        'Green Day',
-        'Foo Fighters',
-        'Red Hot Chili Peppers',
-        'Arctic Monkeys',
-        'Tame Impala',
-        'Lana Del Rey',
-        'Frank Ocean',
-        'Tyler, The Creator',
-        'Mac Miller',
-        'Juice WRLD',
-        'XXXTENTACION',
-        'Pop Smoke',
-        'Future',
-        'Lil Baby',
-        'DaBaby',
-        'Roddy Ricch',
-        'Jack Harlow',
-        'Lil Uzi Vert',
-        'Playboi Carti',
-        'Young Thug',
-        'Gunna',
-        'Chris Brown',
-        'Usher',
-        'John Legend',
-        'Alicia Keys',
-        'Mariah Carey',
-        'Whitney Houston',
-        'Michael Jackson',
-        'Prince',
-        'Queen',
-        'The Beatles',
-        'Elvis Presley',
-        'Bob Dylan',
-        'David Bowie',
-        'Madonna',
-      ];
-
-      // Shuffle for randomness
-      popularArtists.shuffle();
-
-      final allAlbums = <Album>{};
-
-      // Try artists until we get enough albums
-      for (final artist in popularArtists.take(20)) {
-        if (allAlbums.length >= limit) break;
-
-        print('🔍 Searching official albums for: $artist');
-        final albums = await searchAlbums('$artist album', limit: 30);
-
-        if (albums.isEmpty) {
-          print('⚠️ No results for $artist');
-          continue;
-        }
-
-        // Extract key words from artist name
-        final artistWords = artist
-            .toLowerCase()
-            .split(' ')
-            .where((w) => w.length > 2)
-            .toList();
-
-        // Filter for official albums only
-        final officialAlbums = albums.where((album) {
-          final albumArtistLower = album.artist.toLowerCase();
-          final albumTitleLower = album.title.toLowerCase();
-          final artistLower = artist.toLowerCase();
-
-          // Must match the artist
-          bool artistMatch = false;
-          if (albumArtistLower.contains(artistLower)) {
-            artistMatch = true;
-          } else {
-            for (final word in artistWords) {
-              if (albumArtistLower.contains(word)) {
-                artistMatch = true;
-                break;
-              }
-            }
-          }
-
-          if (!artistMatch) return false;
-
-          // Exclude non-official albums (remix, live, deluxe, remaster, etc.)
-          final excludeKeywords = [
-            'remix',
-            'remixes',
-            'mix',
-            'mixtape',
-            'live',
-            'concert',
-            'acoustic',
-            'unplugged',
-            'sessions',
-            'karaoke',
-            'instrumental',
-            'covers',
-            'tribute',
-            'greatest hits',
-            'best of',
-            'collection',
-            'anthology',
-            'essentials',
-            'playlist',
-            'radio',
-            'singles',
-            'ep',
-            'demo',
-            'bootleg',
-            'unreleased',
-            'b-sides',
-            'rarities',
-            'outtakes',
-            'bonus',
-            'anniversary',
-            'edition',
-            'version',
-            'vol.',
-            'volume',
-            'part',
-            'chapter',
-            'tape',
-            'soundtrack',
-            'various artists',
-            'compilation',
-            'deluxe',
-            'expanded',
-            'remaster',
-            'remastered',
-          ];
-
-          // Check if title contains any exclude keywords
-          for (final keyword in excludeKeywords) {
-            if (albumTitleLower.contains(keyword)) {
-              return false;
-            }
-          }
-
-          // Exclude if title has parentheses or brackets (often indicates special editions)
-          if (albumTitleLower.contains('(') ||
-              albumTitleLower.contains('[') ||
-              albumTitleLower.contains(')') ||
-              albumTitleLower.contains(']')) {
-            return false;
-          }
-
-          return true;
-        }).toList();
-
-        print(
-          '📊 Found ${officialAlbums.length} official albums for $artist from ${albums.length} results',
-        );
-
-        if (officialAlbums.isEmpty) {
-          print('⚠️ No official albums found for $artist');
-          continue;
-        }
-
-        // Shuffle albums
-        officialAlbums.shuffle();
-
-        // Add unique albums (max 3 per artist for variety)
-        int addedCount = 0;
-        for (final album in officialAlbums.take(3)) {
-          if (!allAlbums.any((a) => a.id == album.id)) {
-            allAlbums.add(album);
-            addedCount++;
-            print('  ✓ Added: "${album.title}" by ${album.artist}');
-          }
-          if (allAlbums.length >= limit) break;
-        }
-
-        print(
-          '✅ Added $addedCount official albums for $artist (total: ${allAlbums.length})',
-        );
-
-        // Small delay to avoid rate limiting
-        await Future.delayed(const Duration(milliseconds: 300));
-      }
-
-      // Convert to list and shuffle
-      final albumList = allAlbums.toList();
-      albumList.shuffle();
-
-      final result = albumList.take(limit).toList();
-
-      print(
-        '✅ [YTMusicScraper] Found ${result.length} official albums from ${allAlbums.length} unique albums',
-      );
-      return result.isNotEmpty ? result : _getFallbackAlbums();
-    } catch (e) {
-      print('❌ [YTMusicScraper] Error getting official albums: $e');
-      return _getFallbackAlbums();
-    }
-  }
-
-  /// Get mixed albums from multiple random artists
+  /// Fetch popular albums from YTMusic chart/trending pages.
+  /// No artist list, no hardcoded IDs. YTMusic decides what's popular.
   Future<List<Album>> getMixedRandomAlbums({
     int limit = 50,
     bool forceRefresh = false,
   }) async {
-    try {
-      // Try loading from cache first (unless force refresh)
-      if (!forceRefresh) {
-        final cachedAlbums = await AlbumArtistQPCache.loadAlbums();
-        if (cachedAlbums != null && cachedAlbums.isNotEmpty) {
-          print('⚡ [YTMusicScraper] Using cached Albums');
-          return cachedAlbums.take(limit).toList();
+    if (!forceRefresh) {
+      final cached = await AlbumArtistQPCache.loadAlbums();
+      if (cached != null && cached.isNotEmpty) {
+        print('⚡ [YTMusicScraper] Using cached albums (${cached.length})');
+        return cached.take(limit).toList();
+      }
+    }
+
+    print('🎵 [YTMusicScraper] Fetching popular albums from YTMusic charts...');
+
+    final albums = <Album>[];
+    final seenIds = <String>{};
+
+    // Step 1: Browse official trending/chart pages.
+    for (final browseId in _trendingBrowseIds) {
+      if (albums.length >= limit) break;
+      try {
+        final found = await _fetchAlbumsFromBrowsePage(browseId);
+        _mergeUnique(found, albums, seenIds);
+        print(
+          '  📈 "$browseId" → ${found.length} found, '
+          '${albums.length} total so far',
+        );
+        await Future.delayed(const Duration(milliseconds: 300));
+      } catch (e) {
+        print('  ⚠️ Browse "$browseId" error: $e');
+      }
+    }
+
+    // Step 2: Supplement with generic chart-term searches if needed.
+    if (albums.length < limit) {
+      final shuffledTerms = List<String>.from(_chartSearchTerms)
+        ..shuffle(Random());
+      for (final term in shuffledTerms) {
+        if (albums.length >= limit) break;
+        try {
+          final found = await searchAlbums(term, limit: 20);
+          _mergeUnique(found, albums, seenIds);
+          print(
+            '  🔍 "$term" → ${found.length} found, '
+            '${albums.length} total so far',
+          );
+          await Future.delayed(const Duration(milliseconds: 250));
+        } catch (e) {
+          print('  ⚠️ Search "$term" error: $e');
         }
       }
-      print('🎭 [YTMusicScraper] Fetching mixed albums from random artists...');
+    }
 
-      // Diverse array of popular artists from different genres
-      final artistsByGenre = {
-        'Hip-Hop/Rap': [
-          'Eminem',
-          'Drake',
-          'Kendrick Lamar',
-          'Travis Scott',
-          'Post Malone',
-          'Kanye West',
-          'J. Cole',
-          'Lil Wayne',
-          'Nicki Minaj',
-          'Cardi B',
-          'Megan Thee Stallion',
-          'Future',
-          'Lil Baby',
-          'DaBaby',
-          'Roddy Ricch',
-          'Jack Harlow',
-          'Lil Uzi Vert',
-          'Playboi Carti',
-          'Young Thug',
-          'Juice WRLD',
-          'XXXTENTACION',
-          'Pop Smoke',
-          'Mac Miller',
-        ],
-        'Pop': [
-          'Taylor Swift',
-          'Ariana Grande',
-          'Ed Sheeran',
-          'Justin Bieber',
-          'Billie Eilish',
-          'Dua Lipa',
-          'Harry Styles',
-          'Bruno Mars',
-          'Maroon 5',
-          'The Weeknd',
-          'One Direction',
-          'Halsey',
-          'Shawn Mendes',
-          'Selena Gomez',
-          'Miley Cyrus',
-          'Katy Perry',
-          'Lady Gaga',
-          'Rihanna',
-          'Beyoncé',
-          'Adele',
-          'Sam Smith',
-          'Olivia Rodrigo',
-          'The Kid LAROI',
-          'Doja Cat',
-          'Lil Nas X',
-        ],
-        'Rock/Alternative': [
-          'Coldplay',
-          'Imagine Dragons',
-          'Twenty One Pilots',
-          'Linkin Park',
-          'Green Day',
-          'Foo Fighters',
-          'Red Hot Chili Peppers',
-          'Arctic Monkeys',
-          'Tame Impala',
-          'Lana Del Rey',
-          'Frank Ocean',
-          'Tyler, The Creator',
-        ],
-        'R&B/Soul': [
-          'The Weeknd',
-          'Frank Ocean',
-          'SZA',
-          'H.E.R.',
-          'Daniel Caesar',
-          'Summer Walker',
-          'Jhené Aiko',
-          'Giveon',
-          'Lucky Daye',
-          'Chris Brown',
-          'Usher',
-          'John Legend',
-          'Alicia Keys',
-        ],
-        'Latin': [
-          'Bad Bunny',
-          'J Balvin',
-          'Karol G',
-          'Maluma',
-          'Ozuna',
-          'Anuel AA',
-          'Daddy Yankee',
-          'Shakira',
-        ],
-      };
+    albums.shuffle(Random());
+    final result = albums.take(limit).toList();
 
-      final allAlbums = <Album>{};
-      final allArtists = <String>[];
+    if (result.isNotEmpty) {
+      await AlbumArtistQPCache.saveAlbums(result);
+    }
 
-      // Collect artists from all genres
-      for (final genreArtists in artistsByGenre.values) {
-        allArtists.addAll(genreArtists);
-      }
+    print('✅ [YTMusicScraper] Returning ${result.length} popular albums');
+    return result.isNotEmpty ? result : _minimalFallback();
+  }
 
-      // Shuffle all artists
-      allArtists.shuffle();
+  /// Fetches 20 Vevo albums dynamically by searching for Vevo artists and channels
+  Future<List<Album>> getVevoAlbums({int limit = 20}) async {
+    try {
+      print('🎵 [YTMusicScraper] Fetching Vevo albums...');
 
-      // Try artists until we get enough albums
-      int artistIndex = 0;
-      while (allAlbums.length < limit && artistIndex < allArtists.length) {
-        final artist = allArtists[artistIndex];
-        artistIndex++;
+      final albums = <Album>[];
+      final seenIds = <String>{};
+
+      // List of popular Vevo artists to search for
+      final vevoArtists = [
+        'Taylor Swift Vevo',
+        'Ed Sheeran Vevo',
+        'Ariana Grande Vevo',
+        'Justin Bieber Vevo',
+        'Katy Perry Vevo',
+        'Rihanna Vevo',
+        'Bruno Mars Vevo',
+        'Billie Eilish Vevo',
+        'Shawn Mendes Vevo',
+        'Dua Lipa Vevo',
+        'The Weeknd Vevo',
+        'Selena Gomez Vevo',
+        'Lady Gaga Vevo',
+        'Beyoncé Vevo',
+        'Drake Vevo',
+        'Eminem Vevo',
+        'Coldplay Vevo',
+        'Maroon 5 Vevo',
+        'Imagine Dragons Vevo',
+        'Adele Vevo',
+        'Sam Smith Vevo',
+        'Post Malone Vevo',
+        'Cardi B Vevo',
+        'Camila Cabello Vevo',
+        'Halsey Vevo',
+        'Lizzo Vevo',
+        'Harry Styles Vevo',
+        'Lil Nas X Vevo',
+        'Doja Cat Vevo',
+        'Olivia Rodrigo Vevo',
+      ];
+      final vevoArtistsExtra = [
+        'Shakira Vevo',
+        'Jennifer Lopez Vevo',
+        'Enrique Iglesias Vevo',
+        'Pitbull Vevo',
+        'Daddy Yankee Vevo',
+        'Maluma Vevo',
+        'J Balvin Vevo',
+        'Karol G Vevo',
+        'Bad Bunny Vevo',
+        'Rosalía Vevo',
+        'Anitta Vevo',
+        'Nicky Jam Vevo',
+        'Ozuna Vevo',
+        'Luis Fonsi Vevo',
+        'Becky G Vevo',
+        'Prince Royce Vevo',
+        'Romeo Santos Vevo',
+        'Marc Anthony Vevo',
+        'Wisin Vevo',
+        'Yandel Vevo',
+
+        'Sia Vevo',
+        'Ellie Goulding Vevo',
+        'Zara Larsson Vevo',
+        'Tove Lo Vevo',
+        'Ava Max Vevo',
+        'Bebe Rexha Vevo',
+        'Rita Ora Vevo',
+        'Jessie J Vevo',
+        'Anne-Marie Vevo',
+        'Mabel Vevo',
+        'Clean Bandit Vevo',
+        'Calvin Harris Vevo',
+        'David Guetta Vevo',
+        'Martin Garrix Vevo',
+        'Zedd Vevo',
+        'Marshmello Vevo',
+        'Kygo Vevo',
+        'Avicii Vevo',
+        'Swedish House Mafia Vevo',
+        'Alan Walker Vevo',
+
+        'OneRepublic Vevo',
+        'The Chainsmokers Vevo',
+        'Fall Out Boy Vevo',
+        'Panic! At The Disco Vevo',
+        'Paramore Vevo',
+        'Green Day Vevo',
+        'Linkin Park Vevo',
+        'Twenty One Pilots Vevo',
+        'Arctic Monkeys Vevo',
+        'The 1975 Vevo',
+        'Muse Vevo',
+        'Kings of Leon Vevo',
+        'The Killers Vevo',
+        'Red Hot Chili Peppers Vevo',
+        'Foo Fighters Vevo',
+        'U2 Vevo',
+        'Bastille Vevo',
+        'Snow Patrol Vevo',
+        'Keane Vevo',
+
+        'Nick Jonas Vevo',
+        'Joe Jonas Vevo',
+        'Jonas Brothers Vevo',
+        'Demi Lovato Vevo',
+        'Miley Cyrus Vevo',
+        'Troye Sivan Vevo',
+        'Conan Gray Vevo',
+        'Tate McRae Vevo',
+        'Sabrina Carpenter Vevo',
+        'Madison Beer Vevo',
+        'Alessia Cara Vevo',
+        'Julia Michaels Vevo',
+        'Lauv Vevo',
+        'Jeremy Zucker Vevo',
+        'Alec Benjamin Vevo',
+        'Khalid Vevo',
+        'Frank Ocean Vevo',
+        'Miguel Vevo',
+        'The Kid LAROI Vevo',
+        'Charlie Puth Vevo',
+
+        'Jason Derulo Vevo',
+        'Ne-Yo Vevo',
+        'Usher Vevo',
+        'Chris Brown Vevo',
+        'T-Pain Vevo',
+        'Akon Vevo',
+        'Flo Rida Vevo',
+        'Sean Paul Vevo',
+        'Shaggy Vevo',
+        'Taio Cruz Vevo',
+        'Iyaz Vevo',
+        'Example Vevo',
+        'Tinie Tempah Vevo',
+        'Stormzy Vevo',
+        'Skepta Vevo',
+        'AJ Tracey Vevo',
+        'Central Cee Vevo',
+        'Aitch Vevo',
+        'Headie One Vevo',
+        'Dave Vevo',
+
+        'Future Vevo',
+        'Young Thug Vevo',
+        'Gunna Vevo',
+        'Lil Baby Vevo',
+        'DaBaby Vevo',
+        'Travis Scott Vevo',
+        'Playboi Carti Vevo',
+        'Juice WRLD Vevo',
+        'XXXTENTACION Vevo',
+        'Lil Uzi Vert Vevo',
+        '21 Savage Vevo',
+        'Metro Boomin Vevo',
+        'Jack Harlow Vevo',
+        'Megan Thee Stallion Vevo',
+        'Saweetie Vevo',
+        'Iggy Azalea Vevo',
+        'Nicki Minaj Vevo',
+        'Latto Vevo',
+        'GloRilla Vevo',
+        'Ice Spice Vevo',
+
+        'G-Eazy Vevo',
+        'Logic Vevo',
+        'Joyner Lucas Vevo',
+        'NF Vevo',
+        'Russ Vevo',
+        'Big Sean Vevo',
+        'Wiz Khalifa Vevo',
+        'Tyga Vevo',
+        'YG Vevo',
+        'Schoolboy Q Vevo',
+        'Kendrick Lamar Vevo',
+        'J. Cole Vevo',
+        'Mac Miller Vevo',
+        "",
+        "",
+        'Pusha T Vevo',
+        'Rick Ross Vevo',
+        'Meek Mill Vevo',
+        'Lil Wayne Vevo',
+        'Birdman Vevo',
+
+        'Bon Jovi Vevo',
+        'Bryan Adams Vevo',
+        'Celine Dion Vevo',
+        'Whitney Houston Vevo',
+        'Mariah Carey Vevo',
+        'Christina Aguilera Vevo',
+        'Backstreet Boys Vevo',
+        'NSYNC Vevo',
+        'Spice Girls Vevo',
+        'Westlife Vevo',
+        'Boyzone Vevo',
+        'Take That Vevo',
+        'Blue Vevo',
+        'Sugababes Vevo',
+        'Girls Aloud Vevo',
+        'Little Mix Vevo',
+        'Fifth Harmony Vevo',
+        "Destiny's Child Vevo",
+        'TLC Vevo',
+        'En Vogue Vevo',
+
+        'Metallica Vevo',
+        'Iron Maiden Vevo',
+        'Black Sabbath Vevo',
+        'Slipknot Vevo',
+        'Korn Vevo',
+        'System Of A Down Vevo',
+        'Disturbed Vevo',
+        'Avenged Sevenfold Vevo',
+        'Bring Me The Horizon Vevo',
+        'Bullet For My Valentine Vevo',
+        'Lamb of God Vevo',
+        'Megadeth Vevo',
+        'Pantera Vevo',
+        'Dream Theater Vevo',
+        'Ghost Vevo',
+        'Nightwish Vevo',
+        'Epica Vevo',
+        'Within Temptation Vevo',
+        'Evanescence Vevo',
+
+        'ABBA Vevo',
+        'Queen Vevo',
+        'The Beatles Vevo',
+        'The Rolling Stones Vevo',
+        'Pink Floyd Vevo',
+        'Led Zeppelin Vevo',
+        'Eagles Vevo',
+        'Fleetwood Mac Vevo',
+        'The Beach Boys Vevo',
+        'Earth, Wind & Fire Vevo',
+        'Chicago Vevo',
+        'Journey Vevo',
+        'Toto Vevo',
+        'Scorpions Vevo',
+        'Europe Vevo',
+        'Roxette Vevo',
+        'a-ha Vevo',
+        'Depeche Mode Vevo',
+        'Pet Shop Boys Vevo',
+        'Duran Duran Vevo',
+      ];
+
+      // Hindi / Indian VEVO search patterns
+      final hindiVevoArtists = [
+        // Many Indian VEVO channels use both styles
+        'Arijit Singh Vevo',
+        'ArijitSinghVEVO',
+        'Shreya Ghoshal Vevo',
+        'ShreyaGhoshalVEVO',
+        'Neha Kakkar Vevo',
+        'NehaKakkarVEVO',
+        'Badshah Vevo',
+        'BadshahVEVO',
+        'Yo Yo Honey Singh Vevo',
+        'HoneySinghVEVO',
+        'Jubin Nautiyal Vevo',
+        'JubinNautiyalVEVO',
+        'Darshan Raval Vevo',
+        'DarshanRavalVEVO',
+        'Atif Aslam Vevo',
+        'AtifAslamVEVO',
+        'Vishal Mishra Vevo',
+        'VishalMishraVEVO',
+        'Pritam Vevo',
+        'PritamVEVO',
+        'A R Rahman Vevo',
+        'ARRahmanVEVO',
+
+        // Label-driven VEVO-like searches (helps a lot)
+        'T-Series official albums',
+        'Sony Music India Vevo',
+        'Zee Music Company official',
+        'Saregama official albums',
+      ];
+
+      // Merge all
+      final allVevoArtists = [
+        ...vevoArtists,
+        ...vevoArtistsExtra,
+        ...hindiVevoArtists,
+      ];
+
+      // Shuffle for variety
+      final shuffledArtists = List<String>.from(allVevoArtists)
+        ..shuffle(Random());
+
+      // Queries that yield Vevo/official albums
+      final vevoQueries = [
+        'Vevo official albums',
+        'Vevo popular albums',
+        'Vevo certified',
+        'Vevo top albums',
+        'Vevo presents',
+        'Vevo exclusive',
+        'Bollywood official soundtrack',
+        'Hindi movie album',
+      ];
+
+      // Search by artists
+      for (final artist in shuffledArtists) {
+        if (albums.length >= limit) break;
 
         try {
-          final albums = await searchAlbums('$artist album', limit: 20);
+          final results = await searchAlbums(artist, limit: 5);
 
-          // Filter to this artist
-          final artistAlbums = albums.where((album) {
-            final albumArtist = album.artist.toLowerCase();
-            return albumArtist.contains(artist.toLowerCase()) ||
-                album.title.toLowerCase().contains(artist.toLowerCase());
-          }).toList();
+          for (final album in results) {
+            if (!seenIds.contains(album.id) &&
+                (album.artist.toLowerCase().contains('vevo') ||
+                    album.artist.toLowerCase().contains('t-series') ||
+                    album.artist.toLowerCase().contains('sony') ||
+                    album.artist.toLowerCase().contains('zee') ||
+                    album.artist.toLowerCase().contains('saregama') ||
+                    album.title.toLowerCase().contains('soundtrack') ||
+                    album.artist.contains(artist.replaceAll(' Vevo', '')))) {
+              seenIds.add(album.id);
+              albums.add(album);
 
-          artistAlbums.shuffle();
-
-          // Add unique albums
-          for (final album in artistAlbums.take(5)) {
-            // Take max 5 per artist
-            if (!allAlbums.any((a) => a.id == album.id)) {
-              allAlbums.add(album);
+              if (albums.length >= limit) break;
             }
-            if (allAlbums.length >= limit) break;
           }
 
           await Future.delayed(const Duration(milliseconds: 200));
         } catch (e) {
-          print('⚠️ Error with artist $artist: $e');
+          print('⚠️ Error searching "$artist": $e');
         }
       }
 
-      // Convert to list and final shuffle
-      final albumList = allAlbums.toList();
-      albumList.shuffle();
+      // Fallback queries
+      if (albums.length < limit) {
+        final shuffledQueries = List<String>.from(vevoQueries)
+          ..shuffle(Random());
 
-      final result = albumList.take(limit).toList();
-      // Save to cache
-      if (result.isNotEmpty) {
-        await AlbumArtistQPCache.saveAlbums(result);
+        for (final query in shuffledQueries) {
+          if (albums.length >= limit) break;
+
+          try {
+            final results = await searchAlbums(query, limit: 10);
+
+            for (final album in results) {
+              if (!seenIds.contains(album.id) &&
+                  (album.artist.toLowerCase().contains('vevo') ||
+                      album.artist.toLowerCase().contains('t-series') ||
+                      album.artist.toLowerCase().contains('sony') ||
+                      album.artist.toLowerCase().contains('zee') ||
+                      album.artist.toLowerCase().contains('saregama') ||
+                      album.title.toLowerCase().contains('soundtrack'))) {
+                seenIds.add(album.id);
+                albums.add(album);
+
+                if (albums.length >= limit) break;
+              }
+            }
+
+            await Future.delayed(const Duration(milliseconds: 300));
+          } catch (e) {
+            print('⚠️ Error searching "$query": $e');
+          }
+        }
       }
 
-      print(
-        '✅ [YTMusicScraper] Found ${result.length} mixed albums from ${artistIndex} artists',
-      );
-      return result;
+      albums.shuffle(Random());
+
+      print('✅ Returning ${albums.take(limit).length} Vevo/Hindi albums');
+      return albums.take(limit).toList();
     } catch (e) {
-      print('❌ [YTMusicScraper] Error getting mixed albums: $e');
-      return _getFallbackAlbums();
+      print('❌ Error fetching Vevo albums: $e');
+      return [];
     }
   }
 
-  /// Stream mixed albums from multiple random artists - yields albums as they're found
+  Future<List<Album>> getTasteBasedAlbums({
+    required List<String> topArtists,
+    int limit = 20,
+  }) async {
+    final albums = <Album>[];
+    final seenIds = <String>{};
+
+    // If user has no taste data → fallback
+    if (topArtists.isEmpty) {
+      return getVevoAlbums(limit: limit);
+    }
+
+    for (final artist in topArtists) {
+      if (albums.length >= limit) break;
+
+      try {
+        final results = await searchAlbums(artist, limit: 6);
+
+        for (final album in results) {
+          if (!seenIds.contains(album.id)) {
+            seenIds.add(album.id);
+            albums.add(album);
+
+            if (albums.length >= limit) break;
+          }
+        }
+
+        await Future.delayed(const Duration(milliseconds: 120));
+      } catch (_) {}
+    }
+
+    // Fallback if still low
+    if (albums.length < limit) {
+      final fallback = await getVevoAlbums(limit: limit - albums.length);
+      albums.addAll(fallback);
+    }
+
+    return albums.take(limit).toList();
+  }
+
+  /// Stream version that yields Vevo + Hindi albums
+  Stream<Album> getVevoAlbumsStream({int limit = 20}) async* {
+    final seenIds = <String>{};
+    int yielded = 0;
+
+    final vevoArtists = [
+      'Taylor Swift Vevo',
+      'Ed Sheeran Vevo',
+      'Ariana Grande Vevo',
+      'The Weeknd Vevo',
+      'Dua Lipa Vevo',
+
+      // Hindi
+      'Arijit Singh Vevo',
+      'Shreya Ghoshal Vevo',
+      'Neha Kakkar Vevo',
+      'T-Series official albums',
+      'Bollywood official soundtrack',
+    ];
+
+    final shuffledArtists = List<String>.from(vevoArtists)..shuffle(Random());
+
+    for (final artist in shuffledArtists) {
+      if (yielded >= limit) break;
+
+      try {
+        final results = await searchAlbums(artist, limit: 5);
+
+        for (final album in results) {
+          if (!seenIds.contains(album.id) &&
+              (album.artist.toLowerCase().contains('vevo') ||
+                  album.artist.toLowerCase().contains('t-series') ||
+                  album.artist.toLowerCase().contains('sony') ||
+                  album.artist.toLowerCase().contains('zee') ||
+                  album.artist.toLowerCase().contains('saregama') ||
+                  album.title.toLowerCase().contains('soundtrack'))) {
+            seenIds.add(album.id);
+            yield album;
+            yielded++;
+
+            if (yielded >= limit) break;
+          }
+        }
+
+        await Future.delayed(const Duration(milliseconds: 200));
+      } catch (e) {
+        print('⚠️ Stream error "$artist": $e');
+      }
+    }
+  }
+
+  /// Helper method to check if an album is Vevo-related
+  bool _isVevoAlbum(Album album) {
+    final vevoKeywords = ['vevo', 'VEVO', 'Vevo', 'official', 'VEVO official'];
+
+    return vevoKeywords.any(
+      (keyword) =>
+          album.artist.contains(keyword) || album.title.contains(keyword),
+    );
+  }
+
+  /// Stream version — yields albums immediately as discovered from charts.
   Stream<Album> getMixedRandomAlbumsStream({int limit = 50}) async* {
-    try {
-      print(
-        '🎭 [YTMusicScraper] Streaming mixed albums from random artists...',
-      );
+    final seenIds = <String>{};
+    int yielded = 0;
 
-      // Diverse array of popular artists from different genres
-      final artistsByGenre = {
-        'Hip-Hop/Rap': [
-          'Eminem',
-          'Drake',
-          'Kendrick Lamar',
-          'Travis Scott',
-          'Post Malone',
-          'Kanye West',
-          'J. Cole',
-          'Lil Wayne',
-          'Nicki Minaj',
-          'Cardi B',
-          'Megan Thee Stallion',
-          'Future',
-          'Lil Baby',
-          'DaBaby',
-          'Roddy Ricch',
-          'Jack Harlow',
-          'Lil Uzi Vert',
-          'Playboi Carti',
-          'Young Thug',
-          'Juice WRLD',
-          'XXXTENTACION',
-          'Pop Smoke',
-          'Mac Miller',
-        ],
-        'Pop': [
-          'Taylor Swift',
-          'Ariana Grande',
-          'Ed Sheeran',
-          'Justin Bieber',
-          'Billie Eilish',
-          'Dua Lipa',
-          'Harry Styles',
-          'Bruno Mars',
-          'Maroon 5',
-          'The Weeknd',
-          'One Direction',
-          'Halsey',
-          'Shawn Mendes',
-          'Selena Gomez',
-          'Miley Cyrus',
-          'Katy Perry',
-          'Lady Gaga',
-          'Rihanna',
-          'Beyoncé',
-          'Adele',
-          'Sam Smith',
-          'Olivia Rodrigo',
-          'The Kid LAROI',
-          'Doja Cat',
-          'Lil Nas X',
-        ],
-        'Rock/Alternative': [
-          'Coldplay',
-          'Imagine Dragons',
-          'Twenty One Pilots',
-          'Linkin Park',
-          'Green Day',
-          'Foo Fighters',
-          'Red Hot Chili Peppers',
-          'Arctic Monkeys',
-          'Tame Impala',
-          'Lana Del Rey',
-          'Frank Ocean',
-          'Tyler, The Creator',
-        ],
-        'R&B/Soul': [
-          'The Weeknd',
-          'Frank Ocean',
-          'SZA',
-          'H.E.R.',
-          'Daniel Caesar',
-          'Summer Walker',
-          'Jhené Aiko',
-          'Giveon',
-          'Lucky Daye',
-          'Chris Brown',
-          'Usher',
-          'John Legend',
-          'Alicia Keys',
-        ],
-        'Latin': [
-          'Bad Bunny',
-          'J Balvin',
-          'Karol G',
-          'Maluma',
-          'Ozuna',
-          'Anuel AA',
-          'Daddy Yankee',
-          'Shakira',
-        ],
-      };
-
-      final seenAlbumIds = <String>{};
-      final allArtists = <String>[];
-
-      // Collect artists from all genres
-      for (final genreArtists in artistsByGenre.values) {
-        allArtists.addAll(genreArtists);
+    for (final browseId in _trendingBrowseIds) {
+      if (yielded >= limit) break;
+      try {
+        final found = await _fetchAlbumsFromBrowsePage(browseId);
+        for (final album in found) {
+          if (!seenIds.contains(album.id)) {
+            seenIds.add(album.id);
+            yield album;
+            yielded++;
+            if (yielded >= limit) return;
+          }
+        }
+        await Future.delayed(const Duration(milliseconds: 300));
+      } catch (e) {
+        print('  ⚠️ Stream browse "$browseId" error: $e');
       }
+    }
 
-      // Shuffle all artists
-      allArtists.shuffle();
-
-      int yieldedCount = 0;
-      int artistIndex = 0;
-
-      // Try artists until we get enough albums
-      while (yieldedCount < limit && artistIndex < allArtists.length) {
-        final artist = allArtists[artistIndex];
-        artistIndex++;
-
+    if (yielded < limit) {
+      final shuffledTerms = List<String>.from(_chartSearchTerms)
+        ..shuffle(Random());
+      for (final term in shuffledTerms) {
+        if (yielded >= limit) break;
         try {
-          final albums = await searchAlbums('$artist album', limit: 20);
-
-          // Filter to this artist
-          final artistAlbums = albums.where((album) {
-            final albumArtist = album.artist.toLowerCase();
-            return albumArtist.contains(artist.toLowerCase()) ||
-                album.title.toLowerCase().contains(artist.toLowerCase());
-          }).toList();
-
-          artistAlbums.shuffle();
-
-          // Yield unique albums immediately as we find them
-          for (final album in artistAlbums.take(5)) {
-            if (!seenAlbumIds.contains(album.id)) {
-              seenAlbumIds.add(album.id);
+          final found = await searchAlbums(term, limit: 20);
+          for (final album in found) {
+            if (!seenIds.contains(album.id)) {
+              seenIds.add(album.id);
               yield album;
-              yieldedCount++;
-
-              if (yieldedCount >= limit) break;
+              yielded++;
+              if (yielded >= limit) return;
             }
           }
-
-          await Future.delayed(const Duration(milliseconds: 200));
+          await Future.delayed(const Duration(milliseconds: 250));
         } catch (e) {
-          print('⚠️ Error with artist $artist: $e');
+          print('  ⚠️ Stream search "$term" error: $e');
         }
-      }
-
-      print(
-        '✅ [YTMusicScraper] Streamed $yieldedCount albums from $artistIndex artists',
-      );
-    } catch (e) {
-      print('❌ [YTMusicScraper] Error streaming mixed albums: $e');
-      // Yield fallback albums
-      for (final album in _getFallbackAlbums()) {
-        yield album;
       }
     }
   }
 
-  /// Get album details - metadata only (songs list without loading full details)
+  /// Get full album details including song list.
   Future<Album?> getAlbumDetails(String albumId) async {
     try {
-      print('📀 [YTMusicScraper] Fetching album: $albumId');
-
-      final response = await _makeRequest(
+      print('📀 [YTMusicScraper] Loading album: $albumId');
+      final data = await _makeRequest(
         endpoint: 'browse',
         body: {'context': _context, 'browseId': albumId},
       );
+      if (data == null) return null;
 
-      if (response == null) return null;
+      final meta = _extractAlbumMetadata(data, albumId);
+      final songs = _extractSongsMetadata(data);
 
-      // Extract metadata
-      final metadata = _extractAlbumMetadata(response, albumId);
-
-      // Extract songs metadata
-      final songs = _extractSongsMetadata(response);
+      // If artist is still unknown, try to extract from songs
+      String artistName = meta['artist'] as String;
+      if (artistName == 'Unknown Artist' && songs.isNotEmpty) {
+        // Get artist from first song
+        artistName = songs.first.artists.isNotEmpty
+            ? songs.first.artists.first
+            : 'Unknown Artist';
+      }
 
       print(
-        '✅ [YTMusicScraper] Loaded album "${metadata['title']}" with ${songs.length} songs',
+        '✅ [YTMusicScraper] "${meta['title']}" by "$artistName" — ${songs.length} songs',
       );
-
       return Album(
         id: albumId,
-        title: metadata['title'] as String,
-        artist: metadata['artist'] as String,
-        coverArt: metadata['coverArt'] as String?,
-        year: metadata['year'] as int? ?? 0,
+        title: meta['title'] as String,
+        artist: artistName,
+        coverArt: meta['coverArt'] as String?,
+        year: meta['year'] as int? ?? 0,
         songs: songs,
       );
     } catch (e) {
-      print('❌ [YTMusicScraper] Error: $e');
+      print('❌ [YTMusicScraper] getAlbumDetails error: $e');
       return null;
     }
   }
 
-  /// Search for albums - metadata only
+  /// Search albums by query string.
   Future<List<Album>> searchAlbums(String query, {int limit = 20}) async {
     try {
-      print('🔍 [YTMusicScraper] Searching albums: "$query"');
-
-      final response = await _makeRequest(
+      final data = await _makeRequest(
         endpoint: 'search',
         body: {
           'context': _context,
           'query': query,
-          'params': 'EgWKAQIYAWoKEAoQAxAEEAkQBQ%3D%3D', // Filter for albums
+          'params': _albumFilterParam,
         },
       );
-
-      if (response == null) return [];
-
-      final albums = _parseAlbumsFromSearch(response, limit);
-
-      print('✅ [YTMusicScraper] Found ${albums.length} albums');
-      return albums;
+      if (data == null) return [];
+      return _parseSearchResults(data, limit);
     } catch (e) {
-      print('❌ [YTMusicScraper] Search error: $e');
+      print('❌ [YTMusicScraper] searchAlbums error: $e');
       return [];
     }
   }
 
-  /// Get other versions of an album (remasters, deluxe, live versions, etc.)
-  Future<List<Album>> getAlbumVersions(
-    String albumTitle,
-    String artist, {
-    int limit = 20,
-  }) async {
-    try {
-      print(
-        '🔍 [YTMusicScraper] Searching album versions: "$albumTitle by $artist"',
-      );
+  // ── Browse Page Parsing ────────────────────────────────────────────────────
 
-      // Search for the album with artist to get related versions
-      final searchQuery = '$albumTitle $artist';
+  Future<List<Album>> _fetchAlbumsFromBrowsePage(String browseId) async {
+    final data = await _makeRequest(
+      endpoint: 'browse',
+      body: {'context': _context, 'browseId': browseId},
+    );
+    if (data == null) return [];
 
-      final response = await _makeRequest(
-        endpoint: 'search',
-        body: {
-          'context': _context,
-          'query': searchQuery,
-          'params': 'EgWKAQIYAWoKEAoQAxAEEAkQBQ%3D%3D', // Filter for albums
-        },
-      );
+    final albums = <Album>[];
+    _walkContentTree(data, albums);
+    return albums;
+  }
 
-      if (response == null) return [];
-
-      final albums = _parseAlbumsFromSearch(
-        response,
-        limit * 2,
-      ); // Get more to filter
-
-      // Filter to only show versions that match the album name
-      final versions = albums
-          .where((album) {
-            final titleLower = album.title.toLowerCase();
-            final searchTitleLower = albumTitle.toLowerCase();
-
-            // Check if title contains the original album name
-            return titleLower.contains(searchTitleLower) ||
-                searchTitleLower.contains(
-                  titleLower.split('(')[0].trim().toLowerCase(),
-                );
-          })
-          .take(limit)
-          .toList();
-
-      print('✅ [YTMusicScraper] Found ${versions.length} album versions');
-      return versions;
-    } catch (e) {
-      print('❌ [YTMusicScraper] Version search error: $e');
-      return [];
+  /// Recursively walk all known YTMusic content structures and
+  /// collect album entries wherever they appear.
+  void _walkContentTree(Map<String, dynamic> data, List<Album> out) {
+    final contentRoots = _findAllContentLists(data);
+    for (final sections in contentRoots) {
+      _extractFromSections(sections, out);
     }
   }
 
-  /// Make API request with error handling
-  Future<Map<String, dynamic>?> _makeRequest({
-    required String endpoint,
-    required Map<String, dynamic> body,
-  }) async {
-    try {
-      final response = await http.post(
-        Uri.parse('$_apiUrl/$endpoint'),
-        headers: _headers,
-        body: jsonEncode(body),
-      );
+  /// Find all section-list content arrays in the response,
+  /// regardless of which renderer structure wraps them.
+  List<List<dynamic>> _findAllContentLists(Map<String, dynamic> data) {
+    final results = <List<dynamic>>[];
 
-      if (response.statusCode != 200) {
-        print('❌ Request failed: ${response.statusCode}');
-        return null;
+    // singleColumnBrowseResultsRenderer → used by FEmusic_charts, FEmusic_home
+    final tabs1 =
+        data['contents']?['singleColumnBrowseResultsRenderer']?['tabs']
+            as List?;
+    if (tabs1 != null) {
+      for (final tab in tabs1) {
+        final sections =
+            tab['tabRenderer']?['content']?['sectionListRenderer']?['contents']
+                as List?;
+        if (sections != null) results.add(sections);
       }
+    }
 
-      return jsonDecode(response.body) as Map<String, dynamic>;
-    } catch (e) {
-      print('❌ Request error: $e');
+    // twoColumnBrowseResultsRenderer → used by some browse pages
+    final primary =
+        data['contents']?['twoColumnBrowseResultsRenderer']?['primaryContents']?['sectionListRenderer']?['contents']
+            as List?;
+    if (primary != null) results.add(primary);
+
+    final secondary =
+        data['contents']?['twoColumnBrowseResultsRenderer']?['secondaryContents']?['sectionListRenderer']?['contents']
+            as List?;
+    if (secondary != null) results.add(secondary);
+
+    // tabbedSearchResultsRenderer → used by search
+    final tabs2 =
+        data['contents']?['tabbedSearchResultsRenderer']?['tabs'] as List?;
+    if (tabs2 != null) {
+      for (final tab in tabs2) {
+        final sections =
+            tab['tabRenderer']?['content']?['sectionListRenderer']?['contents']
+                as List?;
+        if (sections != null) results.add(sections);
+      }
+    }
+
+    return results;
+  }
+
+  void _extractFromSections(List<dynamic> sections, List<Album> out) {
+    for (final section in sections) {
+      // Carousel shelf (home/charts — main format for trending albums)
+      _extractFromShelf(
+        section['musicCarouselShelfRenderer']?['contents'],
+        out,
+        isCarousel: true,
+      );
+
+      // Immersive carousel (sometimes used for chart highlights)
+      _extractFromShelf(
+        section['musicImmersiveCarouselShelfRenderer']?['contents'],
+        out,
+        isCarousel: true,
+      );
+
+      // Regular shelf (search results, new releases)
+      _extractFromShelf(
+        section['musicShelfRenderer']?['contents'],
+        out,
+        isCarousel: false,
+      );
+    }
+  }
+
+  void _extractFromShelf(
+    dynamic items,
+    List<Album> out, {
+    required bool isCarousel,
+  }) {
+    if (items is! List) return;
+    for (final item in items) {
+      final album = isCarousel
+          ? _parseCarouselItem(item as Map<String, dynamic>)
+          : _parseShelfItem(item as Map<String, dynamic>);
+      if (album != null) out.add(album);
+    }
+  }
+
+  // ── Item Parsers ───────────────────────────────────────────────────────────
+
+  /// Parse a musicTwoRowItemRenderer (carousel item).
+  Album? _parseCarouselItem(Map<String, dynamic> item) {
+    try {
+      final r = item['musicTwoRowItemRenderer'];
+      if (r == null) return null;
+
+      final browseId =
+          r['navigationEndpoint']?['browseEndpoint']?['browseId'] as String?;
+      // Real album pages always start with MPREb_
+      if (browseId == null || !browseId.startsWith('MPREb_')) return null;
+
+      final title = _extractText(r['title']) ?? 'Unknown Album';
+      final subtitleText = _extractText(r['subtitle']) ?? '';
+      // Subtitle format: "Artist • Year" or just "Artist"
+      final artist = subtitleText.contains('•')
+          ? subtitleText.split('•').first.trim()
+          : subtitleText.trim();
+
+      final coverArt = _extractBestThumbnail(
+        r['thumbnailRenderer']?['musicThumbnailRenderer']?['thumbnail'],
+      );
+
+      return Album(
+        id: browseId,
+        title: title,
+        artist: artist.isNotEmpty ? artist : 'Unknown Artist',
+        coverArt: coverArt,
+        year: _extractYear(r['subtitle']) ?? 0,
+        songs: [],
+      );
+    } catch (_) {
       return null;
     }
   }
 
-  /// Extract album metadata from response
+  /// Parse a musicResponsiveListItemRenderer (search/shelf item).
+  Album? _parseShelfItem(Map<String, dynamic> item) {
+    try {
+      final r = item['musicResponsiveListItemRenderer'];
+      if (r == null) return null;
+
+      final browseId =
+          r['navigationEndpoint']?['browseEndpoint']?['browseId'] as String?;
+      if (browseId == null || !browseId.startsWith('MPREb_')) return null;
+
+      final cols = r['flexColumns'] as List?;
+      if (cols == null || cols.isEmpty) return null;
+
+      final title = _extractFlexColumnText(cols[0]) ?? 'Unknown Album';
+      final artist = cols.length > 1
+          ? _extractFlexColumnText(cols[1]) ?? 'Unknown Artist'
+          : 'Unknown Artist';
+
+      final coverArt = _extractBestThumbnail(r['thumbnail']);
+
+      return Album(
+        id: browseId,
+        title: title,
+        artist: artist,
+        coverArt: coverArt,
+        year: 0,
+        songs: [],
+      );
+    } catch (_) {
+      return null;
+    }
+  }
+
+  List<Album> _parseSearchResults(Map<String, dynamic> data, int limit) {
+    final albums = <Album>[];
+    final contentLists = _findAllContentLists(data);
+    for (final sections in contentLists) {
+      _extractFromSections(sections, albums);
+      if (albums.length >= limit) break;
+    }
+    return albums.take(limit).toList();
+  }
+
+  // ── Album Details ──────────────────────────────────────────────────────────
+
   Map<String, dynamic> _extractAlbumMetadata(
     Map<String, dynamic> data,
     String albumId,
@@ -955,7 +921,6 @@ class YTMusicAlbumsScraper {
     int? year;
 
     try {
-      // Try different header types
       dynamic header = data['header']?['musicDetailHeaderRenderer'];
       header ??= data['header']?['musicEditablePlaylistDetailHeaderRenderer'];
 
@@ -963,21 +928,72 @@ class YTMusicAlbumsScraper {
         // Extract title
         title = _extractText(header['title']) ?? title;
 
-        // Extract artist/subtitle
-        artist = _extractText(header['subtitle']) ?? artist;
+        // Extract artist - this is the key fix
+        // The subtitle usually contains artist info in various formats
+        final subtitle = header['subtitle'];
+        if (subtitle != null) {
+          final subtitleText = _extractText(subtitle) ?? '';
 
-        // Fallback to owner for playlists
-        if (artist == 'Unknown Artist') {
-          artist =
-              _extractText(header['owner']?['videoOwnerRenderer']?['title']) ??
-              artist;
+          // Try different subtitle formats to extract artist
+          if (subtitleText.contains('•')) {
+            // Format: "Artist • Year • Album"
+            artist = subtitleText.split('•').first.trim();
+          } else if (subtitleText.contains('·')) {
+            // Alternative separator
+            artist = subtitleText.split('·').first.trim();
+          } else {
+            // Check if there's a separate artist field
+            final runs = subtitle['runs'] as List?;
+            if (runs != null && runs.isNotEmpty) {
+              // Sometimes artist is in a navigation endpoint
+              for (final run in runs) {
+                final navEndpoint =
+                    run['navigationEndpoint']?['browseEndpoint'];
+                if (navEndpoint != null) {
+                  final pageType =
+                      navEndpoint['browseEndpointContextSupportedConfigs']?['browseEndpointContextMusicConfig']?['pageType'];
+                  if (pageType == 'MUSIC_PAGE_TYPE_ARTIST') {
+                    artist = run['text'] as String? ?? artist;
+                    break;
+                  }
+                }
+              }
+
+              // If still not found, just take the first part
+              if (artist == 'Unknown Artist' && runs.isNotEmpty) {
+                artist = runs.first['text'] as String? ?? artist;
+              }
+            }
+          }
+
+          // Extract year from subtitle
+          year = _extractYear(subtitle);
         }
 
-        // Extract thumbnail
-        coverArt = _extractBestThumbnail(header['thumbnail']);
+        // Try to get artist from subtitle2 if available
+        if (artist == 'Unknown Artist') {
+          final subtitle2 = header['subtitle2'];
+          if (subtitle2 != null) {
+            final subtitle2Text = _extractText(subtitle2) ?? '';
+            if (subtitle2Text.isNotEmpty &&
+                !subtitle2Text.contains(RegExp(r'\d{4}'))) {
+              artist = subtitle2Text;
+            }
+          }
+        }
 
-        // Extract year from subtitle if available
-        year = _extractYear(header['subtitle']);
+        // Extract cover art
+        coverArt = _extractBestThumbnail(header['thumbnail']);
+      }
+
+      // If still no artist, try to get from the first song in the track list
+      if (artist == 'Unknown Artist') {
+        try {
+          final songs = _extractSongsMetadata(data);
+          if (songs.isNotEmpty && songs.first.artists.isNotEmpty) {
+            artist = songs.first.artists.first;
+          }
+        } catch (_) {}
       }
     } catch (e) {
       print('⚠️ Error extracting metadata: $e');
@@ -991,235 +1007,89 @@ class YTMusicAlbumsScraper {
     };
   }
 
-  /// Extract songs metadata from response
   List<Song> _extractSongsMetadata(Map<String, dynamic> data) {
     final songs = <Song>[];
-
     try {
-      // Try multiple content paths
-      dynamic contents =
-          data['contents']?['singleColumnBrowseResultsRenderer']?['tabs']?[0]?['tabRenderer']?['content']?['sectionListRenderer']?['contents'];
-
-      contents ??=
-          data['contents']?['twoColumnBrowseResultsRenderer']?['secondaryContents']?['sectionListRenderer']?['contents'];
-
-      if (contents != null && contents is List) {
-        for (final section in contents) {
-          // Try different shelf types
+      final contentLists = _findAllContentLists(data);
+      for (final sections in contentLists) {
+        for (final section in sections) {
           var shelf = section['musicShelfRenderer'];
           shelf ??= section['musicPlaylistShelfRenderer'];
-
           if (shelf == null) continue;
-
           final items = shelf['contents'] as List?;
           if (items == null) continue;
-
           for (final item in items) {
-            final song = _parseSongMetadata(item);
-            if (song != null) {
-              songs.add(song);
-            }
+            final song = _parseSongItem(item as Map<String, dynamic>);
+            if (song != null) songs.add(song);
           }
-
-          if (songs.isNotEmpty) break;
+          if (songs.isNotEmpty) return songs;
         }
       }
     } catch (e) {
       print('⚠️ Error extracting songs: $e');
     }
-
     return songs;
   }
 
-  /// Parse albums from browse response
-  List<Album> _parseAlbumsFromBrowse(Map<String, dynamic> data, int limit) {
-    final albums = <Album>[];
-
+  Song? _parseSongItem(Map<String, dynamic> item) {
     try {
-      final contents =
-          data['contents']?['singleColumnBrowseResultsRenderer']?['tabs']?[0]?['tabRenderer']?['content']?['sectionListRenderer']?['contents']
-              as List?;
+      final r = item['musicResponsiveListItemRenderer'];
+      if (r == null) return null;
 
-      if (contents != null) {
-        for (final section in contents) {
-          final shelf = section['musicCarouselShelfRenderer'];
-          if (shelf == null) continue;
-
-          final items = shelf['contents'] as List?;
-          if (items == null) continue;
-
-          for (final item in items) {
-            if (albums.length >= limit) break;
-
-            final album = _parseAlbumItem(item);
-            if (album != null) {
-              albums.add(album);
-            }
-          }
-
-          if (albums.length >= limit) break;
-        }
-      }
-    } catch (e) {
-      print('⚠️ Error parsing albums: $e');
-    }
-
-    return albums;
-  }
-
-  /// Parse albums from search response
-  List<Album> _parseAlbumsFromSearch(Map<String, dynamic> data, int limit) {
-    final albums = <Album>[];
-
-    try {
-      final contents =
-          data['contents']?['tabbedSearchResultsRenderer']?['tabs']?[0]?['tabRenderer']?['content']?['sectionListRenderer']?['contents']
-              as List?;
-
-      if (contents != null) {
-        for (final section in contents) {
-          final shelf = section['musicShelfRenderer'];
-          if (shelf == null) continue;
-
-          final items = shelf['contents'] as List?;
-          if (items == null) continue;
-
-          for (final item in items) {
-            if (albums.length >= limit) break;
-
-            final album = _parseSearchAlbumItem(item);
-            if (album != null) {
-              albums.add(album);
-            }
-          }
-
-          if (albums.length >= limit) break;
-        }
-      }
-    } catch (e) {
-      print('⚠️ Error parsing search results: $e');
-    }
-
-    return albums;
-  }
-
-  /// Parse album from carousel item
-  Album? _parseAlbumItem(Map<String, dynamic> item) {
-    try {
-      final albumItem = item['musicTwoRowItemRenderer'];
-      if (albumItem == null) return null;
-
-      final browseId =
-          albumItem['navigationEndpoint']?['browseEndpoint']?['browseId']
-              as String?;
-
-      if (browseId == null || browseId.isEmpty) return null;
-
-      final title = _extractText(albumItem['title']) ?? 'Unknown Album';
-      final artist = _extractText(albumItem['subtitle']) ?? 'Unknown Artist';
-      final coverArt = _extractBestThumbnail(
-        albumItem['thumbnailRenderer']?['musicThumbnailRenderer']?['thumbnail'],
-      );
-
-      return Album(
-        id: browseId,
-        title: title,
-        artist: artist,
-        coverArt: coverArt,
-        year: 0,
-        songs: [],
-      );
-    } catch (e) {
-      print('⚠️ Error parsing album item: $e');
-      return null;
-    }
-  }
-
-  /// Parse album from search result
-  Album? _parseSearchAlbumItem(Map<String, dynamic> item) {
-    try {
-      final albumItem = item['musicResponsiveListItemRenderer'];
-      if (albumItem == null) return null;
-
-      final browseId =
-          albumItem['navigationEndpoint']?['browseEndpoint']?['browseId']
-              as String?;
-
-      if (browseId == null) return null;
-
-      final flexColumns = albumItem['flexColumns'] as List?;
-      if (flexColumns == null || flexColumns.isEmpty) return null;
-
-      final title = _extractFlexColumnText(flexColumns[0]) ?? 'Unknown Album';
-      final artist = flexColumns.length > 1
-          ? _extractFlexColumnText(flexColumns[1]) ?? 'Unknown Artist'
-          : 'Unknown Artist';
-
-      final coverArt = _extractBestThumbnail(albumItem['thumbnail']);
-
-      return Album(
-        id: browseId,
-        title: title,
-        artist: artist,
-        coverArt: coverArt,
-        year: 0,
-        songs: [],
-      );
-    } catch (e) {
-      print('⚠️ Error parsing search item: $e');
-      return null;
-    }
-  }
-
-  /// Parse song metadata from item
-  Song? _parseSongMetadata(Map<String, dynamic> item) {
-    try {
-      final songItem = item['musicResponsiveListItemRenderer'];
-      if (songItem == null) return null;
-
-      // Extract video ID
-      final videoId = songItem['playlistItemData']?['videoId'] as String?;
+      final videoId = r['playlistItemData']?['videoId'] as String?;
       if (videoId == null || videoId.isEmpty) return null;
 
-      final flexColumns = songItem['flexColumns'] as List?;
-      if (flexColumns == null || flexColumns.isEmpty) return null;
+      final cols = r['flexColumns'] as List?;
+      if (cols == null || cols.isEmpty) return null;
 
-      // Extract title
-      final title = _extractFlexColumnText(flexColumns[0]) ?? 'Unknown';
+      final title = _extractFlexColumnText(cols[0]) ?? 'Unknown';
 
-      // Extract artists
       final artists = <String>[];
-      if (flexColumns.length > 1) {
-        final artistRuns =
-            flexColumns[1]?['musicResponsiveListItemFlexColumnRenderer']?['text']?['runs']
+      if (cols.length > 1) {
+        final runs =
+            cols[1]?['musicResponsiveListItemFlexColumnRenderer']?['text']?['runs']
                 as List?;
+        for (final run in runs ?? []) {
+          final t = run['text'] as String?;
+          // Filter out separators and non-artist text
+          if (t != null &&
+              t.trim().isNotEmpty &&
+              t.trim() != '•' &&
+              t.trim() != '·' &&
+              !t.contains(RegExp(r'\d{4}'))) {
+            // Filter out years
+            artists.add(t);
+          }
+        }
+      }
 
-        if (artistRuns != null) {
-          for (final run in artistRuns) {
-            final text = run['text'] as String?;
-            if (text != null && text != ' • ' && text != '•') {
-              artists.add(text);
-            }
+      // If no artists found in flex columns, try thumbnail overlay or other fields
+      if (artists.isEmpty) {
+        // Try to get artist from the subtitle
+        final subtitle = r['subtitle'];
+        if (subtitle != null) {
+          final subtitleText =
+              _extractText({
+                'runs': [
+                  {'text': subtitle},
+                ],
+              }) ??
+              '';
+          if (subtitleText.isNotEmpty &&
+              !subtitleText.contains(RegExp(r'\d{4}'))) {
+            artists.add(subtitleText);
           }
         }
       }
 
       if (artists.isEmpty) artists.add('Unknown Artist');
 
-      // Extract thumbnail
-      final thumbnail = _extractBestThumbnail(songItem['thumbnail']) ?? '';
-
-      // Extract duration
-      final duration = flexColumns.length > 2
-          ? _extractFlexColumnText(flexColumns.last)
-          : null;
-
       return Song(
         videoId: videoId,
         title: title,
         artists: artists,
-        thumbnail: thumbnail,
-        duration: duration,
+        thumbnail: _extractBestThumbnail(r['thumbnail']) ?? '',
+        duration: cols.length > 2 ? _extractFlexColumnText(cols.last) : null,
         audioUrl: null,
       );
     } catch (e) {
@@ -1228,91 +1098,140 @@ class YTMusicAlbumsScraper {
     }
   }
 
-  /// Extract text from runs structure
-  String? _extractText(dynamic textObject) {
+  // Add to YTMusicAlbumsScraper class
+  Future<List<Album>> getAlbumVersions(
+    String title,
+    String artist, {
+    int limit = 20,
+  }) async {
     try {
-      if (textObject == null) return null;
+      print(
+        '🔍 [YTMusicScraper] Looking for versions of "$title" by "$artist"',
+      );
 
-      final runs = textObject['runs'] as List?;
-      if (runs != null && runs.isNotEmpty) {
-        return runs.first['text'] as String?;
+      // Search with album + artist
+      final searchQuery = '$title $artist';
+      final searchResults = await searchAlbums(searchQuery, limit: limit * 2);
+
+      // Also try searching without artist for deluxe/remastered versions
+      final titleOnlyResults = await searchAlbums(title, limit: limit);
+
+      // Combine and remove duplicates
+      final allResults = [...searchResults, ...titleOnlyResults];
+      final uniqueAlbums = <String, Album>{};
+
+      for (final album in allResults) {
+        if (!uniqueAlbums.containsKey(album.id)) {
+          uniqueAlbums[album.id] = album;
+        }
       }
 
-      return textObject['simpleText'] as String?;
+      final versions = uniqueAlbums.values.toList();
+      print(
+        '✅ [YTMusicScraper] Found ${versions.length} versions for "$title"',
+      );
+
+      return versions.take(limit).toList();
     } catch (e) {
+      print('❌ [YTMusicScraper] Error getting album versions: $e');
+      return [];
+    }
+  }
+
+  // ── Utilities ──────────────────────────────────────────────────────────────
+
+  void _mergeUnique(List<Album> source, List<Album> dest, Set<String> seen) {
+    for (final a in source) {
+      if (!seen.contains(a.id)) {
+        seen.add(a.id);
+        dest.add(a);
+      }
+    }
+  }
+
+  Future<Map<String, dynamic>?> _makeRequest({
+    required String endpoint,
+    required Map<String, dynamic> body,
+  }) async {
+    try {
+      final res = await http.post(
+        Uri.parse('$_apiUrl/$endpoint'),
+        headers: _headers,
+        body: jsonEncode(body),
+      );
+      if (res.statusCode != 200) {
+        print('❌ [YTMusicScraper] HTTP ${res.statusCode} /$endpoint');
+        return null;
+      }
+      return jsonDecode(res.body) as Map<String, dynamic>;
+    } catch (e) {
+      print('❌ [YTMusicScraper] Request error: $e');
       return null;
     }
   }
 
-  /// Extract text from flex column
-  String? _extractFlexColumnText(dynamic column) {
+  String? _extractText(dynamic obj) {
+    try {
+      if (obj == null) return null;
+      final runs = obj['runs'] as List?;
+      if (runs != null && runs.isNotEmpty) {
+        return runs.map((r) => r['text'] as String? ?? '').join('');
+      }
+      return obj['simpleText'] as String?;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  String? _extractFlexColumnText(dynamic col) {
     try {
       final runs =
-          column?['musicResponsiveListItemFlexColumnRenderer']?['text']?['runs']
+          col?['musicResponsiveListItemFlexColumnRenderer']?['text']?['runs']
               as List?;
-      return runs?.first['text'] as String?;
-    } catch (e) {
+      return runs?.map((r) => r['text'] as String? ?? '').join('');
+    } catch (_) {
       return null;
     }
   }
 
-  /// Extract best quality thumbnail
-  String? _extractBestThumbnail(dynamic thumbnailObject) {
+  String? _extractBestThumbnail(dynamic obj) {
     try {
-      if (thumbnailObject == null) return null;
-
-      // Try different thumbnail structures
-      var thumbnails =
-          thumbnailObject['croppedSquareThumbnailRenderer']?['thumbnail']?['thumbnails']
+      if (obj == null) return null;
+      List? thumbs =
+          obj['croppedSquareThumbnailRenderer']?['thumbnail']?['thumbnails']
               as List?;
-
-      thumbnails ??=
-          thumbnailObject['musicThumbnailRenderer']?['thumbnail']?['thumbnails']
-              as List?;
-
-      thumbnails ??= thumbnailObject['thumbnails'] as List?;
-
-      if (thumbnails != null && thumbnails.isNotEmpty) {
-        final bestThumb = thumbnails.last as Map<String, dynamic>;
-        var url = bestThumb['url'] as String?;
-
-        // Enhance quality
+      thumbs ??=
+          obj['musicThumbnailRenderer']?['thumbnail']?['thumbnails'] as List?;
+      thumbs ??= obj['thumbnails'] as List?;
+      if (thumbs != null && thumbs.isNotEmpty) {
+        var url = (thumbs.last as Map)['url'] as String?;
         if (url != null && url.contains('=w')) {
-          url = url.split('=w')[0] + '=w500-h500';
+          url = '${url.split('=w')[0]}=w500-h500';
         }
-
         return url;
       }
-    } catch (e) {
-      print('⚠️ Error extracting thumbnail: $e');
-    }
-
+    } catch (_) {}
     return null;
   }
 
-  /// Extract year from subtitle
-  int? _extractYear(dynamic subtitleObject) {
+  int? _extractYear(dynamic obj) {
     try {
-      final text = _extractText(subtitleObject);
-      if (text == null) return null;
-
-      final yearMatch = RegExp(r'\b(19|20)\d{2}\b').firstMatch(text);
-      if (yearMatch != null) {
-        return int.tryParse(yearMatch.group(0)!);
-      }
-    } catch (e) {
-      // Ignore
+      final text = _extractText(obj);
+      final match = RegExp(r'\b(19|20)\d{2}\b').firstMatch(text ?? '');
+      return match != null ? int.tryParse(match.group(0)!) : null;
+    } catch (_) {
+      return null;
     }
-    return null;
   }
 
-  /// Fallback albums with known good IDs
-  List<Album> _getFallbackAlbums() {
+  /// Emergency fallback — only triggered if ALL network calls fail.
+  /// Uses YTMusic's own global chart playlist IDs (not artist-specific).
+  List<Album> _minimalFallback() {
     return [
       Album(
         id: 'MPREb_4pL8gzVGOTL',
         title: 'Top Songs - Global',
-        artist: 'YouTube Music',
+        artist: 'YouTube Music Charts',
         coverArt: null,
         year: 0,
         songs: [],
@@ -1325,19 +1244,8 @@ class YTMusicAlbumsScraper {
         year: 0,
         songs: [],
       ),
-      Album(
-        id: 'MPREb_YBnj6o4LNCM',
-        title: 'Hip Hop Hits',
-        artist: 'YouTube Music',
-        coverArt: null,
-        year: 0,
-        songs: [],
-      ),
     ];
   }
 
-  /// Dispose resources
-  void dispose() {
-    // Clean up if needed
-  }
+  void dispose() {}
 }

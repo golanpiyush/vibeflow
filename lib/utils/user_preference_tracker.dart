@@ -1,5 +1,5 @@
 import 'dart:convert';
-import 'package:shared_preferences/shared_preferences.dart';
+import 'package:vibeflow/utils/secure_storage.dart';
 
 /// Tracks user listening patterns and artist preferences
 class UserPreferenceTracker {
@@ -10,14 +10,12 @@ class UserPreferenceTracker {
 
   static const String _keyArtistPreferences = 'user_artist_preferences';
   static const String _keySkipHistory = 'user_skip_history';
-  // ignore: unused_field
-  static const String _keyListenHistory = 'user_listen_history';
+  static const String _keyCompletedSongs = 'user_completed_songs';
 
-  // Artist preference data
   Map<String, ArtistPreference> _artistPreferences = {};
-
-  // Skip tracking
   final List<SkipEvent> _recentSkips = [];
+  Map<String, CompletedSong> _completedSongs = {};
+
   static const int _maxSkipHistory = 100;
 
   /// Initialize and load saved preferences
@@ -26,13 +24,11 @@ class UserPreferenceTracker {
     print('✅ [UserPreferences] Initialized');
   }
 
-  /// Load preferences from storage
   Future<void> _loadPreferences() async {
     try {
-      final prefs = await SharedPreferences.getInstance();
+      final storage = SecureStorageService();
 
-      // Load artist preferences
-      final artistJson = prefs.getString(_keyArtistPreferences);
+      final artistJson = await storage.readSecureData(_keyArtistPreferences);
       if (artistJson != null) {
         final Map<String, dynamic> data = json.decode(artistJson);
         _artistPreferences = data.map(
@@ -43,44 +39,77 @@ class UserPreferenceTracker {
         );
       }
 
-      // Load skip history
-      final skipJson = prefs.getString(_keySkipHistory);
+      final skipJson = await storage.readSecureData(_keySkipHistory);
       if (skipJson != null) {
         final List<dynamic> data = json.decode(skipJson);
         _recentSkips.clear();
         _recentSkips.addAll(data.map((e) => SkipEvent.fromJson(e)));
         print('📊 [UserPreferences] Loaded ${_recentSkips.length} skip events');
       }
+
+      final completedJson = await storage.readSecureData(_keyCompletedSongs);
+      if (completedJson != null) {
+        final Map<String, dynamic> data = json.decode(completedJson);
+        _completedSongs = data.map(
+          (key, value) => MapEntry(key, CompletedSong.fromJson(value)),
+        );
+        print(
+          '📊 [UserPreferences] Loaded ${_completedSongs.length} completed songs',
+        );
+      }
     } catch (e) {
       print('❌ [UserPreferences] Error loading: $e');
     }
   }
 
-  /// Save preferences to storage
   Future<void> _savePreferences() async {
     try {
-      final prefs = await SharedPreferences.getInstance();
+      final storage = SecureStorageService();
 
-      // Save artist preferences
       final artistData = _artistPreferences.map(
         (key, value) => MapEntry(key, value.toJson()),
       );
-      await prefs.setString(_keyArtistPreferences, json.encode(artistData));
+      await storage.writeSecureData(
+        _keyArtistPreferences,
+        json.encode(artistData),
+      );
 
-      // Save skip history (keep only recent)
       final recentSkips = _recentSkips.length > _maxSkipHistory
           ? _recentSkips.sublist(_recentSkips.length - _maxSkipHistory)
           : _recentSkips;
       final skipData = recentSkips.map((e) => e.toJson()).toList();
-      await prefs.setString(_keySkipHistory, json.encode(skipData));
+      await storage.writeSecureData(_keySkipHistory, json.encode(skipData));
 
-      print('💾 [UserPreferences] Saved to storage');
+      final completedData = _completedSongs.map(
+        (key, value) => MapEntry(key, value.toJson()),
+      );
+      await storage.writeSecureData(
+        _keyCompletedSongs,
+        json.encode(completedData),
+      );
+
+      print('💾 [UserPreferences] Saved to secure storage');
     } catch (e) {
       print('❌ [UserPreferences] Error saving: $e');
     }
   }
 
-  /// Record that user listened to a song (completed or >30s)
+  Future<void> resetAllPreferences() async {
+    _artistPreferences.clear();
+    _recentSkips.clear();
+    _completedSongs.clear();
+
+    final storage = SecureStorageService();
+    await storage.deleteSecureData(_keyArtistPreferences);
+    await storage.deleteSecureData(_keySkipHistory);
+    await storage.deleteSecureData(_keyCompletedSongs);
+
+    print('🗑️ [UserPreferences] Reset all preferences');
+  }
+
+  // ── Listen Recording ───────────────────────────────────────────────────────
+
+  /// Record that user listened to a song
   Future<void> recordListen(
     String artist,
     String songTitle, {
@@ -96,10 +125,8 @@ class UserPreferenceTracker {
           )
         : 0.0;
 
-    // Normalize artist name
     final normalizedArtist = _normalizeArtistName(artist);
 
-    // Update or create artist preference
     final pref = _artistPreferences.putIfAbsent(
       normalizedArtist,
       () => ArtistPreference(artistName: normalizedArtist),
@@ -109,12 +136,31 @@ class UserPreferenceTracker {
     pref.totalListenTime += listenDuration.inSeconds;
     pref.lastListenTime = DateTime.now();
 
-    // Consider it a "completed" listen if >70% played
+    // Track completed songs (>70% listened = completed)
     if (listenPercentage >= 70) {
       pref.completedListens++;
+
+      final songKey = '${normalizedArtist}__${songTitle.trim().toLowerCase()}';
+      final existing = _completedSongs[songKey];
+      if (existing != null) {
+        existing.playCount++;
+        existing.lastPlayedAt = DateTime.now();
+        existing.totalListenTime += listenDuration.inSeconds;
+      } else {
+        _completedSongs[songKey] = CompletedSong(
+          title: songTitle,
+          artist: normalizedArtist,
+          firstPlayedAt: DateTime.now(),
+          lastPlayedAt: DateTime.now(),
+          playCount: 1,
+          totalListenTime: listenDuration.inSeconds,
+        );
+      }
+      print(
+        '✅ [UserPreferences] Completed song tracked: $songTitle by $normalizedArtist',
+      );
     }
 
-    // Update preference score
     pref.updatePreferenceScore();
 
     print('✅ [UserPreferences] Recorded listen: $normalizedArtist');
@@ -136,7 +182,6 @@ class UserPreferenceTracker {
 
     final normalizedArtist = _normalizeArtistName(artist);
 
-    // Update artist preference
     final pref = _artistPreferences.putIfAbsent(
       normalizedArtist,
       () => ArtistPreference(artistName: normalizedArtist),
@@ -146,7 +191,6 @@ class UserPreferenceTracker {
     pref.lastSkipTime = DateTime.now();
     pref.updatePreferenceScore();
 
-    // Add to skip history
     _recentSkips.add(
       SkipEvent(
         artist: normalizedArtist,
@@ -165,132 +209,348 @@ class UserPreferenceTracker {
     await _savePreferences();
   }
 
-  /// Get top preferred artists
+  // ── Artist Getters ─────────────────────────────────────────────────────────
+
   List<String> getTopArtists({int limit = 10}) {
     final sortedArtists = _artistPreferences.values.toList()
       ..sort((a, b) => b.preferenceScore.compareTo(a.preferenceScore));
 
     return sortedArtists
         .take(limit)
-        .where((pref) => pref.preferenceScore > 0) // Only positive scores
+        .where((pref) => pref.preferenceScore > 0)
         .map((pref) => pref.artistName)
         .toList();
   }
 
-  /// Get least preferred artists (frequently skipped)
   List<String> getLeastPreferredArtists({int limit = 5}) {
     final sortedArtists = _artistPreferences.values.toList()
       ..sort((a, b) => a.preferenceScore.compareTo(b.preferenceScore));
 
     return sortedArtists
         .take(limit)
-        .where((pref) => pref.preferenceScore < 0) // Only negative scores
+        .where((pref) => pref.preferenceScore < 0)
         .map((pref) => pref.artistName)
         .toList();
   }
 
-  /// Check if user has been skipping a lot recently (in current session)
-  SkipAnalysis analyzeRecentSkips({int lookbackCount = 5}) {
-    if (_recentSkips.length < lookbackCount) {
+  double getArtistScore(String artist) {
+    final normalized = _normalizeArtistName(artist);
+    return _artistPreferences[normalized]?.preferenceScore ?? 0.0;
+  }
+
+  bool shouldAvoidArtist(String artist) {
+    return getArtistScore(artist) < -20;
+  }
+
+  List<String> getSuggestedArtists({int limit = 5}) {
+    final topArtists = getTopArtists(limit: limit * 2);
+    topArtists.shuffle();
+    return topArtists.take(limit).toList();
+  }
+
+  Map<String, double> getArtistScores(List<String> artists) {
+    final Map<String, double> scores = {};
+    for (final artist in artists) {
+      final normalized = _normalizeArtistName(artist);
+      scores[artist] = _artistPreferences[normalized]?.preferenceScore ?? 0.0;
+    }
+    return scores;
+  }
+
+  bool hasStronglyDislikedArtists(List<String> artists) {
+    return artists.any((a) => shouldAvoidArtist(a));
+  }
+
+  // ── Completed Songs Getters ────────────────────────────────────────────────
+
+  /// Most played songs by play count
+  List<CompletedSong> getMostPlayedSongs({int limit = 10}) {
+    final songs = _completedSongs.values.toList()
+      ..sort((a, b) => b.playCount.compareTo(a.playCount));
+    return songs.take(limit).toList();
+  }
+
+  /// Most played artists by total completed listen count
+  List<MapEntry<String, int>> getMostPlayedArtists({int limit = 10}) {
+    final Map<String, int> artistPlays = {};
+    for (final song in _completedSongs.values) {
+      artistPlays[song.artist] =
+          (artistPlays[song.artist] ?? 0) + song.playCount;
+    }
+    final sorted = artistPlays.entries.toList()
+      ..sort((a, b) => b.value.compareTo(a.value));
+    return sorted.take(limit).toList();
+  }
+
+  /// Recently played songs by last play date
+  List<CompletedSong> getRecentlyPlayedSongs({int limit = 10}) {
+    final songs = _completedSongs.values.toList()
+      ..sort((a, b) => b.lastPlayedAt.compareTo(a.lastPlayedAt));
+    return songs.take(limit).toList();
+  }
+
+  int get totalUniqueSongsCompleted => _completedSongs.length;
+
+  bool hasCompletedSong(String title, String artist) {
+    final key =
+        '${_normalizeArtistName(artist)}__${title.trim().toLowerCase()}';
+    return _completedSongs.containsKey(key);
+  }
+
+  Map<String, dynamic> getCompletedSongsStats() {
+    final total = _completedSongs.length;
+    final totalPlays = _completedSongs.values.fold(
+      0,
+      (sum, s) => sum + s.playCount,
+    );
+    final totalTime = _completedSongs.values.fold(
+      0,
+      (sum, s) => sum + s.totalListenTime,
+    );
+    return {
+      'unique_songs': total,
+      'total_plays': totalPlays,
+      'total_listen_time_seconds': totalTime,
+      'most_played': getMostPlayedSongs(
+        limit: 3,
+      ).map((s) => '${s.title} (${s.playCount}x)').toList(),
+      'top_artists': getMostPlayedArtists(
+        limit: 3,
+      ).map((e) => '${e.key} (${e.value}x)').toList(),
+    };
+  }
+
+  // ── Skip Analysis ──────────────────────────────────────────────────────────
+
+  List<String> getRecentSkippedArtists({int limit = 5, Duration? timeWindow}) {
+    try {
+      if (_recentSkips.isEmpty) return [];
+
+      final window = timeWindow ?? const Duration(hours: 1);
+      final now = DateTime.now();
+
+      final recentSkipsInWindow = _recentSkips
+          .where((skip) => now.difference(skip.timestamp) <= window)
+          .toList();
+
+      if (recentSkipsInWindow.isEmpty) return [];
+
+      final Map<String, int> skipCounts = {};
+      for (final skip in recentSkipsInWindow) {
+        skipCounts[skip.artist] = (skipCounts[skip.artist] ?? 0) + 1;
+      }
+
+      final sortedArtists = skipCounts.entries.toList()
+        ..sort((a, b) => b.value.compareTo(a.value));
+
+      final result = sortedArtists.take(limit).map((e) => e.key).toList();
+      print(
+        '📊 [UserPreferences] Recent skipped artists (last ${window.inHours}h): $result',
+      );
+      return result;
+    } catch (e) {
+      print('❌ [UserPreferences] Error getting recent skipped artists: $e');
+      return [];
+    }
+  }
+
+  List<String> getWeightedSkippedArtists({int limit = 5}) {
+    try {
+      if (_recentSkips.isEmpty) return [];
+
+      final now = DateTime.now();
+      final Map<String, double> skipScores = {};
+
+      for (final skip in _recentSkips) {
+        final ageInHours = now.difference(skip.timestamp).inHours;
+        final recencyWeight = 1.0 / (1 + ageInHours / 24);
+        skipScores[skip.artist] =
+            (skipScores[skip.artist] ?? 0) + recencyWeight;
+      }
+
+      final sortedArtists = skipScores.entries.toList()
+        ..sort((a, b) => b.value.compareTo(a.value));
+
+      return sortedArtists.take(limit).map((e) => e.key).toList();
+    } catch (e) {
+      print('❌ [UserPreferences] Error getting weighted skipped artists: $e');
+      return [];
+    }
+  }
+
+  List<String> getImmediateSkippedArtists({int limit = 3}) {
+    return getRecentSkippedArtists(
+      limit: limit,
+      timeWindow: const Duration(minutes: 15),
+    );
+  }
+
+  SkipAnalysis analyzeRecentSkips({
+    int lookbackCount = 5,
+    Duration rapidSkipWindow = const Duration(minutes: 2),
+  }) {
+    if (_recentSkips.isEmpty) {
       return SkipAnalysis(
-        recentSkipCount: _recentSkips.length,
+        recentSkipCount: 0,
         isSkippingFrequently: false,
         skippedArtists: [],
         shouldRefetchRadio: false,
       );
     }
 
-    // Get last N skips
-    final recentSkips = _recentSkips.sublist(
-      _recentSkips.length - lookbackCount,
+    final recentSkips = _recentSkips.length > lookbackCount
+        ? _recentSkips.sublist(_recentSkips.length - lookbackCount)
+        : _recentSkips.toList();
+
+    final skippedArtists = recentSkips.map((s) => s.artist).toSet().toList();
+
+    final Map<String, int> skipCountByArtist = {};
+    for (final skip in recentSkips) {
+      skipCountByArtist[skip.artist] =
+          (skipCountByArtist[skip.artist] ?? 0) + 1;
+    }
+
+    Duration? timeSpan;
+    Duration? shortestGap;
+    double totalSkipPosition = 0;
+
+    if (recentSkips.length >= 2) {
+      timeSpan = recentSkips.last.timestamp.difference(
+        recentSkips.first.timestamp,
+      );
+
+      for (int i = 1; i < recentSkips.length; i++) {
+        final gap = recentSkips[i].timestamp.difference(
+          recentSkips[i - 1].timestamp,
+        );
+        if (shortestGap == null || gap < shortestGap) shortestGap = gap;
+      }
+    }
+
+    for (final skip in recentSkips) {
+      totalSkipPosition += skip.position.inSeconds;
+    }
+    final avgSkipPosition = recentSkips.isEmpty
+        ? 0.0
+        : totalSkipPosition / recentSkips.length;
+
+    final isRapidSkipping =
+        recentSkips.length >= 3 &&
+        timeSpan != null &&
+        timeSpan <= rapidSkipWindow;
+    final isBurstSkipping =
+        recentSkips.length >= 2 &&
+        shortestGap != null &&
+        shortestGap <= const Duration(seconds: 10);
+
+    final shouldRefetch =
+        isRapidSkipping ||
+        (isBurstSkipping && recentSkips.length >= 3) ||
+        (recentSkips.length >= 5 &&
+            timeSpan != null &&
+            timeSpan <= const Duration(minutes: 5)) ||
+        (avgSkipPosition < 10 && recentSkips.length >= 4);
+
+    print(
+      '📊 [SkipAnalysis] ${recentSkips.length} skips, rapid: $isRapidSkipping, burst: $isBurstSkipping, refetch: $shouldRefetch',
     );
-
-    // Extract artists
-    final skippedArtists = recentSkips
-        .map((skip) => skip.artist)
-        .toSet()
-        .toList();
-
-    // Check if skips happened within a short time frame (indicating frustration)
-    final timeWindow = Duration(minutes: 10);
-    final oldestSkip = recentSkips.first.timestamp;
-    final newestSkip = recentSkips.last.timestamp;
-    final timeDiff = newestSkip.difference(oldestSkip);
-
-    final isRapidSkipping = timeDiff < timeWindow;
-
-    print('📊 [SkipAnalysis] Recent skips: ${recentSkips.length}');
-    print('   Time window: ${timeDiff.inMinutes} minutes');
-    print('   Rapid skipping: $isRapidSkipping');
-    print('   Skipped artists: $skippedArtists');
 
     return SkipAnalysis(
       recentSkipCount: recentSkips.length,
-      isSkippingFrequently: isRapidSkipping,
+      isSkippingFrequently: isRapidSkipping || isBurstSkipping,
+      isBurstSkipping: isBurstSkipping,
+      isRapidSkipping: isRapidSkipping,
       skippedArtists: skippedArtists,
-      shouldRefetchRadio: isRapidSkipping && recentSkips.length >= 3,
-      timeSinceFirstSkip: timeDiff,
+      skipCountByArtist: skipCountByArtist,
+      shouldRefetchRadio: shouldRefetch,
+      timeSinceFirstSkip: timeSpan,
+      shortestSkipGap: shortestGap,
+      averageSkipPosition: avgSkipPosition,
+      uniqueArtistsSkipped: skippedArtists.length,
     );
   }
 
-  /// Get artist preference score (-100 to 100)
-  double getArtistScore(String artist) {
-    final normalized = _normalizeArtistName(artist);
-    return _artistPreferences[normalized]?.preferenceScore ?? 0.0;
-  }
-
-  /// Check if artist should be avoided in radio
-  bool shouldAvoidArtist(String artist) {
-    final score = getArtistScore(artist);
-    return score < -20; // Strongly disliked
-  }
-
-  /// Get artists user might like (for radio diversification)
-  List<String> getSuggestedArtists({int limit = 5}) {
-    final topArtists = getTopArtists(limit: limit * 2);
-
-    // Shuffle to add variety
-    topArtists.shuffle();
-
-    return topArtists.take(limit).toList();
-  }
-
-  /// Clear skip history (for testing or reset)
   Future<void> clearSkipHistory() async {
     _recentSkips.clear();
     await _savePreferences();
     print('🗑️ [UserPreferences] Cleared skip history');
   }
 
-  /// Reset all preferences (for testing)
-  Future<void> resetAllPreferences() async {
-    _artistPreferences.clear();
-    _recentSkips.clear();
+  // ── Stats ──────────────────────────────────────────────────────────────────
 
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.remove(_keyArtistPreferences);
-    await prefs.remove(_keySkipHistory);
-
-    print('🗑️ [UserPreferences] Reset all preferences');
-  }
-
-  /// Get statistics for debugging
   Map<String, dynamic> getStatistics() {
     return {
       'total_artists_tracked': _artistPreferences.length,
       'total_skips_recorded': _recentSkips.length,
       'top_artists': getTopArtists(limit: 5),
       'least_preferred_artists': getLeastPreferredArtists(limit: 5),
+      'completed_songs': getCompletedSongsStats(),
     };
   }
 
-  /// Normalize artist name for consistent tracking
+  // ── Helpers ────────────────────────────────────────────────────────────────
+
   String _normalizeArtistName(String artist) {
-    return artist.trim().toLowerCase().replaceAll(
-      RegExp(r'\s+'),
-      ' ',
-    ); // Normalize whitespace
+    return artist.trim().toLowerCase().replaceAll(RegExp(r'\s+'), ' ');
   }
+
+  bool _isUserFrustrated(
+    int skipCount,
+    bool isBurst,
+    bool isRapid,
+    double avgPosition,
+  ) {
+    if (isBurst && skipCount >= 3) return true;
+    if (isRapid && skipCount >= 4) return true;
+    if (avgPosition < 15 && skipCount >= 3) return true;
+    if (skipCount >= 6) return true;
+    return false;
+  }
+}
+
+// ── Models ─────────────────────────────────────────────────────────────────
+
+class CompletedSong {
+  final String title;
+  final String artist;
+  final DateTime firstPlayedAt;
+  DateTime lastPlayedAt;
+  int playCount;
+  int totalListenTime; // in seconds
+
+  CompletedSong({
+    required this.title,
+    required this.artist,
+    required this.firstPlayedAt,
+    required this.lastPlayedAt,
+    this.playCount = 1,
+    this.totalListenTime = 0,
+  });
+
+  String get formattedListenTime {
+    final hours = totalListenTime ~/ 3600;
+    final minutes = (totalListenTime % 3600) ~/ 60;
+    if (hours > 0) return '${hours}h ${minutes}m';
+    return '${minutes}m';
+  }
+
+  Map<String, dynamic> toJson() => {
+    'title': title,
+    'artist': artist,
+    'first_played_at': firstPlayedAt.toIso8601String(),
+    'last_played_at': lastPlayedAt.toIso8601String(),
+    'play_count': playCount,
+    'total_listen_time': totalListenTime,
+  };
+
+  factory CompletedSong.fromJson(Map<String, dynamic> json) => CompletedSong(
+    title: json['title'],
+    artist: json['artist'],
+    firstPlayedAt: DateTime.parse(json['first_played_at']),
+    lastPlayedAt: DateTime.parse(json['last_played_at']),
+    playCount: json['play_count'] ?? 1,
+    totalListenTime: json['total_listen_time'] ?? 0,
+  );
 }
 
 /// Artist preference data
@@ -403,15 +663,107 @@ class SkipEvent {
 class SkipAnalysis {
   final int recentSkipCount;
   final bool isSkippingFrequently;
+  final bool isBurstSkipping;
+  final bool isRapidSkipping;
   final List<String> skippedArtists;
+  final Map<String, int> skipCountByArtist;
   final bool shouldRefetchRadio;
   final Duration? timeSinceFirstSkip;
+  final Duration? shortestSkipGap;
+  final double averageSkipPosition; // in seconds
+  final int uniqueArtistsSkipped;
 
   SkipAnalysis({
     required this.recentSkipCount,
     required this.isSkippingFrequently,
+    this.isBurstSkipping = false,
+    this.isRapidSkipping = false,
     required this.skippedArtists,
+    Map<String, int>? skipCountByArtist,
     required this.shouldRefetchRadio,
     this.timeSinceFirstSkip,
-  });
+    this.shortestSkipGap,
+    this.averageSkipPosition = 0,
+    int? uniqueArtistsSkipped,
+  }) : skipCountByArtist = skipCountByArtist ?? {},
+       uniqueArtistsSkipped = uniqueArtistsSkipped ?? skippedArtists.length;
+
+  /// Get a human-readable description of the skip pattern
+  String get description {
+    final parts = <String>[];
+
+    if (recentSkipCount > 0) {
+      parts.add('$recentSkipCount skips');
+    }
+
+    if (isBurstSkipping) {
+      parts.add('BURST');
+    }
+
+    if (isRapidSkipping) {
+      parts.add('RAPID');
+    }
+
+    if (timeSinceFirstSkip != null) {
+      parts.add('over ${timeSinceFirstSkip!.inSeconds}s');
+    }
+
+    if (shortestSkipGap != null && shortestSkipGap!.inSeconds < 10) {
+      parts.add('gap: ${shortestSkipGap!.inSeconds}s');
+    }
+
+    if (skipCountByArtist.isNotEmpty) {
+      final topSkipped = skipCountByArtist.entries.toList()
+        ..sort((a, b) => b.value.compareTo(a.value));
+
+      if (topSkipped.isNotEmpty) {
+        final top = topSkipped.first;
+        parts.add('top: ${top.key} (${top.value}x)');
+      }
+    }
+
+    return parts.join(' · ');
+  }
+
+  /// Check if the skip pattern suggests user is frustrated
+  bool get isFrustrated {
+    // User is likely frustrated if:
+    // 1. Burst skipping (multiple skips within seconds)
+    // 2. Rapid skipping (many skips in short window)
+    // 3. Skipping early in songs (average skip position < 15s)
+    // 4. Skipping many different artists in a row
+
+    if (isBurstSkipping) return true;
+    if (isRapidSkipping && recentSkipCount >= 4) return true;
+    if (averageSkipPosition < 15 && recentSkipCount >= 3) return true;
+    if (uniqueArtistsSkipped >= 4 && recentSkipCount >= 5) return true;
+
+    return false;
+  }
+
+  /// Get the most frequently skipped artist
+  String? get mostSkippedArtist {
+    if (skipCountByArtist.isEmpty) return null;
+
+    return skipCountByArtist.entries
+        .reduce((a, b) => a.value > b.value ? a : b)
+        .key;
+  }
+
+  /// Convert to JSON for logging/debugging
+  Map<String, dynamic> toJson() => {
+    'recentSkipCount': recentSkipCount,
+    'isSkippingFrequently': isSkippingFrequently,
+    'isBurstSkipping': isBurstSkipping,
+    'isRapidSkipping': isRapidSkipping,
+    'skippedArtists': skippedArtists,
+    'skipCountByArtist': skipCountByArtist,
+    'shouldRefetchRadio': shouldRefetchRadio,
+    'timeSinceFirstSkip': timeSinceFirstSkip?.inSeconds,
+    'shortestSkipGap': shortestSkipGap?.inSeconds,
+    'averageSkipPosition': averageSkipPosition,
+    'uniqueArtistsSkipped': uniqueArtistsSkipped,
+    'isFrustrated': isFrustrated,
+    'mostSkippedArtist': mostSkippedArtist,
+  };
 }

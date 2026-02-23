@@ -1,7 +1,4 @@
-// lib/main.dart - FIXED VERSION
-// Key changes:
-// 1. Changed notification icon to use existing 'mipmap/ic_launcher'
-// 2. Set androidStopForegroundOnPause to false to keep notification visible
+// ignore_for_file: avoid_print
 
 import 'dart:ui';
 import 'package:flutter/material.dart';
@@ -9,7 +6,6 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:awesome_notifications/awesome_notifications.dart';
 import 'package:vibeflow/database/database_service.dart';
-import 'package:vibeflow/installer_services/update_manager_service.dart';
 import 'package:vibeflow/managers/download_manager.dart';
 import 'package:vibeflow/pages/access_code_management_screen.dart';
 import 'package:vibeflow/pages/authOnboard/access_code_screen.dart';
@@ -18,6 +14,7 @@ import 'package:vibeflow/pages/home_page.dart';
 import 'package:vibeflow/providers/immersive_mode_provider.dart';
 import 'package:vibeflow/services/access_code_wrapper.dart';
 import 'package:vibeflow/services/audio_service.dart';
+import 'package:vibeflow/services/audio_ui_sync.dart';
 import 'package:vibeflow/services/haptic_feedback_service.dart';
 import 'package:vibeflow/services/sync_services/musicIntelligence.dart';
 import 'package:vibeflow/utils/deepLinkService.dart';
@@ -53,6 +50,7 @@ Future<void> main() async {
   print('✅ Supabase initialized');
 
   await AudioServices.init();
+  AudioUISync.instance.init();
   print('✅ Audio service initialized');
 
   await _initializeAiSystem();
@@ -124,42 +122,46 @@ Future<void> _initializeAiSystem() async {
 }
 
 Future<void> _initAwesomeNotifications() async {
-  await AwesomeNotifications().initialize(null, [
-    NotificationChannel(
-      channelKey: 'download_channel',
-      channelName: 'Music Playback',
-      channelDescription: 'Now playing controls and music notifications',
-      defaultColor: const Color(0xFF9C27B0),
-      ledColor: Colors.white,
-      importance: NotificationImportance.Max,
-      channelShowBadge: true,
-      playSound: false,
-      enableVibration: false,
-      criticalAlerts: true,
-    ),
-    NotificationChannel(
-      channelKey: 'audio_error_channel',
-      channelName: 'Audio Errors',
-      channelDescription: 'Notifications for audio playback errors',
-      defaultColor: const Color(0xFFFF4458),
-      ledColor: Colors.red,
-      importance: NotificationImportance.High,
-      channelShowBadge: false,
-      playSound: true,
-      enableVibration: true,
-    ),
-    NotificationChannel(
-      channelKey: 'social_updates_channel',
-      channelName: 'Social Updates',
-      channelDescription: 'Notifications for social features',
-      defaultColor: const Color(0xFF2196F3),
-      ledColor: Colors.blue,
-      importance: NotificationImportance.Default,
-      channelShowBadge: true,
-      playSound: false,
-      enableVibration: true,
-    ),
-  ], debug: false);
+  await AwesomeNotifications().initialize(
+    null, // ✅ ADD THIS - was 'null' before
+    [
+      NotificationChannel(
+        channelKey: 'download_channel',
+        channelName: 'Music Playback',
+        channelDescription: 'Now playing controls and music notifications',
+        defaultColor: const Color(0xFF9C27B0),
+        ledColor: Colors.white,
+        importance: NotificationImportance.Max,
+        channelShowBadge: true,
+        playSound: false,
+        enableVibration: false,
+        criticalAlerts: true,
+      ),
+      NotificationChannel(
+        channelKey: 'audio_error_channel',
+        channelName: 'Audio Errors',
+        channelDescription: 'Notifications for audio playback errors',
+        defaultColor: const Color(0xFFFF4458),
+        ledColor: Colors.red,
+        importance: NotificationImportance.High,
+        channelShowBadge: false,
+        playSound: true,
+        enableVibration: true,
+      ),
+      NotificationChannel(
+        channelKey: 'social_updates_channel',
+        channelName: 'Social Updates',
+        channelDescription: 'Notifications for social features',
+        defaultColor: const Color(0xFF2196F3),
+        ledColor: Colors.blue,
+        importance: NotificationImportance.Default,
+        channelShowBadge: true,
+        playSound: false,
+        enableVibration: true,
+      ),
+    ],
+    debug: false,
+  );
 
   final isAllowed = await AwesomeNotifications().isNotificationAllowed();
   if (!isAllowed) {
@@ -354,6 +356,7 @@ class AudioErrorHandler {
 }
 
 class VibeFlowApp extends ConsumerStatefulWidget {
+  // ignore: use_super_parameters
   const VibeFlowApp({Key? key}) : super(key: key);
 
   @override
@@ -374,7 +377,7 @@ class _VibeFlowAppState extends ConsumerState<VibeFlowApp> {
 
   @override
   Widget build(BuildContext context) {
-    final themeState = ref.watch(themeProvider);
+    // final themeState = ref.watch(themeProvider);
     final lightTheme = ref.watch(lightThemeProvider);
     final darkTheme = ref.watch(darkThemeProvider);
     final themeNotifier = ref.read(themeProvider.notifier);

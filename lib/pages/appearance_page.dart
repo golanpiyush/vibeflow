@@ -1116,6 +1116,8 @@ class _AppearancePageState extends ConsumerState<AppearancePage> {
     final settingsNotifier = ref.read(settingsProvider.notifier);
     final textSecondaryColor = ref.watch(themeTextSecondaryColorProvider);
     final iconActiveColor = ref.watch(themeIconActiveColorProvider);
+    final textPrimaryColor = ref.watch(themeTextPrimaryColorProvider);
+    final cardBackgroundColor = ref.watch(themeCardBackgroundColorProvider);
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -1146,6 +1148,52 @@ class _AppearancePageState extends ConsumerState<AppearancePage> {
             context,
           ).copyWith(color: textSecondaryColor.withOpacity(0.7), fontSize: 12),
         ),
+        const SizedBox(height: AppSpacing.lg),
+
+        // ADD THIS SECTION - Message about auto API fallback
+        Container(
+          padding: EdgeInsets.all(AppSpacing.md),
+          decoration: BoxDecoration(
+            color: Colors.transparent,
+            borderRadius: BorderRadius.circular(AppSpacing.radiusMedium),
+            border: Border.all(
+              color: iconActiveColor.withOpacity(0.2),
+              width: 1,
+            ),
+          ),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Icon(Icons.info_outline, size: 18, color: iconActiveColor),
+              SizedBox(width: AppSpacing.sm),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Note',
+                      style: AppTypography.caption(context).copyWith(
+                        color: textPrimaryColor,
+                        fontWeight: FontWeight.w600,
+                        fontSize: 13,
+                      ),
+                    ),
+                    SizedBox(height: AppSpacing.xs),
+                    Text(
+                      'VibeFlow can and will automatically switch between the API which works. To get lyrics even if one provider is temporarily unavailable.',
+                      style: AppTypography.caption(context).copyWith(
+                        color: textSecondaryColor,
+                        fontSize: 12,
+                        height: 1.4,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+
         const SizedBox(height: AppSpacing.xxxl),
       ],
     );

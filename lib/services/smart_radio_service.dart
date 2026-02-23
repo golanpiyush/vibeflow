@@ -1,10 +1,13 @@
 import 'package:vibeflow/api_base/yt_radio.dart';
+import 'package:vibeflow/api_base/ytradionew.dart';
 import 'package:vibeflow/models/quick_picks_model.dart';
 import 'package:vibeflow/utils/user_preference_tracker.dart';
 
 /// Enhanced radio service with user preference awareness
 class SmartRadioService {
-  final RadioService _radioService = RadioService();
+  // final RadioService _radioService = RadioService();
+  final NewYTRadio _newradioService = NewYTRadio();
+
   final UserPreferenceTracker _preferences = UserPreferenceTracker();
 
   /// Get radio queue with user preference filtering
@@ -14,16 +17,18 @@ class SmartRadioService {
     required String artist,
     int limit = 25,
     bool diversifyArtists = false,
+    List<String>? avoidArtists, // ✅ NEW: Artists to explicitly avoid
   }) async {
     print('📻 [SmartRadio] Getting radio for: $title by $artist');
     print('   Diversify: $diversifyArtists');
+    if (avoidArtists != null && avoidArtists.isNotEmpty) {
+      print('   Avoiding artists: $avoidArtists');
+    }
 
     try {
       // Get base radio
-      final baseRadio = await _radioService.getRadioForSong(
-        videoId: videoId,
-        title: title,
-        artist: artist,
+      final baseRadio = await _newradioService.getUpNext(
+        videoId,
         limit: limit * 2, // Get more to filter
       );
 
@@ -34,12 +39,21 @@ class SmartRadioService {
 
       print('✅ [SmartRadio] Got ${baseRadio.length} base songs');
 
-      // Filter out disliked artists
+      // Filter out disliked artists and explicitly avoided artists
       final filtered = baseRadio.where((song) {
-        final shouldAvoid = _preferences.shouldAvoidArtist(song.artists);
+        // Check if artist should be avoided (from preferences)
+        final shouldAvoidPref = _preferences.shouldAvoidArtist(song.artists);
+
+        // Check if artist is in explicit avoid list
+        final shouldAvoidExplicit =
+            avoidArtists?.contains(song.artists) ?? false;
+
+        final shouldAvoid = shouldAvoidPref || shouldAvoidExplicit;
+
         if (shouldAvoid) {
           print(
-            '   ⏭️ Filtering out: ${song.title} by ${song.artists} (disliked)',
+            '   ⏭️ Filtering out: ${song.title} by ${song.artists} '
+            '(disliked: $shouldAvoidPref, explicit: $shouldAvoidExplicit)',
           );
         }
         return !shouldAvoid;
@@ -91,10 +105,15 @@ class SmartRadioService {
       // Get radio based on preferred artist
       // Note: You'll need to implement a method to search for a song by artist
       // For now, we'll use a placeholder approach
-      final radio = await _radioService.getRadioForSong(
-        videoId: currentVideoId, // Fallback to current
-        title: '',
-        artist: seedArtist,
+      // final radio = await _radioService.getRadioForSong(
+      //   videoId: currentVideoId, // Fallback to current
+      //   title: '',
+      //   artist: seedArtist,
+      //   limit: limit,
+      // );
+
+      final radio = await _newradioService.getUpNext(
+        currentVideoId,
         limit: limit,
       );
 

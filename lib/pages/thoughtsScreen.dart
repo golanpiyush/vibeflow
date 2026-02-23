@@ -126,12 +126,13 @@ class _AudioThoughtsScreenState extends State<AudioThoughtsScreen>
               'Engine Observations',
               style: textTheme.titleLarge?.copyWith(
                 fontWeight: FontWeight.bold,
+                color: colorScheme.onSurface, // ADD THIS
               ),
             ),
             Text(
               '${_thoughts.length} thoughts • Auto-clears after 24hrs',
               style: textTheme.bodySmall?.copyWith(
-                color: colorScheme.onSurface.withOpacity(0.6),
+                color: colorScheme.onSurface.withOpacity(0.6), // ADD THIS
               ),
             ),
           ],
@@ -140,7 +141,7 @@ class _AudioThoughtsScreenState extends State<AudioThoughtsScreen>
           if (_thoughts.isNotEmpty)
             IconButton(
               icon: const Icon(Icons.delete_outline),
-              color: colorScheme.error,
+              color: colorScheme.error, // UPDATED
               tooltip: 'Clear all thoughts',
               onPressed: _confirmClearThoughts,
             ),
@@ -149,7 +150,7 @@ class _AudioThoughtsScreenState extends State<AudioThoughtsScreen>
               _autoScroll ? Icons.arrow_downward : Icons.arrow_upward,
               color: _autoScroll
                   ? Colors.green
-                  : colorScheme.onSurface.withOpacity(0.6),
+                  : colorScheme.onSurface.withOpacity(0.6), // UPDATED
             ),
             tooltip: _autoScroll ? 'Auto-scroll ON' : 'Auto-scroll OFF',
             onPressed: () {
@@ -210,7 +211,7 @@ class _AudioThoughtsScreenState extends State<AudioThoughtsScreen>
                   child: Icon(
                     Icons.psychology_rounded,
                     size: 80,
-                    color: colorScheme.onSurface.withOpacity(0.3),
+                    color: colorScheme.onSurface.withOpacity(0.3), // UPDATED
                   ),
                 ),
           const SizedBox(height: 24),
@@ -218,6 +219,7 @@ class _AudioThoughtsScreenState extends State<AudioThoughtsScreen>
             _isAudioPlaying ? 'Vibing...' : 'No Thoughts Yet',
             style: textTheme.headlineSmall?.copyWith(
               fontWeight: FontWeight.bold,
+              color: colorScheme.onSurface, // ADD THIS
             ),
           ),
           const SizedBox(height: 8),
@@ -227,7 +229,7 @@ class _AudioThoughtsScreenState extends State<AudioThoughtsScreen>
                 : 'Start playing music to see what\nthe audio player is thinking',
             textAlign: TextAlign.center,
             style: textTheme.bodyMedium?.copyWith(
-              color: colorScheme.onSurface.withOpacity(0.6),
+              color: colorScheme.onSurface.withOpacity(0.6), // ADD THIS
             ),
           ),
         ],
@@ -303,7 +305,7 @@ class _AudioThoughtsScreenState extends State<AudioThoughtsScreen>
                               ),
                             ),
                             const SizedBox(width: 8),
-                            const Text(
+                            Text(
                               'THINKING NOW',
                               style: TextStyle(
                                 color: Colors.green,
@@ -318,7 +320,9 @@ class _AudioThoughtsScreenState extends State<AudioThoughtsScreen>
                         Text(
                           '${current.formattedTime} • ${current.timeAgo}',
                           style: textTheme.bodySmall?.copyWith(
-                            color: colorScheme.onSurface.withOpacity(0.5),
+                            color: colorScheme.onSurface.withOpacity(
+                              0.5,
+                            ), // UPDATED
                           ),
                         ),
                       ],
@@ -342,6 +346,7 @@ class _AudioThoughtsScreenState extends State<AudioThoughtsScreen>
                   style: textTheme.bodyLarge?.copyWith(
                     fontStyle: FontStyle.italic,
                     height: 1.5,
+                    color: colorScheme.onSurface, // ADD THIS
                   ),
                 ),
               ),
@@ -406,20 +411,25 @@ class _AudioThoughtsScreenState extends State<AudioThoughtsScreen>
                               thought.formattedTime,
                               style: textTheme.bodySmall?.copyWith(
                                 fontWeight: FontWeight.w600,
+                                color: colorScheme.onSurface, // ADD THIS
                               ),
                             ),
                             const SizedBox(width: 8),
                             Text(
                               '•',
                               style: textTheme.bodySmall?.copyWith(
-                                color: colorScheme.onSurface.withOpacity(0.3),
+                                color: colorScheme.onSurface.withOpacity(
+                                  0.3,
+                                ), // UPDATED
                               ),
                             ),
                             const SizedBox(width: 8),
                             Text(
                               thought.timeAgo,
                               style: textTheme.bodySmall?.copyWith(
-                                color: colorScheme.onSurface.withOpacity(0.5),
+                                color: colorScheme.onSurface.withOpacity(
+                                  0.5,
+                                ), // UPDATED
                               ),
                             ),
                             const Spacer(),
@@ -433,8 +443,10 @@ class _AudioThoughtsScreenState extends State<AudioThoughtsScreen>
                             fontStyle: FontStyle.italic,
                             height: 1.4,
                             color: isRecent
-                                ? null
-                                : colorScheme.onSurface.withOpacity(0.9),
+                                ? colorScheme.onSurface
+                                : colorScheme.onSurface.withOpacity(
+                                    0.9,
+                                  ), // UPDATED
                           ),
                           maxLines: 3,
                           overflow: TextOverflow.ellipsis,
@@ -445,7 +457,7 @@ class _AudioThoughtsScreenState extends State<AudioThoughtsScreen>
                   const SizedBox(width: 8),
                   Icon(
                     Icons.chevron_right,
-                    color: colorScheme.onSurface.withOpacity(0.3),
+                    color: colorScheme.onSurface.withOpacity(0.3), // UPDATED
                     size: 20,
                   ),
                 ],
@@ -467,16 +479,23 @@ class _AudioThoughtsScreenState extends State<AudioThoughtsScreen>
         backgroundColor: colorScheme.surface,
         title: Text(
           'Clear All Thoughts?',
-          style: TextStyle(color: colorScheme.onSurface),
+          style: TextStyle(color: colorScheme.onSurface), // ADD THIS
         ),
         content: Text(
           'This will permanently delete all audio player thoughts from the last 24 hours. This action cannot be undone.',
-          style: TextStyle(color: colorScheme.onSurface.withOpacity(0.7)),
+          style: TextStyle(
+            color: colorScheme.onSurface.withOpacity(0.7),
+          ), // ADD THIS
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancel'),
+            child: Text(
+              'Cancel',
+              style: TextStyle(
+                color: colorScheme.onSurface.withOpacity(0.7),
+              ), // ADD THIS
+            ),
           ),
           TextButton(
             onPressed: () => Navigator.pop(context, true),
@@ -544,12 +563,15 @@ class _AudioThoughtsScreenState extends State<AudioThoughtsScreen>
                         _formatTypeLabel(thought.type),
                         style: textTheme.titleMedium?.copyWith(
                           fontWeight: FontWeight.bold,
+                          color: colorScheme.onSurface, // ADD THIS
                         ),
                       ),
                       Text(
                         '${thought.formattedTime} • ${thought.timeAgo}',
                         style: textTheme.bodySmall?.copyWith(
-                          color: colorScheme.onSurface.withOpacity(0.5),
+                          color: colorScheme.onSurface.withOpacity(
+                            0.5,
+                          ), // ADD THIS
                         ),
                       ),
                     ],
@@ -571,6 +593,7 @@ class _AudioThoughtsScreenState extends State<AudioThoughtsScreen>
                 style: textTheme.bodyMedium?.copyWith(
                   fontStyle: FontStyle.italic,
                   height: 1.5,
+                  color: colorScheme.onSurface, // ADD THIS
                 ),
               ),
             ),
@@ -580,6 +603,7 @@ class _AudioThoughtsScreenState extends State<AudioThoughtsScreen>
                 'Context Data:',
                 style: textTheme.bodySmall?.copyWith(
                   fontWeight: FontWeight.bold,
+                  color: colorScheme.onSurface, // ADD THIS
                 ),
               ),
               const SizedBox(height: 8),
@@ -594,7 +618,10 @@ class _AudioThoughtsScreenState extends State<AudioThoughtsScreen>
                   thought.context.entries
                       .map((e) => '${e.key}: ${e.value}')
                       .join('\n'),
-                  style: textTheme.bodySmall?.copyWith(fontFamily: 'monospace'),
+                  style: textTheme.bodySmall?.copyWith(
+                    fontFamily: 'monospace',
+                    color: colorScheme.onSurface.withOpacity(0.8), // ADD THIS
+                  ),
                 ),
               ),
             ],
@@ -615,6 +642,7 @@ class _AudioThoughtsScreenState extends State<AudioThoughtsScreen>
                   'Close',
                   style: textTheme.titleSmall?.copyWith(
                     fontWeight: FontWeight.bold,
+                    color: colorScheme.onPrimary, // ADD THIS
                   ),
                 ),
               ),
@@ -653,7 +681,7 @@ class _AudioThoughtsScreenState extends State<AudioThoughtsScreen>
       child: Text(
         label,
         style: TextStyle(
-          color: color,
+          color: color, // Keep functional color
           fontSize: 10,
           fontWeight: FontWeight.bold,
           letterSpacing: 0.5,

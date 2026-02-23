@@ -7,6 +7,7 @@ import 'package:vibeflow/api_base/ytmusic_artists_scraper.dart';
 import 'package:vibeflow/constants/theme_colors.dart';
 import 'package:vibeflow/constants/app_spacing.dart';
 import 'package:vibeflow/constants/app_typography.dart';
+import 'package:vibeflow/pages/appearance_page.dart';
 import 'package:vibeflow/pages/subpages/settings/about_page.dart';
 import 'package:vibeflow/pages/subpages/settings/database_page.dart';
 import 'package:vibeflow/pages/subpages/settings/other_page.dart';
@@ -850,8 +851,8 @@ class _SettingsPageTemplate extends ConsumerWidget {
     Widget page;
     switch (targetIndex) {
       case -1:
-        Navigator.popUntil(context, (route) => route.isFirst);
-        return;
+        page = const AppearancePage();
+        break;
       case 0:
         page = const PlayerSettingsPage();
         break;

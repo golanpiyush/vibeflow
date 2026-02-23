@@ -5,6 +5,7 @@ import 'package:vibeflow/api_base/db_actions.dart';
 import 'package:vibeflow/pages/authOnboard/login_page.dart';
 import 'package:vibeflow/pages/authOnboard/profile_setup_screen.dart';
 import 'package:vibeflow/utils/secure_storage.dart';
+import 'package:vibeflow/main.dart' show isMiniplayerVisible;
 
 class AccessCodeScreen extends ConsumerStatefulWidget {
   final bool showSkipButton;
@@ -49,6 +50,10 @@ class _AccessCodeScreenState extends ConsumerState<AccessCodeScreen> {
   @override
   void initState() {
     super.initState();
+
+    // HIDE MINIPLAYER when this screen opens
+    isMiniplayerVisible.value = false;
+
     if (!widget.isFromDialog &&
         widget.onSuccess != null &&
         !widget.isBannedUser) {
@@ -694,6 +699,11 @@ class _AccessCodeScreenState extends ConsumerState<AccessCodeScreen> {
 
   @override
   void dispose() {
+    // RESTORE MINIPLAYER when this screen closes
+    // Only restore if not banned (since banned screens also hide it)
+    if (!widget.isBannedUser) {
+      isMiniplayerVisible.value = true;
+    }
     _codeController.dispose();
     super.dispose();
   }

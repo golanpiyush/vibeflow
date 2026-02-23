@@ -207,6 +207,12 @@ class _GlobalMiniplayerState extends ConsumerState<GlobalMiniplayer> {
                 child: Container(
                   height: totalHeight,
                   decoration: BoxDecoration(
+                    borderRadius: const BorderRadius.only(
+                      topLeft: Radius.circular(28),
+                      topRight: Radius.circular(28),
+                      bottomLeft: Radius.circular(12),
+                      bottomRight: Radius.circular(12),
+                    ),
                     gradient: LinearGradient(
                       begin: Alignment.centerLeft,
                       end: Alignment.centerRight,
@@ -239,33 +245,33 @@ class _GlobalMiniplayerState extends ConsumerState<GlobalMiniplayer> {
                           ),
                         ),
 
-                      // ── Glowing progress line at top ──────────────────
-                      if (progress > 0)
-                        Positioned(
-                          top: 0,
-                          left: 0,
-                          right: 0,
-                          child: LayoutBuilder(
-                            builder: (context, constraints) => Container(
-                              height: 2.5,
-                              width: constraints.maxWidth * progress,
-                              decoration: BoxDecoration(
-                                color: vibrant,
-                                borderRadius: const BorderRadius.only(
-                                  topRight: Radius.circular(2),
-                                  bottomRight: Radius.circular(2),
-                                ),
-                                boxShadow: [
-                                  BoxShadow(
-                                    color: vibrant.withOpacity(0.85),
-                                    blurRadius: 8,
-                                    spreadRadius: 1,
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ),
-                        ),
+                      // // ── Glowing progress line at top ──────────────────
+                      // if (progress > 0)
+                      //   Positioned(
+                      //     top: 0,
+                      //     left: 0,
+                      //     right: 0,
+                      //     child: LayoutBuilder(
+                      //       builder: (context, constraints) => Container(
+                      //         height: 2.5,
+                      //         width: constraints.maxWidth * progress,
+                      //         decoration: BoxDecoration(
+                      //           color: vibrant,
+                      //           borderRadius: const BorderRadius.only(
+                      //             topRight: Radius.circular(2),
+                      //             bottomRight: Radius.circular(2),
+                      //           ),
+                      //           boxShadow: [
+                      //             BoxShadow(
+                      //               color: vibrant.withOpacity(0.85),
+                      //               blurRadius: 8,
+                      //               spreadRadius: 1,
+                      //             ),
+                      //           ],
+                      //         ),
+                      //       ),
+                      //     ),
+                      //   ),
 
                       // ── Main row ──────────────────────────────────────
                       SizedBox(

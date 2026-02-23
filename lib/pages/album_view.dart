@@ -112,23 +112,44 @@ class _AlbumPageState extends ConsumerState<AlbumPage> {
     });
 
     try {
-      final versions = await _albumsScraper.getAlbumVersions(
-        widget.album.title,
-        widget.album.artist,
+      // Use the improved YTMusicAlbumsScraper to get album versions
+      final versions = await _albumsScraper.searchAlbums(
+        '${widget.album.title} ${widget.album.artist}',
         limit: 20,
       );
 
-      // Filter out the current album
+      // Filter out the current album and any duplicates
       final filteredVersions = versions
-          .where((album) => album.id != widget.album.id)
+          .where(
+            (album) =>
+                album.id != widget.album.id &&
+                    album.title.toLowerCase().contains(
+                      widget.album.title.toLowerCase(),
+                    ) ||
+                album.artist.toLowerCase().contains(
+                  widget.album.artist.toLowerCase(),
+                ),
+          )
           .toList();
+
+      // Remove duplicates by ID
+      final uniqueVersions = <Album>[];
+      final seenIds = <String>{};
+      for (final album in filteredVersions) {
+        if (!seenIds.contains(album.id)) {
+          seenIds.add(album.id);
+          uniqueVersions.add(album);
+        }
+      }
 
       if (mounted) {
         setState(() {
-          _versions = filteredVersions;
+          _versions = uniqueVersions;
           _isLoadingVersions = false;
         });
-        print('✅ [AlbumPage] Loaded ${_versions.length} versions');
+        print(
+          '✅ [AlbumPage] Loaded ${_versions.length} versions for "${widget.album.title}"',
+        );
       }
     } catch (e) {
       print('❌ [AlbumPage] Error loading versions: $e');

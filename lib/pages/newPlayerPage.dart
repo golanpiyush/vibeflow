@@ -1,6 +1,35 @@
+// PATCHED FILE — new_player_page.dart
+//
+// PROBLEM: Stale `_onSongChanged` calls were overwriting `_lastKnownMediaItem`
+// with old song data, then calling `setState()` which caused the UI to briefly
+// (or permanently) show the previous song's title/artist/art.
+//
+// Root causes:
+//   1. `_isSongChanging` guard scheduled `Future.delayed` retries that captured
+//      the old MediaItem in their closures.
+//   2. `_lastKnownMediaItem` was written inside `_onSongChanged` (after async
+//      gaps), so stale calls could overwrite fresh data.
+//   3. The StreamBuilder fell back to `_lastKnownMediaItem` when
+//      `mediaSnapshot.data` was momentarily null during transitions.
+//
+
+// FIX:
+//   • Add `AudioUISync` as the single source of truth for display metadata.
+//   • `_lastKnownMediaItem` is now seeded from AudioUISync (never written
+//     inside async callbacks).
+//   • Stream listener only tracks ID changes for side-effect dispatch
+//     (`_onSongChanged`). It never retries with stale closures.
+//   • `_onSongChanged` no longer has the `_isSongChanging` retry loop.
+//     Side effects (palette, like-check) are guarded with a simple
+//     `_pendingSideEffectId` check instead.
+//   • Build method reads from `AudioUISync.instance.currentMedia` first —
+//     guaranteed to always have the latest song from the handler stream.
+// =============================================================================
+
 import 'dart:async';
 import 'dart:io';
 import 'dart:math';
+import 'package:vibeflow/pages/subpages/songs/playlists.dart';
 import 'dart:ui';
 import 'package:device_info_plus/device_info_plus.dart';
 import 'package:flutter/material.dart';
@@ -20,13 +49,13 @@ import 'package:vibeflow/models/quick_picks_model.dart';
 import 'package:vibeflow/pages/audio_equalizer_page.dart';
 import 'package:vibeflow/pages/subpages/settings/player_settings_page.dart';
 import 'package:vibeflow/pages/thoughtsScreen.dart';
-import 'package:vibeflow/services/audioGoverner.dart';
+import 'package:vibeflow/pages/user_taste_screen.dart';
 import 'package:vibeflow/services/audio_service.dart';
+import 'package:vibeflow/services/audio_ui_sync.dart';
 import 'package:vibeflow/services/bg_audio_handler.dart';
-import 'package:vibeflow/services/lyrics_service.dart';
+import 'package:vibeflow/services/haptic_feedback_service.dart';
 import 'package:vibeflow/utils/album_color_generator.dart';
 import 'package:vibeflow/pages/player_page.dart';
-import 'package:vibeflow/utils/material_transitions.dart';
 import 'package:vibeflow/utils/page_transitions.dart';
 import 'package:vibeflow/widgets/lyrics_widget.dart';
 import 'package:vibeflow/widgets/playlist_bottomSheet.dart';
@@ -58,13 +87,13 @@ class NewPlayerPage extends ConsumerStatefulWidget {
   ConsumerState<NewPlayerPage> createState() => _NewPlayerPageState();
   static bool _isNavigating = false;
   static bool _isOpen = false;
+
   // ───────── Open with Navigator ─────────
   static Future<void> openWithNavigator(
     NavigatorState navigator,
     QuickPick song, {
     String? heroTag,
   }) async {
-    // ✅ FIX: Canonical guard — if player is already open, do nothing
     if (_isOpen) {
       print('⚠️ [NewPlayerPage] Already open, ignoring duplicate navigation');
       return;
@@ -104,13 +133,11 @@ class NewPlayerPage extends ConsumerStatefulWidget {
     }
   }
 
-  // REPLACE open() with:
   static Future<void> open(
     BuildContext context,
     QuickPick song, {
     String? heroTag,
   }) async {
-    // ✅ FIX: Same canonical guard
     if (_isOpen) {
       print('⚠️ [NewPlayerPage] Already open, ignoring duplicate navigation');
       return;
@@ -165,18 +192,27 @@ class _NewPlayerPageState extends ConsumerState<NewPlayerPage>
   bool _isRefetchingUrl = false;
   double _lastRotationValue = 0.0;
   bool _isReturningToNormal = false;
+
+  // ── AudioUISync state ────────────────────────────────────────────────────
+  // Single source of truth: always reflects the latest song from the handler.
+  // Never written inside async callbacks — no stale-closure risk.
   String? _currentVideoId;
-  String? _lastProcessedVideoId;
-  String? _lastProcessedTitle;
-  Timer? _sleepTimer;
-  Duration? _sleepTimerDuration;
-  DateTime? _sleepTimerEndTime;
-  Timer? _debounceTimer;
+  MediaItem? _currentDisplayMedia;
+
+  // Guards palette+like side effects so stale async results are discarded.
+  String? _pendingSideEffectId;
+  bool _isSideEffectRunning = false;
 
   @override
   void initState() {
     super.initState();
 
+    // ── Seed display state synchronously before first frame ─────────────
+    _currentDisplayMedia =
+        AudioUISync.instance.currentMedia ?? getAudioHandler()?.mediaItem.value;
+    _currentVideoId = _currentDisplayMedia?.id;
+
+    AudioUISync.instance.addListener(_onAudioSyncChanged);
     _scaleController = AnimationController(
       duration: const Duration(milliseconds: 600),
       vsync: this,
@@ -196,7 +232,7 @@ class _NewPlayerPageState extends ConsumerState<NewPlayerPage>
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
         _scaleController.forward();
-        _loadAlbumPalette(widget.song.thumbnail);
+        _loadAlbumPalette(_currentDisplayMedia?.artUri?.toString() ?? '');
         _preloadArtwork();
       }
     });
@@ -205,166 +241,137 @@ class _NewPlayerPageState extends ConsumerState<NewPlayerPage>
     _checkIfLiked();
     _listenForPlaybackErrors();
 
+    // ── Rotation listener (playback state only — no song-change logic) ───
     _audioService.playbackStateStream.listen((state) {
-      if (mounted) {
-        _updateRotation(state.playing);
-      }
-    });
-    bool _isFirstEmission = true;
-    _audioService.mediaItemStream.listen((mediaItem) {
-      if (!mounted) return;
-
-      if (mediaItem != null) {
-        final newVideoId = mediaItem.id;
-        final newTitle = mediaItem.title;
-
-        // ✅ Skip first emission if it's the same song we already have
-        if (_isFirstEmission) {
-          _isFirstEmission = false;
-          if (newVideoId == widget.song.videoId) {
-            print(
-              '⏭️ [MediaStream] Skipping first emission (same as opened song)',
-            );
-            _currentVideoId = newVideoId;
-            _lastProcessedVideoId = newVideoId;
-            _lastProcessedTitle = newTitle;
-            return;
-          }
-          _isFirstEmission = false;
-        }
-        if (_mediaItemDebounceTimer?.isActive ?? false) {
-          if (newVideoId == _lastProcessedVideoId &&
-              newTitle == _lastProcessedTitle) {
-            print('⏭️ [MediaStream] Ignoring duplicate emission');
-            return;
-          }
-          _mediaItemDebounceTimer?.cancel();
-        }
-
-        print('🎵 [MediaStream] Received update:');
-        print('   VideoId: $newVideoId (current: $_currentVideoId)');
-        print('   Title: $newTitle');
-        print('   Last processed: $_lastProcessedVideoId');
-
-        // ✅ FIX: Check if this is truly a new song
-        final isDifferentSong =
-            newVideoId != _currentVideoId ||
-            newVideoId != _lastProcessedVideoId;
-
-        if (isDifferentSong || _currentVideoId == null) {
-          print('🔄 [MediaStream] New song detected, updating UI');
-
-          // ✅ FIX: Debounce to prevent multiple rapid calls
-          _mediaItemDebounceTimer = Timer(
-            const Duration(milliseconds: 150),
-            () {
-              if (!mounted) return;
-
-              _currentVideoId = newVideoId;
-              _lastProcessedVideoId = newVideoId;
-              _lastProcessedTitle = newTitle;
-
-              _onSongChanged(mediaItem);
-            },
-          );
-        } else {
-          print(
-            '✓ [MediaStream] Same song as current/last processed, no update',
-          );
-        }
-      }
+      if (mounted) _updateRotation(state.playing);
     });
   }
 
-  // ✅ ADD: Cleanup debounce timer
-  Timer? _mediaItemDebounceTimer;
+  @override
+  void dispose() {
+    AudioUISync.instance.removeListener(_onAudioSyncChanged);
+    _scaleController.dispose();
+    _rotationController.dispose();
+    super.dispose();
+  }
 
-  // ✅ ADD: Handle song changes
-  Future<void> _onSongChanged(MediaItem mediaItem) async {
-    if (!mounted) return;
+  void _onAudioSyncChanged() {
+    final item = AudioUISync.instance.currentMedia;
+    if (item == null || !mounted) return;
 
-    print('🔄 [_onSongChanged] Updating UI for: ${mediaItem.title}');
-    print('   VideoId: ${mediaItem.id}');
-    print('   Artist: ${mediaItem.artist}');
-    print('   Artwork: ${mediaItem.artUri}');
+    _currentDisplayMedia = item;
 
-    // ✅ FIX 1: Update like status FIRST (critical for saved songs)
-    setState(() {
-      _isCheckingLiked = true;
-    });
+    if (item.id != _currentVideoId) {
+      _currentVideoId = item.id;
+      _dispatchSideEffects(item);
+    }
 
-    await _checkIfLiked();
+    setState(() {});
+  }
 
-    // ✅ FIX 2: Update album art and palette
+  void _dispatchSideEffects(MediaItem mediaItem) {
+    _pendingSideEffectId = mediaItem.id;
+
     final artworkUrl = mediaItem.artUri?.toString() ?? '';
-    if (artworkUrl.isNotEmpty) {
-      print(
-        '🎨 [_onSongChanged] Loading new artwork: ${artworkUrl.substring(0, 50)}...',
-      );
-      _lastArtworkUrl = null; // Force reload even if URL is similar
-      await _loadAlbumPalette(artworkUrl);
-      _preloadArtworkFromUrl(artworkUrl);
+    if (artworkUrl.isNotEmpty && artworkUrl != _lastArtworkUrl) {
+      _lastArtworkUrl = artworkUrl; // ← this IS the artwork cache field here
+      _loadAlbumPalette(artworkUrl);
     }
 
-    // ✅ FIX 3: Force UI rebuild with delay to ensure state propagation
-    if (mounted) {
-      setState(() {
-        // Force rebuild
-      });
-
-      // Additional rebuild after short delay to catch any async updates
-      await Future.delayed(const Duration(milliseconds: 100));
-      if (mounted) {
-        setState(() {
-          // Second rebuild to ensure everything is in sync
-        });
-      }
-    }
-    _logCurrentState();
-    print('✅ [_onSongChanged] UI update complete');
+    setState(() => _isCheckingLiked = true);
+    _checkIfSongIsSaved(mediaItem.id);
   }
 
-  Future<void> _forceRefreshMetadata() async {
-    if (!mounted) return;
-
-    final currentMedia = _audioService.currentMediaItem;
-    if (currentMedia != null) {
-      print('🔄 [ForceRefresh] Manually refreshing metadata');
-      await _onSongChanged(currentMedia);
-    }
-  }
-
+  // ── Kept for direct calls (e.g. initial load, manual like toggle) ────────
   Future<void> _checkIfLiked() async {
-    if (!mounted) return; // ✅ ADD: Safety check
+    if (!mounted) return;
 
     try {
       final currentMedia = _audioService.currentMediaItem;
       if (currentMedia == null) {
-        if (mounted) {
+        if (mounted)
           setState(() {
             _isLiked = false;
             _isCheckingLiked = false;
           });
-        }
         return;
       }
+      await _refreshLikeStatus(currentMedia.id);
+    } catch (e) {
+      print('Error checking if song is liked: $e');
+      if (mounted) setState(() => _isCheckingLiked = false);
+    }
+  }
 
+  Future<void> _checkIfSongIsSaved(String videoId) async {
+    _pendingSideEffectId = videoId; // always update FIRST
+    if (_isSideEffectRunning) return;
+    _isSideEffectRunning = true;
+
+    try {
       final downloadService = DownloadService.instance;
       final savedSongs = await downloadService.getDownloadedSongs();
 
-      final isLiked = savedSongs.any((song) => song.videoId == currentMedia.id);
+      if (!mounted ||
+          (_pendingSideEffectId != null && videoId != _pendingSideEffectId))
+        return;
 
-      if (mounted) {
-        setState(() {
-          _isLiked = isLiked;
-          _isCheckingLiked = false;
-        });
-      }
+      setState(() {
+        _isLiked = savedSongs.any((s) => s.videoId == videoId);
+        _isCheckingLiked = false;
+      });
     } catch (e) {
-      print('Error checking if song is liked: $e');
-      if (mounted) {
+      if (mounted && videoId == _pendingSideEffectId) {
         setState(() => _isCheckingLiked = false);
       }
+    } finally {
+      _isSideEffectRunning = false;
+      // If a newer song arrived while we were running, process it now
+      if (_pendingSideEffectId != null && _pendingSideEffectId != videoId) {
+        final next = _pendingSideEffectId!;
+        _pendingSideEffectId = null;
+        _checkIfSongIsSaved(next);
+      }
+    }
+  }
+
+  // ── Like-check with stale-result guard ───────────────────────────────────
+  Future<void> _refreshLikeStatus(String videoId) async {
+    // If a side effect is already running, just update the pending id and bail.
+    // The running task will check _pendingSideEffectId on completion.
+    if (_isSideEffectRunning) {
+      _pendingSideEffectId = videoId;
+      return;
+    }
+
+    _isSideEffectRunning = true;
+
+    try {
+      final downloadService = DownloadService.instance;
+      final savedSongs = await downloadService.getDownloadedSongs();
+
+      // Discard if the user has moved to a different song while we were awaiting
+      if (!mounted || videoId != _pendingSideEffectId) {
+        print(
+          '🚫 [_refreshLikeStatus] Discarding stale result for $videoId '
+          '(current: $_pendingSideEffectId)',
+        );
+        return;
+      }
+
+      final isLiked = savedSongs.any((song) => song.videoId == videoId);
+
+      setState(() {
+        _isLiked = isLiked;
+        _isCheckingLiked = false;
+      });
+    } catch (e) {
+      print('Error checking if song is liked: $e');
+      if (mounted && videoId == _pendingSideEffectId) {
+        setState(() => _isCheckingLiked = false);
+      }
+    } finally {
+      _isSideEffectRunning = false;
     }
   }
 
@@ -764,19 +771,39 @@ class _NewPlayerPageState extends ConsumerState<NewPlayerPage>
 
   Future<void> _playInitialSong() async {
     try {
-      print('🎵 [NewPlayerPage] Checking if song needs to be played');
+      final handler = getAudioHandler();
+      if (handler == null) return;
 
-      final currentMedia = await _audioService.mediaItemStream.first;
+      final currentMedia = handler.mediaItem.value;
+      final hasAudioSource = handler.audioSource != null;
+      final isPlaying = handler.isPlaying;
+      final isCrossfading = handler.isCrossfading; // ✅ check this too
 
-      // Only play if it's a different song
-      if (currentMedia == null || currentMedia.id != widget.song.videoId) {
-        print('🎵 [NewPlayerPage] Playing new song: ${widget.song.title}');
-        await _audioService.playSong(widget.song);
-      } else {
-        print('✅ [NewPlayerPage] Song already playing: ${widget.song.title}');
+      // ✅ Never interrupt an active crossfade
+      if (isCrossfading) {
+        print('🎵 [PlayerPage] Crossfade active — skipping playSong');
+        return;
       }
-    } catch (e) {
-      print('❌ [NewPlayerPage] Playback error: $e');
+
+      // ✅ Never interrupt anything actively playing
+      if (currentMedia != null && hasAudioSource && isPlaying) {
+        print('🎵 [PlayerPage] Audio already playing — skipping playSong');
+        return;
+      }
+
+      // ✅ Same song loaded but paused — just resume
+      if (currentMedia?.id == widget.song.videoId && hasAudioSource) {
+        print('✅ [PlayerPage] Song already loaded: ${currentMedia?.title}');
+        await _audioService.play();
+        return;
+      }
+
+      // Nothing loaded at all — safe to play
+      print('🎵 [PlayerPage] Playing new song: ${widget.song.title}');
+      await _audioService.playSong(widget.song);
+    } catch (e, stackTrace) {
+      print('❌ [PlayerPage] Playback error: $e');
+      await HapticFeedbackService().vibrateCriticalError();
     }
   }
 
@@ -858,7 +885,9 @@ class _NewPlayerPageState extends ConsumerState<NewPlayerPage>
           child: StreamBuilder<MediaItem?>(
             stream: _audioService.mediaItemStream,
             builder: (context, mediaSnapshot) {
-              final currentMedia = mediaSnapshot.data;
+              // ✅ FIX: Fall back to _currentDisplayMedia (always current),
+              // not _lastKnownMediaItem (which stale closures could corrupt).
+              final currentMedia = mediaSnapshot.data ?? _currentDisplayMedia;
 
               return StreamBuilder<PlaybackState>(
                 stream: _audioService.playbackStateStream,
@@ -911,15 +940,6 @@ class _NewPlayerPageState extends ConsumerState<NewPlayerPage>
     );
   }
 
-  void _logCurrentState() {
-    print('📊 [Player State]');
-    print('   Current VideoId: $_currentVideoId');
-    print('   Widget song: ${widget.song.title}');
-    print('   Is liked: $_isLiked');
-    print('   Last artwork URL: $_lastArtworkUrl');
-    print('   Has palette: ${_albumPalette != null}');
-  }
-
   Widget _buildTopBar() {
     final iconColor = Theme.of(context).colorScheme.onSurface.withOpacity(0.7);
 
@@ -943,6 +963,8 @@ class _NewPlayerPageState extends ConsumerState<NewPlayerPage>
   }
 
   void _showMoreOptions() {
+    final handler = getAudioHandler();
+    final isTimerActive = handler?.sleepTimerActive ?? false;
     // Get theme colors from provider
     final themeData = Theme.of(context);
     final cardBg = themeData.colorScheme.surface;
@@ -984,12 +1006,8 @@ class _NewPlayerPageState extends ConsumerState<NewPlayerPage>
                     borderRadius: BorderRadius.circular(10),
                   ),
                   child: Icon(
-                    _sleepTimer != null && _sleepTimer!.isActive
-                        ? Icons.bedtime
-                        : Icons.bedtime_outlined,
-                    color: _sleepTimer != null && _sleepTimer!.isActive
-                        ? Colors.blue.shade300
-                        : textPrimary,
+                    isTimerActive ? Icons.bedtime : Icons.bedtime_outlined,
+                    color: isTimerActive ? Colors.blue.shade300 : textPrimary,
                     size: 22,
                   ),
                 ),
@@ -1002,13 +1020,11 @@ class _NewPlayerPageState extends ConsumerState<NewPlayerPage>
                   ),
                 ),
                 subtitle: Text(
-                  _sleepTimer != null && _sleepTimer!.isActive
-                      ? 'Active: ${_getRemainingTime()}'
+                  isTimerActive
+                      ? 'Active: ${handler?.getSleepTimerRemaining() ?? ''}'
                       : 'Pause music after a set time',
                   style: GoogleFonts.inter(
-                    color: _sleepTimer != null && _sleepTimer!.isActive
-                        ? Colors.blue.shade300
-                        : textSecondary,
+                    color: isTimerActive ? Colors.blue.shade300 : textSecondary,
                     fontSize: 13,
                   ),
                 ),
@@ -1116,6 +1132,56 @@ class _NewPlayerPageState extends ConsumerState<NewPlayerPage>
                 endIndent: 20,
               ),
 
+              // ✅ ADD THIS: User Taste Option
+              ListTile(
+                leading: Container(
+                  width: 40,
+                  height: 40,
+                  decoration: BoxDecoration(
+                    color: textSecondary.withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Icon(
+                    Icons.emoji_emotions_outlined,
+                    color: textPrimary,
+                    size: 22,
+                  ),
+                ),
+                title: Text(
+                  'User Taste',
+                  style: GoogleFonts.inter(
+                    color: textPrimary,
+                    fontSize: 16,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+                subtitle: Text(
+                  'Personalize your music preferences',
+                  style: GoogleFonts.inter(color: textSecondary, fontSize: 13),
+                ),
+                trailing: Icon(
+                  Icons.arrow_forward_ios,
+                  color: textSecondary,
+                  size: 16,
+                ),
+                onTap: () {
+                  Navigator.pop(context);
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => const UserTasteScreen(),
+                    ),
+                  );
+                },
+              ),
+
+              Divider(
+                color: dividerColor,
+                height: 1,
+                indent: 20,
+                endIndent: 20,
+              ),
+
               // Add to Playlist Option
               ListTile(
                 leading: Container(
@@ -1208,7 +1274,7 @@ class _NewPlayerPageState extends ConsumerState<NewPlayerPage>
       backgroundColor: Colors.transparent,
       isScrollControlled: true,
       builder: (context) => AddToPlaylistSheet(song: dbSong),
-    );
+    ).then((_) => PlaylistCoverCache.invalidateAll());
   }
 
   Widget _buildSongTitle(MediaItem? currentMedia) {
@@ -1799,18 +1865,14 @@ class _NewPlayerPageState extends ConsumerState<NewPlayerPage>
 
         // ✨ FIXED: Line-by-line lyrics area with proper visibility
         if (showLyricsHere) ...[
-          const SizedBox(height: 16),
+          const SizedBox(height: 5),
           Container(
-            height: 100, // Increased height for better visibility
+            height: 50, // Increased height for better visibility
             width: double.infinity,
             padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
             decoration: BoxDecoration(
-              color: surfaceVariant.withOpacity(0.2),
+              color: const Color.fromARGB(0, 255, 255, 255),
               borderRadius: BorderRadius.circular(12),
-              border: Border.all(
-                color: primaryColor.withOpacity(0.3),
-                width: 1,
-              ),
             ),
             child: StreamBuilder<MediaItem?>(
               stream: _audioService.mediaItemStream,
@@ -1839,7 +1901,7 @@ class _NewPlayerPageState extends ConsumerState<NewPlayerPage>
               },
             ),
           ),
-          const SizedBox(height: 16),
+          // const SizedBox(height: 16),
         ],
 
         // Progress slider
@@ -2050,8 +2112,8 @@ class _NewPlayerPageState extends ConsumerState<NewPlayerPage>
                     isScrollControlled: true,
                     builder: (context) => EnhancedRadioSheet(
                       currentVideoId: widget.song.videoId,
-                      currentTitle: widget.song.title,
-                      currentArtist: widget.song.artists,
+                      currentTitle: _currentDisplayMedia?.title ?? 'Loading...',
+                      currentArtist: _currentDisplayMedia?.artist ?? '',
                       audioService: _audioService,
                     ),
                   );
@@ -2299,10 +2361,11 @@ class _NewPlayerPageState extends ConsumerState<NewPlayerPage>
   }
 
   void _preloadArtwork() {
-    if (widget.song.thumbnail.isEmpty || !mounted) return;
+    final wad = _currentDisplayMedia?.artUri?.toString() ?? '';
+    if (wad.isEmpty || !mounted) return;
 
     precacheImage(
-      NetworkImage(widget.song.thumbnail),
+      NetworkImage(wad),
       context,
       onError: (exception, stackTrace) {
         // Silent fail - don't show errors for preloading
@@ -2373,7 +2436,6 @@ class _NewPlayerPageState extends ConsumerState<NewPlayerPage>
     }
   }
 
-  // ✅ NEW: Show sleep timer dialog with duration options
   void _showSleepTimerDialog() {
     final durations = [
       {'label': '15 minutes', 'duration': const Duration(minutes: 15)},
@@ -2385,25 +2447,36 @@ class _NewPlayerPageState extends ConsumerState<NewPlayerPage>
       {'label': '5 hours', 'duration': const Duration(hours: 5)},
     ];
 
+    final themeData = Theme.of(context);
+    final cardBg = themeData.colorScheme.surface;
+    final textPrimary = themeData.colorScheme.onSurface;
+    final textSecondary = textPrimary.withOpacity(0.7);
+
+    final handler = getAudioHandler();
+    final isTimerActive = handler?.sleepTimerActive ?? false;
+
     showModalBottomSheet(
       context: context,
       backgroundColor: Colors.transparent,
+      isScrollControlled: true,
       builder: (context) => Container(
+        constraints: BoxConstraints(
+          maxHeight: MediaQuery.of(context).size.height * 0.8,
+        ),
         decoration: BoxDecoration(
-          color: const Color(0xFF1A1A1A),
+          color: cardBg,
           borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
         ),
         child: SafeArea(
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              // Drag handle
               const SizedBox(height: 12),
               Container(
                 width: 40,
                 height: 4,
                 decoration: BoxDecoration(
-                  color: Colors.white.withOpacity(0.3),
+                  color: textSecondary.withOpacity(0.5),
                   borderRadius: BorderRadius.circular(2),
                 ),
               ),
@@ -2423,7 +2496,7 @@ class _NewPlayerPageState extends ConsumerState<NewPlayerPage>
                     Text(
                       'Sleep Timer',
                       style: GoogleFonts.inter(
-                        color: Colors.white,
+                        color: textPrimary,
                         fontSize: 20,
                         fontWeight: FontWeight.w600,
                       ),
@@ -2433,113 +2506,120 @@ class _NewPlayerPageState extends ConsumerState<NewPlayerPage>
               ),
               const SizedBox(height: 8),
 
-              // Active timer info (if running)
-              if (_sleepTimer != null && _sleepTimer!.isActive)
-                Container(
-                  margin: const EdgeInsets.symmetric(
+              // Active timer banner
+              if (isTimerActive)
+                Padding(
+                  padding: const EdgeInsets.symmetric(
                     horizontal: 20,
                     vertical: 12,
                   ),
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: Colors.blue.shade900.withOpacity(0.3),
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(
-                      color: Colors.blue.shade300.withOpacity(0.3),
-                      width: 1,
+                  child: Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: Colors.blue.withOpacity(0.1),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: Colors.blue.withOpacity(0.3)),
                     ),
-                  ),
-                  child: Row(
-                    children: [
-                      Icon(
-                        Icons.timer_rounded,
-                        color: Colors.blue.shade300,
-                        size: 20,
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: Text(
-                          'Timer active: Music will pause in ${_getRemainingTime()}',
-                          style: GoogleFonts.inter(
-                            color: Colors.blue.shade300,
-                            fontSize: 13,
-                            fontWeight: FontWeight.w500,
+                    child: Row(
+                      children: [
+                        Icon(
+                          Icons.timer_rounded,
+                          color: Colors.blue.shade300,
+                          size: 20,
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Text(
+                            'Music will pause in ${handler?.getSleepTimerRemaining() ?? ''}',
+                            style: GoogleFonts.inter(
+                              color: Colors.blue.shade300,
+                              fontSize: 13,
+                              fontWeight: FontWeight.w500,
+                            ),
                           ),
                         ),
-                      ),
-                    ],
+                      ],
+                    ),
                   ),
                 ),
 
               const SizedBox(height: 8),
 
-              // Duration options
-              ...durations.map((item) {
-                final duration = item['duration'] as Duration;
-                final label = item['label'] as String;
-                final isActive =
-                    _sleepTimerDuration == duration &&
-                    _sleepTimer != null &&
-                    _sleepTimer!.isActive;
+              // Duration list
+              Flexible(
+                child: SingleChildScrollView(
+                  padding: EdgeInsets.only(bottom: isTimerActive ? 0 : 20),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: durations.map((item) {
+                      final duration = item['duration'] as Duration;
+                      final label = item['label'] as String;
+                      final isActive =
+                          (handler?.currentSleepTimerDuration == duration) &&
+                          isTimerActive;
 
-                return Column(
-                  children: [
-                    ListTile(
-                      leading: Container(
-                        width: 40,
-                        height: 40,
-                        decoration: BoxDecoration(
-                          color: isActive
-                              ? Colors.blue.shade300.withOpacity(0.2)
-                              : Colors.white.withOpacity(0.05),
-                          borderRadius: BorderRadius.circular(10),
-                        ),
-                        child: Icon(
-                          Icons.access_time_rounded,
-                          color: isActive
-                              ? Colors.blue.shade300
-                              : Colors.white.withOpacity(0.7),
-                          size: 20,
-                        ),
-                      ),
-                      title: Text(
-                        label,
-                        style: GoogleFonts.inter(
-                          color: isActive ? Colors.blue.shade300 : Colors.white,
-                          fontSize: 16,
-                          fontWeight: isActive
-                              ? FontWeight.w600
-                              : FontWeight.w500,
-                        ),
-                      ),
-                      trailing: isActive
-                          ? Icon(
-                              Icons.check_circle,
-                              color: Colors.blue.shade300,
-                              size: 20,
-                            )
-                          : null,
-                      onTap: () {
-                        Navigator.pop(context);
-                        _startSleepTimer(duration, label);
-                      },
-                    ),
-                    if (item != durations.last)
-                      Divider(
-                        color: Colors.white.withOpacity(0.05),
-                        height: 1,
-                        indent: 20,
-                        endIndent: 20,
-                      ),
-                  ],
-                );
-              }).toList(),
+                      return Column(
+                        children: [
+                          ListTile(
+                            leading: Container(
+                              width: 40,
+                              height: 40,
+                              decoration: BoxDecoration(
+                                color: isActive
+                                    ? Colors.blue.withOpacity(0.2)
+                                    : textSecondary.withOpacity(0.1),
+                                borderRadius: BorderRadius.circular(10),
+                              ),
+                              child: Icon(
+                                Icons.access_time_rounded,
+                                color: isActive
+                                    ? Colors.blue.shade300
+                                    : textSecondary,
+                                size: 20,
+                              ),
+                            ),
+                            title: Text(
+                              label,
+                              style: GoogleFonts.inter(
+                                color: isActive
+                                    ? Colors.blue.shade300
+                                    : textPrimary,
+                                fontSize: 16,
+                                fontWeight: isActive
+                                    ? FontWeight.w600
+                                    : FontWeight.w500,
+                              ),
+                            ),
+                            trailing: isActive
+                                ? Icon(
+                                    Icons.check_circle,
+                                    color: Colors.blue.shade300,
+                                    size: 20,
+                                  )
+                                : null,
+                            onTap: () {
+                              Navigator.pop(context);
+                              _startSleepTimer(duration, label);
+                            },
+                          ),
+                          if (item != durations.last)
+                            Divider(
+                              color: textSecondary.withOpacity(0.1),
+                              height: 1,
+                              indent: 20,
+                              endIndent: 20,
+                            ),
+                        ],
+                      );
+                    }).toList(),
+                  ),
+                ),
+              ),
 
-              // Cancel timer button (if active)
-              if (_sleepTimer != null && _sleepTimer!.isActive) ...[
-                const SizedBox(height: 8),
+              // Cancel button
+              if (isTimerActive)
                 Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 20),
+                  padding: const EdgeInsets.all(20),
                   child: SizedBox(
                     width: double.infinity,
                     child: ElevatedButton.icon(
@@ -2566,9 +2646,6 @@ class _NewPlayerPageState extends ConsumerState<NewPlayerPage>
                     ),
                   ),
                 ),
-              ],
-
-              const SizedBox(height: 20),
             ],
           ),
         ),
@@ -2576,54 +2653,9 @@ class _NewPlayerPageState extends ConsumerState<NewPlayerPage>
     );
   }
 
-  // ✅ NEW: Start sleep timer
   void _startSleepTimer(Duration duration, String label) {
-    // Cancel existing timer if any
-    _sleepTimer?.cancel();
+    getAudioHandler()?.startSleepTimer(duration);
 
-    setState(() {
-      _sleepTimerDuration = duration;
-      _sleepTimerEndTime = DateTime.now().add(duration);
-    });
-
-    _sleepTimer = Timer(duration, () {
-      if (mounted) {
-        // Pause the music
-        _audioService.pause();
-
-        // Show notification
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Row(
-              children: [
-                Icon(Icons.bedtime, color: Colors.blue.shade300, size: 20),
-                const SizedBox(width: 12),
-                const Expanded(
-                  child: Text(
-                    'Sleep timer ended - Music paused',
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontWeight: FontWeight.w500,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-            backgroundColor: Colors.blue.shade900,
-            duration: const Duration(seconds: 3),
-            behavior: SnackBarBehavior.floating,
-          ),
-        );
-
-        setState(() {
-          _sleepTimer = null;
-          _sleepTimerDuration = null;
-          _sleepTimerEndTime = null;
-        });
-      }
-    });
-
-    // Show confirmation
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Row(
@@ -2653,24 +2685,17 @@ class _NewPlayerPageState extends ConsumerState<NewPlayerPage>
     );
   }
 
-  // ✅ NEW: Cancel sleep timer
   void _cancelSleepTimer() {
-    _sleepTimer?.cancel();
+    getAudioHandler()?.cancelSleepTimer();
 
     if (mounted) {
-      setState(() {
-        _sleepTimer = null;
-        _sleepTimerDuration = null;
-        _sleepTimerEndTime = null;
-      });
-
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Row(
+          content: const Row(
             children: [
-              const Icon(Icons.cancel_outlined, color: Colors.white, size: 20),
-              const SizedBox(width: 12),
-              const Expanded(
+              Icon(Icons.cancel_outlined, color: Colors.white, size: 20),
+              SizedBox(width: 12),
+              Expanded(
                 child: Text(
                   'Sleep timer cancelled',
                   style: TextStyle(
@@ -2687,48 +2712,6 @@ class _NewPlayerPageState extends ConsumerState<NewPlayerPage>
         ),
       );
     }
-  }
-
-  // ✅ NEW: Get remaining time for display
-  String _getRemainingTime() {
-    if (_sleepTimerEndTime == null) return '';
-
-    final remaining = _sleepTimerEndTime!.difference(DateTime.now());
-
-    if (remaining.isNegative) return '0 min';
-
-    final hours = remaining.inHours;
-    final minutes = remaining.inMinutes.remainder(60);
-
-    if (hours > 0) {
-      return '$hours hr ${minutes} min';
-    } else {
-      return '$minutes min';
-    }
-  }
-
-  @override
-  void dispose() {
-    // ✅ Do NOT touch isMiniplayerVisible here — the static open() finally block
-    // owns that lifecycle. Touching it here causes the race condition where
-    // dispose() fires before the second page's initState, briefly showing
-    // the miniplayer and confusing the _isOpen guard.
-    _mediaItemDebounceTimer?.cancel();
-    _sleepTimer?.cancel();
-
-    if (_rotationController.isAnimating) {
-      _rotationController.stop();
-    }
-    if (_scaleController.isAnimating) {
-      _scaleController.stop();
-    }
-
-    Future.delayed(const Duration(milliseconds: 50), () {
-      _scaleController.dispose();
-      _rotationController.dispose();
-    });
-
-    super.dispose();
   }
 }
 

@@ -327,34 +327,82 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
   @override
   Widget build(BuildContext context) {
     final themeData = Theme.of(context);
+    final colorScheme = themeData.colorScheme;
     final themeState = ref.watch(themeProvider);
-    final isDark =
-        themeState.themeType == ThemeType.pureBlack ||
-        (themeState.themeType == ThemeType.material &&
-            themeState.systemThemeMode == AppThemeMode.dark);
 
-    final bgColor = themeData.scaffoldBackgroundColor;
-    final surfaceColor = isDark ? const Color(0xFF1A1A1A) : Colors.grey[100];
-    final cardColor = isDark ? const Color(0xFF0A0A0A) : Colors.white;
-    final primaryColor = themeData.colorScheme.primary;
-    final accentColor = themeState.themeType == ThemeType.pureBlack
-        ? Colors.purple[400]
-        : primaryColor;
+    // THEME-AWARE COLORS - These will properly respect Pure Black vs Material You
+    Color bgColor;
+    Color surfaceColor;
+    Color cardColor;
+    Color primaryColor;
+    Color accentColor;
+    Color textPrimary;
+    Color textSecondary;
+    Color textMuted;
+    Color textDisabled;
 
-    final textPrimaryColor =
-        themeData.textTheme.bodyLarge?.color ??
-        (isDark ? Colors.white : Colors.black);
-    final textSecondaryColor =
-        themeData.textTheme.bodyMedium?.color ??
-        (isDark ? Colors.grey[400]! : Colors.grey[700]!);
-    final textMutedColor =
-        themeData.textTheme.bodySmall?.color ??
-        (isDark ? Colors.grey[500]! : Colors.grey[600]!);
+    // Determine colors based on actual theme type
+    switch (themeState.themeType) {
+      case ThemeType.pureBlack:
+        // Pure Black theme - true AMOLED black
+        bgColor = Colors.black;
+        surfaceColor = const Color(0xFF1A1A1A); // Dark gray for surfaces
+        cardColor = const Color(0xFF0A0A0A); // Near black for cards
+        primaryColor = const Color(0xFF6B4CE8); // Your purple
+        accentColor = const Color(0xFF6B4CE8); // Use same purple for accent
+        textPrimary = Colors.white;
+        textSecondary = Colors.white.withOpacity(0.7);
+        textMuted = Colors.white.withOpacity(0.5);
+        textDisabled = Colors.white.withOpacity(0.3);
+        break;
 
+      case ThemeType.material:
+        // Material You theme - use colorScheme but ensure proper contrast
+        bgColor = colorScheme.background;
+        surfaceColor = colorScheme.surfaceVariant;
+        cardColor = colorScheme.surface;
+        primaryColor = colorScheme.primary;
+        accentColor = colorScheme.primary; // or colorScheme.secondary
+
+        // For Material You dark mode, ensure text is pure white
+        if (themeState.systemThemeMode == AppThemeMode.dark) {
+          textPrimary = Colors.white;
+          textSecondary = Colors.white.withOpacity(0.7);
+          textMuted = Colors.white.withOpacity(0.5);
+          textDisabled = Colors.white.withOpacity(0.3);
+        } else {
+          textPrimary = colorScheme.onSurface;
+          textSecondary = colorScheme.onSurface.withOpacity(0.7);
+          textMuted = colorScheme.onSurface.withOpacity(0.5);
+          textDisabled = colorScheme.onSurface.withOpacity(0.3);
+        }
+        break;
+
+      case ThemeType.light:
+      default:
+        // Light theme
+        bgColor = colorScheme.background;
+        surfaceColor = colorScheme.surfaceVariant;
+        cardColor = colorScheme.surface;
+        primaryColor = colorScheme.primary;
+        accentColor = colorScheme.primary;
+        textPrimary = colorScheme.onSurface;
+        textSecondary = colorScheme.onSurface.withOpacity(0.7);
+        textMuted = colorScheme.onSurface.withOpacity(0.5);
+        textDisabled = colorScheme.onSurface.withOpacity(0.3);
+        break;
+    }
+
+    // Rest of your build method remains the same...
     if (_isLoading) {
       return Scaffold(
         backgroundColor: bgColor,
-        body: Center(child: CircularProgressIndicator(color: accentColor)),
+        body: Center(
+          child: CircularProgressIndicator(
+            color: primaryColor,
+            backgroundColor: surfaceColor,
+          ),
+        ),
       );
     }
 
@@ -362,8 +410,6 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
     final changesRemaining = 3 - _usernameChangesThisMonth;
     final canChangeEmail = _canChangeEmail();
     final daysUntilEmailChange = _daysUntilEmailChange();
-    final theme = Theme.of(context);
-    final colorScheme = theme.colorScheme;
 
     final hasImage = _newProfilePicFile != null || _currentProfilePic != null;
 
@@ -384,9 +430,7 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
                       children: [
                         CircleAvatar(
                           radius: 64,
-                          backgroundColor: hasImage
-                              ? surfaceColor
-                              : colorScheme.surface,
+                          backgroundColor: surfaceColor,
                           foregroundImage: _newProfilePicFile != null
                               ? FileImage(_newProfilePicFile!)
                               : (_currentProfilePic != null
@@ -399,11 +443,7 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
                                       )
                                     : null),
                           child: !hasImage
-                              ? Icon(
-                                  Icons.person,
-                                  size: 64,
-                                  color: colorScheme.onSurfaceVariant,
-                                )
+                              ? Icon(Icons.person, size: 64, color: textMuted)
                               : null,
                         ),
                         Positioned(
@@ -430,10 +470,12 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
                     SizedBox(height: AppSpacing.lg),
                     TextButton.icon(
                       onPressed: _pickImage,
-                      icon: const Icon(Icons.upload),
+                      icon: Icon(Icons.upload, color: accentColor),
                       label: Text(
                         'Change Photo',
-                        style: AppTypography.subtitle(context),
+                        style: AppTypography.subtitle(
+                          context,
+                        ).copyWith(color: accentColor),
                       ),
                       style: TextButton.styleFrom(foregroundColor: accentColor),
                     ),
@@ -447,35 +489,53 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
                 'Username',
                 style: AppTypography.songTitle(
                   context,
-                ).copyWith(color: textSecondaryColor),
+                ).copyWith(color: textSecondary),
               ),
               SizedBox(height: AppSpacing.sm),
               TextFormField(
                 controller: _usernameController,
                 enabled: canChangeUsername,
-                style: AppTypography.songTitle(
-                  context,
-                ).copyWith(color: textPrimaryColor),
+                style: AppTypography.songTitle(context).copyWith(
+                  color: canChangeUsername ? textPrimary : textDisabled,
+                ),
                 decoration: InputDecoration(
+                  labelText: 'Username',
+                  labelStyle: TextStyle(
+                    color: canChangeUsername ? textSecondary : textDisabled,
+                  ),
                   hintText: canChangeUsername
                       ? 'Enter your username'
                       : 'Username changes limit reached',
                   hintStyle: AppTypography.caption(
                     context,
-                  ).copyWith(color: textMutedColor),
+                  ).copyWith(color: textMuted),
                   filled: true,
                   fillColor: canChangeUsername ? cardColor : surfaceColor,
                   border: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(AppSpacing.radiusLarge),
-                    borderSide: BorderSide.none,
+                    borderSide: BorderSide(color: textMuted),
+                  ),
+                  enabledBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(AppSpacing.radiusLarge),
+                    borderSide: BorderSide(color: textMuted.withOpacity(0.3)),
+                  ),
+                  focusedBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(AppSpacing.radiusLarge),
+                    borderSide: BorderSide(color: accentColor, width: 2),
+                  ),
+                  disabledBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(AppSpacing.radiusLarge),
+                    borderSide: BorderSide(color: textMuted.withOpacity(0.2)),
                   ),
                   contentPadding: EdgeInsets.symmetric(
                     horizontal: AppSpacing.lg,
                     vertical: AppSpacing.lg,
                   ),
-                  suffixIcon: canChangeUsername
-                      ? Icon(Icons.edit, color: accentColor, size: 20)
-                      : Icon(Icons.lock, color: Colors.grey, size: 20),
+                  suffixIcon: Icon(
+                    canChangeUsername ? Icons.edit : Icons.lock,
+                    color: canChangeUsername ? accentColor : textMuted,
+                    size: 20,
+                  ),
                 ),
                 validator: (value) {
                   if (value == null || value.trim().isEmpty) {
@@ -493,11 +553,7 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
                     ? 'You can change your username $changesRemaining more time${changesRemaining != 1 ? 's' : ''} this month'
                     : 'Username change limit reached (3/3). Resets next month.',
                 style: AppTypography.captionSmall(context).copyWith(
-                  color: canChangeUsername
-                      ? accentColor
-                      : isDark
-                      ? Colors.orange
-                      : Colors.deepOrange,
+                  color: canChangeUsername ? accentColor : colorScheme.error,
                 ),
               ),
               SizedBox(height: AppSpacing.xl),
@@ -507,7 +563,7 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
                 'Email',
                 style: AppTypography.songTitle(
                   context,
-                ).copyWith(color: textSecondaryColor),
+                ).copyWith(color: textSecondary),
               ),
               SizedBox(height: AppSpacing.sm),
               TextFormField(
@@ -515,27 +571,47 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
                 enabled: canChangeEmail,
                 style: AppTypography.songTitle(
                   context,
-                ).copyWith(color: textPrimaryColor),
+                ).copyWith(color: canChangeEmail ? textPrimary : textDisabled),
                 decoration: InputDecoration(
+                  labelText: 'Email',
+                  labelStyle: TextStyle(
+                    color: canChangeEmail ? textSecondary : textDisabled,
+                  ),
                   hintText: _emailHasBeenChanged
                       ? 'Email already changed (permanent)'
-                      : (canChangeEmail ? 'Email' : 'Email change locked'),
+                      : (canChangeEmail
+                            ? 'Enter your email'
+                            : 'Email change locked'),
                   hintStyle: AppTypography.caption(
                     context,
-                  ).copyWith(color: textMutedColor),
+                  ).copyWith(color: textMuted),
                   filled: true,
                   fillColor: canChangeEmail ? cardColor : surfaceColor,
                   border: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(AppSpacing.radiusLarge),
-                    borderSide: BorderSide.none,
+                    borderSide: BorderSide(color: textMuted),
+                  ),
+                  enabledBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(AppSpacing.radiusLarge),
+                    borderSide: BorderSide(color: textMuted.withOpacity(0.3)),
+                  ),
+                  focusedBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(AppSpacing.radiusLarge),
+                    borderSide: BorderSide(color: accentColor, width: 2),
+                  ),
+                  disabledBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(AppSpacing.radiusLarge),
+                    borderSide: BorderSide(color: textMuted.withOpacity(0.2)),
                   ),
                   contentPadding: EdgeInsets.symmetric(
                     horizontal: AppSpacing.lg,
                     vertical: AppSpacing.lg,
                   ),
-                  suffixIcon: canChangeEmail
-                      ? Icon(Icons.edit, color: accentColor, size: 20)
-                      : Icon(Icons.lock, color: Colors.grey, size: 20),
+                  suffixIcon: Icon(
+                    canChangeEmail ? Icons.edit : Icons.lock,
+                    color: canChangeEmail ? accentColor : textMuted,
+                    size: 20,
+                  ),
                 ),
                 validator: (value) {
                   if (value == null || value.trim().isEmpty) {
@@ -558,8 +634,8 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
                           : 'Email can be changed after 30 days ($daysUntilEmailChange days remaining)'),
                 style: AppTypography.captionSmall(context).copyWith(
                   color: _emailHasBeenChanged
-                      ? Colors.red
-                      : (canChangeEmail ? Colors.blue : Colors.orange),
+                      ? colorScheme.error
+                      : (canChangeEmail ? accentColor : Colors.orange),
                 ),
               ),
               SizedBox(height: AppSpacing.xxl),
@@ -570,20 +646,73 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
                 decoration: BoxDecoration(
                   color: cardColor,
                   borderRadius: BorderRadius.circular(AppSpacing.radiusLarge),
-                  border: Border.all(color: surfaceColor!),
+                  border: Border.all(
+                    color: _showListeningActivity ? accentColor : surfaceColor,
+                    width: _showListeningActivity ? 2 : 1,
+                  ),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withOpacity(0.05),
+                      blurRadius: 8,
+                      offset: const Offset(0, 2),
+                    ),
+                  ],
                 ),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Row(
                       children: [
-                        Icon(Icons.privacy_tip, color: accentColor, size: 24),
+                        Container(
+                          padding: EdgeInsets.all(AppSpacing.sm),
+                          decoration: BoxDecoration(
+                            color: _showListeningActivity
+                                ? accentColor.withOpacity(0.1)
+                                : surfaceColor,
+                            borderRadius: BorderRadius.circular(
+                              AppSpacing.radiusMedium,
+                            ),
+                          ),
+                          child: Icon(
+                            Icons.privacy_tip,
+                            color: _showListeningActivity
+                                ? accentColor
+                                : textMuted,
+                            size: 24,
+                          ),
+                        ),
                         SizedBox(width: AppSpacing.md),
-                        Text(
-                          'Privacy Settings',
-                          style: AppTypography.songTitle(
-                            context,
-                          ).copyWith(color: textPrimaryColor),
+                        Expanded(
+                          child: Text(
+                            'Privacy Settings',
+                            style: AppTypography.songTitle(context).copyWith(
+                              color: textPrimary,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ),
+                        Container(
+                          padding: EdgeInsets.symmetric(
+                            horizontal: AppSpacing.sm,
+                            vertical: AppSpacing.xs,
+                          ),
+                          decoration: BoxDecoration(
+                            color: _showListeningActivity
+                                ? accentColor.withOpacity(0.1)
+                                : surfaceColor,
+                            borderRadius: BorderRadius.circular(
+                              AppSpacing.radiusSmall,
+                            ),
+                          ),
+                          child: Text(
+                            _showListeningActivity ? 'ON' : 'OFF',
+                            style: AppTypography.captionSmall(context).copyWith(
+                              color: _showListeningActivity
+                                  ? accentColor
+                                  : textMuted,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
                         ),
                       ],
                     ),
@@ -596,16 +725,21 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
                             children: [
                               Text(
                                 'Show Listening Activity',
-                                style: AppTypography.songTitle(
-                                  context,
-                                ).copyWith(color: textPrimaryColor),
+                                style: AppTypography.songTitle(context)
+                                    .copyWith(
+                                      color: textPrimary,
+                                      fontWeight: FontWeight.w500,
+                                    ),
                               ),
                               SizedBox(height: AppSpacing.xs),
                               Text(
                                 'Let others see what you\'re currently listening to',
-                                style: AppTypography.captionSmall(
-                                  context,
-                                ).copyWith(color: textMutedColor),
+                                style: AppTypography.captionSmall(context)
+                                    .copyWith(
+                                      color: _showListeningActivity
+                                          ? accentColor
+                                          : textMuted,
+                                    ),
                               ),
                             ],
                           ),
@@ -618,9 +752,42 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
                             });
                           },
                           activeColor: accentColor,
+                          activeTrackColor: accentColor.withOpacity(0.5),
+                          inactiveThumbColor: textMuted,
+                          inactiveTrackColor: surfaceColor,
                         ),
                       ],
                     ),
+                    if (_showListeningActivity) ...[
+                      SizedBox(height: AppSpacing.md),
+                      Container(
+                        padding: EdgeInsets.all(AppSpacing.md),
+                        decoration: BoxDecoration(
+                          color: accentColor.withOpacity(0.1),
+                          borderRadius: BorderRadius.circular(
+                            AppSpacing.radiusMedium,
+                          ),
+                        ),
+                        child: Row(
+                          children: [
+                            Icon(
+                              Icons.info_outline,
+                              size: 16,
+                              color: accentColor,
+                            ),
+                            SizedBox(width: AppSpacing.sm),
+                            Expanded(
+                              child: Text(
+                                'Your friends can see what you\'re listening to in real-time',
+                                style: AppTypography.captionSmall(
+                                  context,
+                                ).copyWith(color: accentColor),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
                   ],
                 ),
               ),
@@ -633,9 +800,7 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
                   color: cardColor,
                   borderRadius: BorderRadius.circular(AppSpacing.radiusLarge),
                   border: Border.all(
-                    color: _isJammerOn
-                        ? (isDark ? Colors.green[700]! : Colors.green[300]!)
-                        : surfaceColor!,
+                    color: _isJammerOn ? Colors.green : surfaceColor,
                     width: _isJammerOn ? 2 : 1,
                   ),
                 ),
@@ -648,9 +813,7 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
                           padding: EdgeInsets.all(AppSpacing.sm),
                           decoration: BoxDecoration(
                             color: _isJammerOn
-                                ? (isDark
-                                      ? Colors.green[900]!.withOpacity(0.3)
-                                      : Colors.green[100])
+                                ? Colors.green.withOpacity(0.1)
                                 : surfaceColor,
                             borderRadius: BorderRadius.circular(
                               AppSpacing.radiusMedium,
@@ -658,11 +821,7 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
                           ),
                           child: Icon(
                             _isJammerOn ? Icons.music_note : Icons.music_off,
-                            color: _isJammerOn
-                                ? (isDark
-                                      ? Colors.green[400]
-                                      : Colors.green[700])
-                                : accentColor,
+                            color: _isJammerOn ? Colors.green : accentColor,
                             size: 24,
                           ),
                         ),
@@ -671,7 +830,7 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
                           child: Text(
                             'Jammer Mode',
                             style: AppTypography.songTitle(context).copyWith(
-                              color: textPrimaryColor,
+                              color: textPrimary,
                               fontWeight: FontWeight.bold,
                             ),
                           ),
@@ -683,12 +842,8 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
                           ),
                           decoration: BoxDecoration(
                             color: _isJammerOn
-                                ? (isDark
-                                      ? Colors.green[900]!.withOpacity(0.5)
-                                      : Colors.green[100])
-                                : (isDark
-                                      ? Colors.grey[800]
-                                      : Colors.grey[200]),
+                                ? Colors.green.withOpacity(0.1)
+                                : surfaceColor,
                             borderRadius: BorderRadius.circular(
                               AppSpacing.radiusSmall,
                             ),
@@ -696,11 +851,7 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
                           child: Text(
                             _isJammerOn ? 'ON' : 'OFF',
                             style: AppTypography.captionSmall(context).copyWith(
-                              color: _isJammerOn
-                                  ? (isDark
-                                        ? Colors.green[400]
-                                        : Colors.green[700])
-                                  : textMutedColor,
+                              color: _isJammerOn ? Colors.green : textMuted,
                               fontWeight: FontWeight.bold,
                             ),
                           ),
@@ -718,20 +869,18 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
                                 'Real-time Activity Sync',
                                 style: AppTypography.songTitle(
                                   context,
-                                ).copyWith(color: textPrimaryColor),
+                                ).copyWith(color: textPrimary),
                               ),
                               SizedBox(height: AppSpacing.xs),
                               Text(
                                 _isJammerOn
-                                    ? '🎵 Now they can'
+                                    ? '🎵 Now they can join your jammer session'
                                     : '🔇 Your Friends cannot invite you to join a jammer session.',
                                 style: AppTypography.captionSmall(context)
                                     .copyWith(
                                       color: _isJammerOn
-                                          ? (isDark
-                                                ? Colors.green[400]
-                                                : Colors.green[700])
-                                          : textMutedColor,
+                                          ? Colors.green
+                                          : textMuted,
                                     ),
                               ),
                             ],
@@ -744,9 +893,10 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
                               _isJammerOn = value;
                             });
                           },
-                          activeColor: isDark
-                              ? Colors.green[400]
-                              : Colors.green[600],
+                          activeColor: Colors.green,
+                          activeTrackColor: Colors.green.withOpacity(0.5),
+                          inactiveThumbColor: textMuted,
+                          inactiveTrackColor: surfaceColor,
                         ),
                       ],
                     ),
@@ -755,9 +905,7 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
                       Container(
                         padding: EdgeInsets.all(AppSpacing.md),
                         decoration: BoxDecoration(
-                          color: isDark
-                              ? Colors.green[900]!.withOpacity(0.2)
-                              : Colors.green[50],
+                          color: Colors.green.withOpacity(0.1),
                           borderRadius: BorderRadius.circular(
                             AppSpacing.radiusMedium,
                           ),
@@ -767,20 +915,15 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
                             Icon(
                               Icons.info_outline,
                               size: 16,
-                              color: isDark
-                                  ? Colors.green[400]
-                                  : Colors.green[700],
+                              color: Colors.green,
                             ),
                             SizedBox(width: AppSpacing.sm),
                             Expanded(
                               child: Text(
                                 'You can also invite your friends into a jammer session.',
-                                style: AppTypography.captionSmall(context)
-                                    .copyWith(
-                                      color: isDark
-                                          ? Colors.green[400]
-                                          : Colors.green[700],
-                                    ),
+                                style: AppTypography.captionSmall(
+                                  context,
+                                ).copyWith(color: Colors.green),
                               ),
                             ),
                           ],
@@ -801,6 +944,8 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
                   style: ElevatedButton.styleFrom(
                     backgroundColor: accentColor,
                     disabledBackgroundColor: surfaceColor,
+                    foregroundColor: Colors.white,
+                    disabledForegroundColor: textDisabled,
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(
                         AppSpacing.radiusLarge,

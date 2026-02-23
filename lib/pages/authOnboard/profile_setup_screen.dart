@@ -11,6 +11,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:lottie/lottie.dart';
 import 'dart:io';
 import 'dart:async';
+import 'package:vibeflow/main.dart' show isMiniplayerVisible; // ADD THIS IMPORT
 
 class ProfileSetupScreen extends ConsumerStatefulWidget {
   final String accessCode;
@@ -85,6 +86,8 @@ class _ProfileSetupScreenState extends ConsumerState<ProfileSetupScreen>
   @override
   void initState() {
     super.initState();
+    isMiniplayerVisible.value = false;
+
     _tabController = TabController(length: 6, vsync: this);
     _tabController.addListener(_handleTabChange);
     _userIdController.addListener(_onUserIdChanged);
@@ -93,6 +96,8 @@ class _ProfileSetupScreenState extends ConsumerState<ProfileSetupScreen>
 
   @override
   void dispose() {
+    // RESTORE MINIPLAYER when this screen closes
+    isMiniplayerVisible.value = true;
     _tabController.dispose();
     _userIdController.dispose();
     _emailController.dispose();
@@ -631,7 +636,7 @@ class _ProfileSetupScreenState extends ConsumerState<ProfileSetupScreen>
             width: MediaQuery.of(context).size.width * 0.85,
             padding: const EdgeInsets.all(24),
             decoration: BoxDecoration(
-              color: AppColors.surface, // or Colors.black.withOpacity(0.9)
+              color: AppColors.surface,
               borderRadius: BorderRadius.circular(AppSpacing.radiusLarge),
             ),
             child: Column(
@@ -648,19 +653,30 @@ class _ProfileSetupScreenState extends ConsumerState<ProfileSetupScreen>
                 const SizedBox(height: 16),
                 Text(
                   'Account Created!',
-                  style: AppTypography.pageTitle(context),
+                  style: AppTypography.pageTitle(context).copyWith(
+                    color: AppColors.textPrimary, // ADD THIS
+                  ),
                   textAlign: TextAlign.center,
                 ),
                 const SizedBox(height: 12),
                 Text(
                   'Your account has been successfully created.',
-                  style: AppTypography.subtitle(context),
+                  style: AppTypography.subtitle(context).copyWith(
+                    color: AppColors.textSecondary, // ADD THIS
+                  ),
                   textAlign: TextAlign.center,
                 ),
                 const SizedBox(height: 8),
                 Text(
                   'Welcome, ${_userIdController.text}!',
-                  style: AppTypography.songTitle(context),
+                  style: AppTypography.songTitle(context).copyWith(
+                    color: const Color.fromARGB(
+                      255,
+                      35,
+                      143,
+                      80,
+                    ), // CHANGE THIS to accent for emphasis
+                  ),
                   textAlign: TextAlign.center,
                 ),
                 const SizedBox(height: 24),
@@ -671,6 +687,21 @@ class _ProfileSetupScreenState extends ConsumerState<ProfileSetupScreen>
                       Navigator.of(context).pop();
                       Navigator.of(context).pushReplacementNamed('/home');
                     },
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color.fromARGB(
+                        255,
+                        39,
+                        53,
+                        176,
+                      ), // ADD THIS
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 16),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(
+                          AppSpacing.radiusMedium,
+                        ),
+                      ),
+                    ),
                     child: Text(
                       'Get Started',
                       style: AppTypography.subtitle(context).copyWith(
@@ -740,13 +771,15 @@ class _ProfileSetupScreenState extends ConsumerState<ProfileSetupScreen>
           Icon(
             Icons.check_circle_outline,
             size: 16,
-            color: AppColors.textSecondary,
+            color: AppColors.textPrimary,
           ), // Updated
           SizedBox(width: AppSpacing.sm), // Updated
           Expanded(
             child: Text(
               text,
-              style: AppTypography.caption(context), // Updated
+              style: AppTypography.caption(context).copyWith(
+                color: AppColors.textSecondary, // Correct way to add color
+              ),
             ),
           ),
         ],
@@ -829,28 +862,43 @@ class _ProfileSetupScreenState extends ConsumerState<ProfileSetupScreen>
                 const SizedBox(height: 20),
                 Text(
                   'Choose Your User ID',
-                  style: AppTypography.pageTitle(context), // Updated
+                  style: AppTypography.pageTitle(context).copyWith(
+                    color: AppColors.textPrimary, // ADD THIS
+                  ),
                   textAlign: TextAlign.center,
                 ),
+
                 SizedBox(height: AppSpacing.sm), // Updated
                 Text(
                   'This will be your unique identifier',
                   textAlign: TextAlign.center,
-                  style: AppTypography.subtitle(context), // Updated
+                  style: AppTypography.subtitle(context).copyWith(
+                    color: AppColors.textSecondary, // ADD THIS
+                  ),
                 ),
 
                 const SizedBox(height: 30),
+                // In _buildUserIdStep():
                 TextFormField(
                   controller: _userIdController,
-                  cursorColor: AppColors.textPrimary, // ADD THIS
-                  style: TextStyle(color: AppColors.textPrimary), // ADD THIS
+                  cursorColor: AppColors.textPrimary,
+                  style: TextStyle(color: AppColors.textPrimary),
                   decoration: InputDecoration(
                     labelText: 'User ID',
+                    labelStyle: TextStyle(
+                      color: AppColors.textSecondary,
+                    ), // ADD THIS
                     hintText: 'e.g., musiclover123',
-                    prefixIcon: const Icon(Icons.alternate_email),
+                    hintStyle: TextStyle(
+                      color: AppColors.textSecondary.withOpacity(0.5),
+                    ), // ADD THIS
+                    prefixIcon: Icon(
+                      Icons.alternate_email,
+                      color: AppColors.textPrimary,
+                    ), // ADD color
                     suffixIcon: _userIdChecking
                         ? Padding(
-                            padding: EdgeInsets.all(AppSpacing.md), // Updated
+                            padding: EdgeInsets.all(AppSpacing.md),
                             child: const SizedBox(
                               width: 20,
                               height: 20,
@@ -858,16 +906,51 @@ class _ProfileSetupScreenState extends ConsumerState<ProfileSetupScreen>
                             ),
                           )
                         : _userIdAvailable
-                        ? Icon(
-                            Icons.check_circle,
-                            color: AppColors.success,
-                          ) // Updated
+                        ? Icon(Icons.check_circle, color: AppColors.success)
                         : null,
                     errorText: _userIdError,
+                    errorStyle: TextStyle(color: AppColors.error), // ADD THIS
                     border: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(
                         AppSpacing.radiusMedium,
-                      ), // Updated
+                      ),
+                      borderSide: BorderSide(
+                        color: AppColors.textSecondary,
+                      ), // ADD THIS
+                    ),
+                    enabledBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(
+                        AppSpacing.radiusMedium,
+                      ),
+                      borderSide: BorderSide(
+                        color: AppColors.textSecondary,
+                      ), // ADD THIS
+                    ),
+                    focusedBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(
+                        AppSpacing.radiusMedium,
+                      ),
+                      borderSide: BorderSide(
+                        color: AppColors.textPrimary,
+                        width: 2,
+                      ), // ADD THIS
+                    ),
+                    errorBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(
+                        AppSpacing.radiusMedium,
+                      ),
+                      borderSide: BorderSide(
+                        color: AppColors.error,
+                      ), // ADD THIS
+                    ),
+                    focusedErrorBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(
+                        AppSpacing.radiusMedium,
+                      ),
+                      borderSide: BorderSide(
+                        color: AppColors.error,
+                        width: 2,
+                      ), // ADD THIS
                     ),
                   ),
                   textInputAction: TextInputAction.done,
@@ -875,9 +958,10 @@ class _ProfileSetupScreenState extends ConsumerState<ProfileSetupScreen>
                 const SizedBox(height: 20),
                 Text(
                   'Requirements:',
-                  style: AppTypography.subtitle(
-                    context,
-                  ).copyWith(fontWeight: FontWeight.bold), // Updated
+                  style: AppTypography.subtitle(context).copyWith(
+                    fontWeight: FontWeight.w400,
+                    color: AppColors.textPrimary, // ADD THIS
+                  ),
                 ),
                 SizedBox(height: AppSpacing.xs),
                 _buildRequirement('3-30 characters'),
@@ -898,7 +982,6 @@ class _ProfileSetupScreenState extends ConsumerState<ProfileSetupScreen>
       builder: (context, constraints) {
         return SingleChildScrollView(
           controller: _scrollController,
-
           padding: const EdgeInsets.all(20.0),
           child: ConstrainedBox(
             constraints: BoxConstraints(minHeight: constraints.maxHeight),
@@ -910,25 +993,37 @@ class _ProfileSetupScreenState extends ConsumerState<ProfileSetupScreen>
                 const SizedBox(height: 20),
                 Text(
                   'Your Email Address',
-                  style: AppTypography.pageTitle(context), // Updated
+                  style: AppTypography.pageTitle(context).copyWith(
+                    color: AppColors.textPrimary, // ADD THIS
+                  ),
                   textAlign: TextAlign.center,
                 ),
-                SizedBox(height: AppSpacing.sm), // Updated
+                SizedBox(height: AppSpacing.sm),
                 Text(
                   'For account recovery and notifications',
                   textAlign: TextAlign.center,
-                  style: AppTypography.subtitle(context), // Updated
+                  style: AppTypography.subtitle(context).copyWith(
+                    color: AppColors.textSecondary, // ADD THIS
+                  ),
                 ),
-
                 const SizedBox(height: 30),
                 TextFormField(
                   controller: _emailController,
-                  cursorColor: AppColors.textPrimary, // ADD THIS
-                  style: TextStyle(color: AppColors.textPrimary), // ADD THIS
+                  cursorColor: AppColors.textPrimary,
+                  style: TextStyle(color: AppColors.textPrimary),
                   decoration: InputDecoration(
                     labelText: 'Email Address',
+                    labelStyle: TextStyle(
+                      color: AppColors.textSecondary,
+                    ), // ADD THIS
                     hintText: 'yourmail@gmail.com',
-                    prefixIcon: const Icon(Icons.email),
+                    hintStyle: TextStyle(
+                      color: AppColors.textSecondary.withOpacity(0.5),
+                    ), // ADD THIS
+                    prefixIcon: Icon(
+                      Icons.email,
+                      color: AppColors.textPrimary,
+                    ), // ADD color
                     suffixIcon: _emailChecking
                         ? const Padding(
                             padding: EdgeInsets.all(12.0),
@@ -942,8 +1037,38 @@ class _ProfileSetupScreenState extends ConsumerState<ProfileSetupScreen>
                         ? const Icon(Icons.check_circle, color: Colors.green)
                         : null,
                     errorText: _emailError,
+                    errorStyle: TextStyle(color: AppColors.error), // ADD THIS
                     border: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(12),
+                      borderSide: BorderSide(
+                        color: AppColors.textSecondary,
+                      ), // ADD THIS
+                    ),
+                    enabledBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide: BorderSide(
+                        color: AppColors.textSecondary,
+                      ), // ADD THIS
+                    ),
+                    focusedBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide: BorderSide(
+                        color: AppColors.textPrimary,
+                        width: 2,
+                      ), // ADD THIS
+                    ),
+                    errorBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide: BorderSide(
+                        color: AppColors.error,
+                      ), // ADD THIS
+                    ),
+                    focusedErrorBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide: BorderSide(
+                        color: AppColors.error,
+                        width: 2,
+                      ), // ADD THIS
                     ),
                   ),
                   keyboardType: TextInputType.emailAddress,
@@ -972,63 +1097,71 @@ class _ProfileSetupScreenState extends ConsumerState<ProfileSetupScreen>
                 Center(child: _buildLottieAnimation(2)),
                 const SizedBox(height: 20),
                 Text(
-                  ' Your Gender',
-                  style: AppTypography.pageTitle(context), // Updated
+                  'Your Gender',
+                  style: AppTypography.pageTitle(
+                    context,
+                  ).copyWith(color: AppColors.textPrimary),
                   textAlign: TextAlign.center,
                 ),
-                SizedBox(height: AppSpacing.sm), // Updated
+                SizedBox(height: AppSpacing.sm),
                 Text(
                   'This helps system personalize your experience',
                   textAlign: TextAlign.center,
-                  style: AppTypography.caption(context), // Updated
+                  style: AppTypography.caption(
+                    context,
+                  ).copyWith(color: AppColors.textSecondary),
                 ),
-
                 const SizedBox(height: 30),
                 ..._genders.map((gender) {
+                  // Define colors based on gender
+                  Color selectedColor = gender == 'Male'
+                      ? Colors.blue
+                      : Colors.pink;
+                  Color unselectedColor = AppColors.textSecondary;
+
                   return Padding(
                     padding: const EdgeInsets.only(bottom: 12.0),
                     child: Card(
                       elevation: 2,
+                      color: AppColors.surface,
                       shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(
                           AppSpacing.radiusMedium,
-                        ), // Updated
+                        ),
                         side: BorderSide(
                           color: _selectedGender == gender
-                              ? AppColors
-                                    .textPrimary // Updated
-                              : Colors.transparent,
+                              ? selectedColor // Use gender-specific color
+                              : AppColors.surfaceLight,
                           width: 2,
                         ),
                       ),
                       child: InkWell(
                         borderRadius: BorderRadius.circular(
                           AppSpacing.radiusMedium,
-                        ), // Updated
+                        ),
                         onTap: () {
                           setState(() {
                             _selectedGender = gender;
                           });
                         },
                         child: Padding(
-                          padding: EdgeInsets.all(AppSpacing.lg), // Updated
+                          padding: EdgeInsets.all(AppSpacing.lg),
                           child: Row(
                             children: [
                               Icon(
                                 gender == 'Male' ? Icons.male : Icons.female,
                                 color: _selectedGender == gender
-                                    ? AppColors
-                                          .textPrimary // Updated
-                                    : AppColors.textSecondary, // Updated
+                                    ? selectedColor // Use gender-specific color
+                                    : unselectedColor,
                                 size: 32,
                               ),
-                              SizedBox(width: AppSpacing.lg), // Updated
+                              SizedBox(width: AppSpacing.lg),
                               Expanded(
                                 child: Text(
                                   gender,
                                   style: AppTypography.songTitle(context)
                                       .copyWith(
-                                        // Updated
+                                        color: AppColors.textPrimary,
                                         fontWeight: _selectedGender == gender
                                             ? FontWeight.bold
                                             : FontWeight.normal,
@@ -1038,7 +1171,8 @@ class _ProfileSetupScreenState extends ConsumerState<ProfileSetupScreen>
                               if (_selectedGender == gender)
                                 Icon(
                                   Icons.check_circle,
-                                  color: AppColors.textPrimary, // Updated
+                                  color:
+                                      selectedColor, // Use gender-specific color
                                 ),
                             ],
                           ),
@@ -1051,9 +1185,10 @@ class _ProfileSetupScreenState extends ConsumerState<ProfileSetupScreen>
                 Text(
                   'You can skip this step',
                   textAlign: TextAlign.center,
-                  style: AppTypography.caption(
-                    context,
-                  ).copyWith(fontStyle: FontStyle.italic), // Updated
+                  style: AppTypography.caption(context).copyWith(
+                    fontStyle: FontStyle.italic,
+                    color: AppColors.textSecondary,
+                  ),
                 ),
               ],
             ),
@@ -1079,14 +1214,18 @@ class _ProfileSetupScreenState extends ConsumerState<ProfileSetupScreen>
                 const SizedBox(height: 20),
                 Text(
                   'Create a Password',
-                  style: AppTypography.pageTitle(context),
+                  style: AppTypography.pageTitle(context).copyWith(
+                    color: AppColors.textPrimary, // ADD THIS
+                  ),
                   textAlign: TextAlign.center,
                 ),
                 SizedBox(height: AppSpacing.sm),
                 Text(
                   'Choose a strong password',
                   textAlign: TextAlign.center,
-                  style: AppTypography.subtitle(context),
+                  style: AppTypography.subtitle(context).copyWith(
+                    color: AppColors.textSecondary, // ADD THIS
+                  ),
                 ),
                 const SizedBox(height: 30),
                 TextFormField(
@@ -1096,6 +1235,10 @@ class _ProfileSetupScreenState extends ConsumerState<ProfileSetupScreen>
                   decoration: InputDecoration(
                     labelText: 'Password',
                     labelStyle: TextStyle(color: AppColors.textSecondary),
+                    hintText: 'Enter your password', // ADD THIS
+                    hintStyle: TextStyle(
+                      color: AppColors.textSecondary.withOpacity(0.5),
+                    ), // ADD THIS
                     prefixIcon: Icon(Icons.lock, color: AppColors.textPrimary),
                     suffixIcon: IconButton(
                       icon: Icon(
@@ -1153,6 +1296,10 @@ class _ProfileSetupScreenState extends ConsumerState<ProfileSetupScreen>
                   decoration: InputDecoration(
                     labelText: 'Confirm Password',
                     labelStyle: TextStyle(color: AppColors.textSecondary),
+                    hintText: 'Re-enter your password', // ADD THIS
+                    hintStyle: TextStyle(
+                      color: AppColors.textSecondary.withOpacity(0.5),
+                    ), // ADD THIS
                     prefixIcon: Icon(
                       Icons.lock_reset,
                       color: AppColors.textPrimary,
@@ -1210,9 +1357,10 @@ class _ProfileSetupScreenState extends ConsumerState<ProfileSetupScreen>
                 const SizedBox(height: 20),
                 Text(
                   'Password Requirements:',
-                  style: AppTypography.subtitle(
-                    context,
-                  ).copyWith(fontWeight: FontWeight.bold),
+                  style: AppTypography.subtitle(context).copyWith(
+                    fontWeight: FontWeight.bold,
+                    color: AppColors.textPrimary, // ADD THIS
+                  ),
                 ),
                 const SizedBox(height: 10),
                 _buildPasswordRequirement(
@@ -1257,15 +1405,19 @@ class _ProfileSetupScreenState extends ConsumerState<ProfileSetupScreen>
                 Center(child: _buildLottieAnimation(4)),
                 const SizedBox(height: 20),
                 Text(
-                  'Profile Picture (Optional)',
-                  style: AppTypography.pageTitle(context), // Updated
+                  'Add Profile Picture',
+                  style: AppTypography.pageTitle(context).copyWith(
+                    color: AppColors.textPrimary, // ADD THIS
+                  ),
                   textAlign: TextAlign.center,
                 ),
-                SizedBox(height: AppSpacing.sm), // Updated
+                SizedBox(height: AppSpacing.sm),
                 Text(
                   'Personalize your account',
                   textAlign: TextAlign.center,
-                  style: AppTypography.caption(context), // Updated
+                  style: AppTypography.caption(context).copyWith(
+                    color: AppColors.textSecondary, // ADD THIS
+                  ),
                 ),
                 const SizedBox(height: 30),
                 Center(
@@ -1297,23 +1449,23 @@ class _ProfileSetupScreenState extends ConsumerState<ProfileSetupScreen>
                                 height: 150,
                                 errorBuilder: (context, error, stackTrace) {
                                   return Container(
-                                    color: Colors.grey.shade200,
+                                    color:
+                                        AppColors.surfaceLight, // CHANGE THIS
                                     child: Icon(
                                       Icons.add_a_photo,
                                       size: 40,
-                                      color: Theme.of(
-                                        context,
-                                      ).colorScheme.primary,
+                                      color:
+                                          AppColors.textPrimary, // CHANGE THIS
                                     ),
                                   );
                                 },
                               )
                             : Container(
-                                color: Colors.grey.shade100,
+                                color: AppColors.surfaceLight, // CHANGE THIS
                                 child: Icon(
                                   Icons.add_a_photo,
                                   size: 40,
-                                  color: Theme.of(context).colorScheme.primary,
+                                  color: AppColors.textPrimary, // CHANGE THIS
                                 ),
                               ),
                       ),
@@ -1342,13 +1494,12 @@ class _ProfileSetupScreenState extends ConsumerState<ProfileSetupScreen>
                         ),
                       ),
                     ),
-
                     ElevatedButton.icon(
                       onPressed: _pickImage,
                       icon: const Icon(Icons.photo_library, size: 20),
                       label: const Text('Gallery'),
                       style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color.fromARGB(255, 53, 39, 176),
+                        backgroundColor: AppColors.accent, // CHANGE THIS
                         foregroundColor: Colors.white,
                         padding: const EdgeInsets.symmetric(
                           horizontal: 16,
@@ -1365,7 +1516,9 @@ class _ProfileSetupScreenState extends ConsumerState<ProfileSetupScreen>
                 Text(
                   'Or choose an avatar:',
                   textAlign: TextAlign.center,
-                  style: AppTypography.songTitle(context), // Updated
+                  style: AppTypography.songTitle(context).copyWith(
+                    color: AppColors.textPrimary, // ADD THIS
+                  ),
                 ),
                 const SizedBox(height: 20),
                 Wrap(
@@ -1389,8 +1542,9 @@ class _ProfileSetupScreenState extends ConsumerState<ProfileSetupScreen>
                           border: Border.all(
                             color: isSelected
                                 ? AppColors
-                                      .textPrimary // Updated
-                                : AppColors.success, // Updated
+                                      .accent // CHANGE THIS from textPrimary to accent
+                                : AppColors
+                                      .surfaceLight, // CHANGE THIS from success to surfaceLight
                             width: isSelected ? 3 : 2,
                           ),
                         ),
@@ -1400,8 +1554,12 @@ class _ProfileSetupScreenState extends ConsumerState<ProfileSetupScreen>
                             fit: BoxFit.cover,
                             errorBuilder: (context, error, stackTrace) {
                               return Container(
-                                color: Colors.grey.shade200,
-                                child: const Icon(Icons.person, size: 40),
+                                color: AppColors.surfaceLight, // CHANGE THIS
+                                child: Icon(
+                                  Icons.person,
+                                  size: 40,
+                                  color: AppColors.textSecondary, // ADD THIS
+                                ),
                               );
                             },
                           ),
@@ -1419,15 +1577,19 @@ class _ProfileSetupScreenState extends ConsumerState<ProfileSetupScreen>
                         _selectedAvatarUrl = null;
                       });
                     },
+                    style: TextButton.styleFrom(
+                      foregroundColor: AppColors.textSecondary, // ADD THIS
+                    ),
                     child: const Text('Remove Selection'),
                   ),
                 const SizedBox(height: 20),
                 Text(
                   'You can change this later',
                   textAlign: TextAlign.center,
-                  style: AppTypography.caption(
-                    context,
-                  ).copyWith(fontStyle: FontStyle.italic), // Updated
+                  style: AppTypography.caption(context).copyWith(
+                    fontStyle: FontStyle.italic,
+                    color: AppColors.textSecondary, // ADD THIS
+                  ),
                 ),
               ],
             ),
@@ -1454,7 +1616,9 @@ class _ProfileSetupScreenState extends ConsumerState<ProfileSetupScreen>
 
                 Text(
                   'One Last Thing',
-                  style: AppTypography.pageTitle(context),
+                  style: AppTypography.pageTitle(context).copyWith(
+                    color: AppColors.textPrimary, // ADD THIS
+                  ),
                   textAlign: TextAlign.center,
                 ),
 
@@ -1462,7 +1626,9 @@ class _ProfileSetupScreenState extends ConsumerState<ProfileSetupScreen>
 
                 Text(
                   'By using Vibeflow, you agree to:',
-                  style: AppTypography.songTitle(context),
+                  style: AppTypography.songTitle(context).copyWith(
+                    color: AppColors.textSecondary, // ADD THIS
+                  ),
                   textAlign: TextAlign.center,
                 ),
 
@@ -1505,7 +1671,7 @@ class _ProfileSetupScreenState extends ConsumerState<ProfileSetupScreen>
                     ),
                     side: BorderSide(
                       color: _termsAccepted
-                          ? AppColors.accent
+                          ? const Color.fromARGB(255, 39, 76, 176)
                           : AppColors.surfaceLight,
                       width: 2,
                     ),
@@ -1526,7 +1692,16 @@ class _ProfileSetupScreenState extends ConsumerState<ProfileSetupScreen>
                         children: [
                           Checkbox(
                             value: _termsAccepted,
-                            activeColor: AppColors.accent,
+                            activeColor: const Color.fromARGB(
+                              255,
+                              39,
+                              103,
+                              176,
+                            ),
+                            checkColor: Colors.white, // ADD THIS
+                            side: BorderSide(
+                              color: AppColors.textSecondary,
+                            ), // ADD THIS
                             onChanged: (value) {
                               setState(() {
                                 _termsAccepted = value ?? false;
@@ -1538,6 +1713,7 @@ class _ProfileSetupScreenState extends ConsumerState<ProfileSetupScreen>
                             child: Text(
                               'I agree to follow these rules',
                               style: AppTypography.subtitle(context).copyWith(
+                                color: AppColors.textPrimary, // ADD THIS
                                 fontWeight: _termsAccepted
                                     ? FontWeight.bold
                                     : FontWeight.normal,
@@ -1566,15 +1742,27 @@ class _ProfileSetupScreenState extends ConsumerState<ProfileSetupScreen>
     );
   }
 
+  // Add this missing method
   Widget _buildSimpleRule(String text) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 14),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Icon(Icons.check_circle, size: 20, color: AppColors.accent),
+          Icon(
+            Icons.check_circle,
+            size: 20,
+            color: const Color.fromARGB(255, 39, 114, 176), // ADD THIS
+          ),
           const SizedBox(width: 12),
-          Expanded(child: Text(text, style: AppTypography.subtitle(context))),
+          Expanded(
+            child: Text(
+              text,
+              style: AppTypography.subtitle(context).copyWith(
+                color: AppColors.textSecondary, // ADD THIS
+              ),
+            ),
+          ),
         ],
       ),
     );

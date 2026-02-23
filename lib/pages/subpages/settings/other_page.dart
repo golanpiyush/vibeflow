@@ -6,6 +6,7 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:vibeflow/constants/theme_colors.dart';
 import 'package:vibeflow/constants/app_spacing.dart';
 import 'package:vibeflow/constants/app_typography.dart';
+import 'package:vibeflow/pages/appearance_page.dart';
 import 'package:vibeflow/pages/subpages/settings/about_page.dart';
 import 'package:vibeflow/pages/subpages/settings/cache_page.dart';
 import 'package:vibeflow/pages/subpages/settings/database_page.dart';
@@ -90,6 +91,7 @@ class _OtherPageState extends ConsumerState<OtherPage> {
     }
   }
 
+  // In _requestBatteryOptimizationExemption method - update the AlertDialog
   Future<void> _requestBatteryOptimizationExemption() async {
     if (!Platform.isAndroid) {
       _showPlatformNotSupportedDialog();
@@ -112,26 +114,40 @@ class _OtherPageState extends ConsumerState<OtherPage> {
         return;
       }
 
-      // Show explanation dialog
+      // Show explanation dialog with theme-aware colors
+      final colorScheme = Theme.of(context).colorScheme;
+
       final shouldProceed = await showDialog<bool>(
         context: context,
         builder: (context) => AlertDialog(
-          title: const Text('Disable Battery Optimization'),
-          content: const Text(
+          backgroundColor: colorScheme.surface,
+          title: Text(
+            'Disable Battery Optimization',
+            style: TextStyle(color: colorScheme.onSurface),
+          ),
+          content: Text(
             'This will allow VibeFlow to run in the background without being killed by the system.\n\n'
             'Required for:\n'
             '• Uninterrupted playback\n'
             '• Persistent notifications\n'
             '• Invincible service\n\n'
             'You will be taken to Android settings to grant this permission.',
+            style: TextStyle(color: colorScheme.onSurface.withOpacity(0.87)),
           ),
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(context, false),
-              child: const Text('Cancel'),
+              child: Text(
+                'Cancel',
+                style: TextStyle(color: colorScheme.primary),
+              ),
             ),
             ElevatedButton(
               onPressed: () => Navigator.pop(context, true),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: colorScheme.primary,
+                foregroundColor: colorScheme.onPrimary,
+              ),
               child: const Text('Continue'),
             ),
           ],
@@ -186,25 +202,37 @@ class _OtherPageState extends ConsumerState<OtherPage> {
     }
   }
 
+  // Update _showOpenSettingsDialog method
   void _showOpenSettingsDialog() {
+    final colorScheme = Theme.of(context).colorScheme;
+
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Open Settings'),
-        content: const Text(
+        backgroundColor: colorScheme.surface,
+        title: Text(
+          'Open Settings',
+          style: TextStyle(color: colorScheme.onSurface),
+        ),
+        content: Text(
           'Battery optimization permission was denied. '
           'Please enable it manually in app settings for best performance.',
+          style: TextStyle(color: colorScheme.onSurface.withOpacity(0.87)),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
-            child: const Text('Cancel'),
+            child: Text('Cancel', style: TextStyle(color: colorScheme.primary)),
           ),
           ElevatedButton(
             onPressed: () {
               Navigator.pop(context);
               openAppSettings();
             },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: colorScheme.primary,
+              foregroundColor: colorScheme.onPrimary,
+            ),
             child: const Text('Open Settings'),
           ),
         ],
@@ -212,52 +240,33 @@ class _OtherPageState extends ConsumerState<OtherPage> {
     );
   }
 
+  // Update _showPlatformNotSupportedDialog method
   void _showPlatformNotSupportedDialog() {
+    final colorScheme = Theme.of(context).colorScheme;
+
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Not Available'),
-        content: const Text(
+        backgroundColor: colorScheme.surface,
+        title: Text(
+          'Not Available',
+          style: TextStyle(color: colorScheme.onSurface),
+        ),
+        content: Text(
           'Battery optimization settings are only available on Android.',
+          style: TextStyle(color: colorScheme.onSurface.withOpacity(0.87)),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
-            child: const Text('OK'),
+            child: Text('OK', style: TextStyle(color: colorScheme.primary)),
           ),
         ],
       ),
     );
   }
 
-  Future<void> _toggleSearchHistoryPause(bool value) async {
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setBool('search_history_paused', value);
-
-      if (!mounted) return;
-
-      setState(() {
-        _isSearchHistoryPaused = value;
-      });
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            value
-                ? 'Search history paused - new searches won\'t be saved'
-                : 'Search history resumed - searches will be saved',
-          ),
-          backgroundColor: value ? Colors.orange : Colors.green,
-          behavior: SnackBarBehavior.floating,
-          duration: const Duration(seconds: 2),
-        ),
-      );
-    } catch (e) {
-      print('❌ Error toggling search history: $e');
-    }
-  }
-
+  // Update _clearSearchHistory method's AlertDialog
   Future<void> _clearSearchHistory() async {
     final colorScheme = Theme.of(context).colorScheme;
 
@@ -275,16 +284,23 @@ class _OtherPageState extends ConsumerState<OtherPage> {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Clear Search History'),
-        content: Text('Delete all $_historyCount search entries?'),
+        backgroundColor: colorScheme.surface,
+        title: Text(
+          'Clear Search History',
+          style: TextStyle(color: colorScheme.onSurface),
+        ),
+        content: Text(
+          'Delete all $_historyCount search entries?',
+          style: TextStyle(color: colorScheme.onSurface.withOpacity(0.87)),
+        ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancel'),
+            child: Text('Cancel', style: TextStyle(color: colorScheme.primary)),
           ),
           TextButton(
             onPressed: () => Navigator.pop(context, true),
-            style: TextButton.styleFrom(foregroundColor: Colors.red),
+            style: TextButton.styleFrom(foregroundColor: colorScheme.error),
             child: const Text('Clear'),
           ),
         ],
@@ -330,24 +346,39 @@ class _OtherPageState extends ConsumerState<OtherPage> {
     }
   }
 
+  // Update _toggleInvincibleService method's AlertDialog
   Future<void> _toggleInvincibleService(bool value) async {
     // Check if battery optimization is disabled first
     if (value && !_isBatteryOptimizationIgnored) {
+      final colorScheme = Theme.of(context).colorScheme;
+
       final shouldRequest = await showDialog<bool>(
         context: context,
         builder: (context) => AlertDialog(
-          title: const Text('Battery Optimization Required'),
-          content: const Text(
+          backgroundColor: colorScheme.surface,
+          title: Text(
+            'Battery Optimization Required',
+            style: TextStyle(color: colorScheme.onSurface),
+          ),
+          content: Text(
             'Invincible service requires battery optimization to be disabled.\n\n'
             'Would you like to disable it now?',
+            style: TextStyle(color: colorScheme.onSurface.withOpacity(0.87)),
           ),
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(context, false),
-              child: const Text('Cancel'),
+              child: Text(
+                'Cancel',
+                style: TextStyle(color: colorScheme.primary),
+              ),
             ),
             ElevatedButton(
               onPressed: () => Navigator.pop(context, true),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: colorScheme.primary,
+                foregroundColor: colorScheme.onPrimary,
+              ),
               child: const Text('Continue'),
             ),
           ],
@@ -396,6 +427,34 @@ class _OtherPageState extends ConsumerState<OtherPage> {
     }
   }
 
+  Future<void> _toggleSearchHistoryPause(bool value) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool('search_history_paused', value);
+
+      if (!mounted) return;
+
+      setState(() {
+        _isSearchHistoryPaused = value;
+      });
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            value
+                ? 'Search history paused - new searches won\'t be saved'
+                : 'Search history resumed - searches will be saved',
+          ),
+          backgroundColor: value ? Colors.orange : Colors.green,
+          behavior: SnackBarBehavior.floating,
+          duration: const Duration(seconds: 2),
+        ),
+      );
+    } catch (e) {
+      print('❌ Error toggling search history: $e');
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     // Use Theme.of(context).colorScheme for proper theme support
@@ -423,7 +482,7 @@ class _OtherPageState extends ConsumerState<OtherPage> {
           const SizedBox(height: AppSpacing.md),
           Text(
             'Remember to enable "Unknown sources" in the Developer Settings of Android Auto.',
-            style: AppTypography.subtitle(
+            style: AppTypography.captionSmall(
               context,
             ).copyWith(color: textSecondaryColor, height: 1.5),
           ),
@@ -488,14 +547,14 @@ class _OtherPageState extends ConsumerState<OtherPage> {
           const SizedBox(height: AppSpacing.md),
           Text(
             'If battery optimizations are applied, the playback notification can suddenly disappear when paused.',
-            style: AppTypography.subtitle(
+            style: AppTypography.captionSmall(
               context,
             ).copyWith(color: warningColor, height: 1.5),
           ),
           const SizedBox(height: AppSpacing.md),
           Text(
             'Since Android 12, disabling battery optimizations is required for the "Invincible service" option to take effect.',
-            style: AppTypography.subtitle(
+            style: AppTypography.caption(
               context,
             ).copyWith(color: textSecondaryColor, height: 1.5),
           ),
@@ -506,7 +565,7 @@ class _OtherPageState extends ConsumerState<OtherPage> {
             context,
             'Ignore battery optimizations',
             _isBatteryOptimizationIgnored
-                ? '✓ Battery optimization disabled'
+                ? '✓ Battery optimizations ignored'
                 : 'Tap to disable background restrictions',
             _requestBatteryOptimizationExemption,
             isSuccess: _isBatteryOptimizationIgnored,
@@ -858,8 +917,8 @@ class _SettingsPageTemplate extends ConsumerWidget {
     Widget page;
     switch (targetIndex) {
       case -1:
-        Navigator.popUntil(context, (route) => route.isFirst);
-        return;
+        page = const AppearancePage();
+        break;
       case 0:
         page = const PlayerSettingsPage();
         break;

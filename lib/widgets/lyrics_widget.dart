@@ -6,6 +6,7 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:vibeflow/constants/app_colors.dart';
 import 'package:vibeflow/services/audio_service.dart';
 import 'package:vibeflow/services/lyrics_service.dart';
+import 'package:vibeflow/utils/theme_provider.dart';
 
 class CenteredLyricsWidget extends ConsumerStatefulWidget {
   final String title;
@@ -562,13 +563,16 @@ class _CenteredLyricsWidgetState extends ConsumerState<CenteredLyricsWidget>
   }
 
   Widget _buildSimpleLine(String text, Color accentColor) {
+    // Get font family from theme provider
+    final fontFamily = ref.watch(fontFamilyProvider);
+
     return TweenAnimationBuilder<double>(
       tween: Tween(begin: 0.0, end: 1.0),
       duration: const Duration(milliseconds: 700),
       curve: Curves.easeOutCubic,
       builder: (context, value, child) {
         return Transform.scale(
-          scale: 0.92 + (0.08 * value),
+          scale: 0.95 + (0.05 * value), // Subtle scale animation
           child: Opacity(
             opacity: value,
             child: Text(
@@ -577,29 +581,18 @@ class _CenteredLyricsWidgetState extends ConsumerState<CenteredLyricsWidget>
               maxLines: 2,
               overflow: TextOverflow.ellipsis,
               style: TextStyle(
+                fontFamily: fontFamily == AppFontFamily.system
+                    ? null
+                    : _getFontFamilyString(fontFamily),
                 color: Colors.white,
-                fontSize: 20,
-                fontWeight: FontWeight.w700,
+                fontSize: 18,
+                fontWeight: FontWeight.w600,
                 height: 1.4,
-                letterSpacing: 0.5,
+                letterSpacing: 0.3,
+                // SIMPLE single shadow
                 shadows: [
                   Shadow(
-                    color: accentColor.withOpacity(0.9 * value),
-                    blurRadius: 30,
-                    offset: const Offset(0, 0),
-                  ),
-                  Shadow(
-                    color: accentColor.withOpacity(0.6 * value),
-                    blurRadius: 50,
-                    offset: const Offset(0, 0),
-                  ),
-                  Shadow(
-                    color: accentColor.withOpacity(0.4 * value),
-                    blurRadius: 70,
-                    offset: const Offset(0, 2),
-                  ),
-                  Shadow(
-                    color: Colors.white.withOpacity(0.3 * value),
+                    color: accentColor.withOpacity(0.3 * value),
                     blurRadius: 15,
                   ),
                 ],
@@ -611,7 +604,10 @@ class _CenteredLyricsWidgetState extends ConsumerState<CenteredLyricsWidget>
     );
   }
 
+  // In _buildWordByWordLine method - SIMPLER STYLE for now-playing line
   Widget _buildWordByWordLine(String text, Color accentColor) {
+    // Get font family from theme provider
+    final fontFamily = ref.watch(fontFamilyProvider);
     final words = text.split(' ');
 
     return RichText(
@@ -621,36 +617,27 @@ class _CenteredLyricsWidgetState extends ConsumerState<CenteredLyricsWidget>
           final isPast = i < _currentWordIndex;
           final isCurrent = i == _currentWordIndex;
 
-          final opacity = isPast
-              ? 0.6
-              : isCurrent
-              ? 1.0
-              : 0.35;
-
           return TextSpan(
             text: '${words[i]} ',
             style: TextStyle(
-              fontSize: 20,
-              fontWeight: isCurrent ? FontWeight.w800 : FontWeight.w500,
-              color: Colors.white.withOpacity(opacity),
+              fontFamily: fontFamily == AppFontFamily.system
+                  ? null
+                  : _getFontFamilyString(fontFamily),
+              fontSize: 18,
+              fontWeight: isCurrent ? FontWeight.w600 : FontWeight.w400,
+              color: isCurrent
+                  ? Colors.white
+                  : Colors.white.withOpacity(isPast ? 0.5 : 0.3),
               height: 1.4,
+              // SIMPLE shadow - only for current word, very subtle
               shadows: isCurrent
                   ? [
                       Shadow(
-                        color: accentColor.withOpacity(0.9),
-                        blurRadius: 28,
-                      ),
-                      Shadow(
-                        color: accentColor.withOpacity(0.6),
-                        blurRadius: 48,
+                        color: accentColor.withOpacity(0.4),
+                        blurRadius: 12,
                       ),
                     ]
-                  : [
-                      Shadow(
-                        color: accentColor.withOpacity(0.15),
-                        blurRadius: 8,
-                      ),
-                    ],
+                  : null, // No shadows for non-current words
             ),
           );
         }),
@@ -700,6 +687,24 @@ class _CenteredLyricsWidgetState extends ConsumerState<CenteredLyricsWidget>
     _fadeAnimations.clear();
 
     super.dispose();
+  }
+}
+
+// Add this helper method at the end of the class
+String _getFontFamilyString(AppFontFamily fontFamily) {
+  switch (fontFamily) {
+    case AppFontFamily.inter:
+      return 'Inter';
+    case AppFontFamily.poppins:
+      return 'Poppins';
+    case AppFontFamily.roboto:
+      return 'Roboto';
+    case AppFontFamily.montserrat:
+      return 'Montserrat';
+    case AppFontFamily.notoSans:
+      return 'NotoSans';
+    case AppFontFamily.system:
+      return '';
   }
 }
 // ============================================================================
@@ -887,6 +892,9 @@ class _CompactLineByLineLyricsState
     // Don't build if disposed
     if (_isDisposed) return const SizedBox.shrink();
 
+    // Get font family from theme provider
+    final fontFamily = ref.watch(fontFamilyProvider);
+
     print(
       '🎤 [CompactLyrics] Building - loading: $_isLoading, lyrics: ${_lyrics.length}, currentLine: $_currentLineIndex',
     );
@@ -897,7 +905,7 @@ class _CompactLineByLineLyricsState
           width: 16,
           height: 16,
           child: CircularProgressIndicator(
-            strokeWidth: 2,
+            strokeWidth: 1,
             valueColor: AlwaysStoppedAnimation<Color>(
               widget.accentColor.withOpacity(0.5),
             ),
@@ -918,16 +926,16 @@ class _CompactLineByLineLyricsState
     final currentLine = _lyrics[_currentLineIndex];
     final text = currentLine['text'] as String;
 
-    // Calculate dynamic font size based on text length
+    // Calculate dynamic font size based on text length (REDUCED by ~2px)
     final textLength = text.length;
     final fontSize = textLength > 50
-        ? 13.0
+        ? 11.0 // REDUCED from 13 to 11
         : textLength > 30
-        ? 14.0
-        : 15.0;
+        ? 12.0 // REDUCED from 14 to 12
+        : 13.0; // REDUCED from 15 to 13
 
     return SizedBox(
-      height: 50, // Reduced height
+      height: 36, // REDUCED from 40 to 36
       child: Center(
         child: AnimatedSwitcher(
           duration: const Duration(milliseconds: 500),
@@ -977,10 +985,14 @@ class _CompactLineByLineLyricsState
               textAlign: TextAlign.center,
               maxLines: 2,
               overflow: TextOverflow.ellipsis,
-              style: GoogleFonts.inter(
+              style: GoogleFonts.getFont(
+                fontFamily == AppFontFamily.system
+                    ? 'Inter'
+                    : _getFontFamilyString(fontFamily),
                 fontSize: fontSize,
-                fontWeight: FontWeight.w600,
-                color: widget.accentColor,
+                fontWeight: FontWeight.w800,
+                // color: widget.accentColor,
+                color: const Color.fromARGB(216, 255, 255, 255),
                 height: 1.3,
                 letterSpacing: 0.1,
                 shadows: [

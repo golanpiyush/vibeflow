@@ -171,11 +171,13 @@ class _ProfilesScreenState extends ConsumerState<ProfilesScreen> {
   Widget build(BuildContext context) {
     final themeData = Theme.of(context);
     final usersAsync = ref.watch(allUsersProvider);
-
+    final colorScheme = Theme.of(context).colorScheme;
+    final textSecondary = colorScheme.onSurface.withOpacity(0.6);
+    final surfaceColor = colorScheme.surface;
+    final accentColor = colorScheme.primary;
     final bgColor = themeData.scaffoldBackgroundColor;
     final textPrimary = themeData.textTheme.bodyLarge?.color ?? Colors.white;
     final cardColor = themeData.cardColor;
-    final accentColor = themeData.primaryColor;
 
     final keyboardOpen = MediaQuery.of(context).viewInsets.bottom > 0;
 
@@ -194,13 +196,32 @@ class _ProfilesScreenState extends ConsumerState<ProfilesScreen> {
                 style: TextStyle(color: textPrimary),
                 decoration: InputDecoration(
                   hintText: 'Search users...',
-                  hintStyle: TextStyle(color: textPrimary.withOpacity(0.5)),
+                  hintStyle: TextStyle(
+                    color: textSecondary.withOpacity(0.5),
+                  ), // CHANGED: Use textSecondary
                   filled: true,
-                  fillColor: cardColor,
-                  prefixIcon: Icon(Icons.search, color: accentColor),
+                  fillColor:
+                      surfaceColor, // CHANGED: Use surfaceColor instead of cardColor
+                  prefixIcon: Icon(
+                    Icons.search,
+                    color:
+                        textSecondary, // CHANGED: Use textSecondary for better visibility
+                  ),
                   border: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(42),
                     borderSide: BorderSide.none,
+                  ),
+                  enabledBorder: OutlineInputBorder(
+                    // ADDED: For better theme consistency
+                    borderRadius: BorderRadius.circular(42),
+                    borderSide: BorderSide(
+                      color: textSecondary.withOpacity(0.2),
+                    ),
+                  ),
+                  focusedBorder: OutlineInputBorder(
+                    // ADDED: For better theme consistency
+                    borderRadius: BorderRadius.circular(42),
+                    borderSide: BorderSide(color: accentColor, width: 2),
                   ),
                 ),
               ),
@@ -328,6 +349,7 @@ class _UserCard extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final themeData = Theme.of(context);
     final colorScheme = themeData.colorScheme;
+    final screenWidth = MediaQuery.of(context).size.width; // ADD THIS
 
     final cardColor = themeData.colorScheme.surface;
     final accentColor = colorScheme.primary;
@@ -416,17 +438,44 @@ class _UserCard extends ConsumerWidget {
           ),
           const SizedBox(width: 12),
 
-          /// USER INFO
+          /// USER INFO WITH DYNAMIC FONT SIZE
           Expanded(
-            child: Text(
-              username,
-              style: themeData.textTheme.bodyLarge?.copyWith(
-                color: textPrimary,
-                fontWeight: FontWeight.bold,
-                fontSize: 16,
-              ),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                // Calculate available width for username
+                // Total width minus profile pic (56px), follow button (approx 100px), and paddings
+                final availableWidth = constraints.maxWidth;
+
+                // Determine font size based on username length and available width
+                double fontSize = 16; // Base font size
+
+                if (username.length > 15) {
+                  // For very long usernames
+                  fontSize = availableWidth > 150 ? 14 : 12;
+                } else if (username.length > 10) {
+                  // For medium length usernames
+                  fontSize = availableWidth > 150 ? 15 : 13;
+                } else {
+                  // For short usernames
+                  fontSize = availableWidth > 150 ? 16 : 14;
+                }
+
+                // Further reduce font size if screen is small
+                if (screenWidth < 360) {
+                  fontSize = fontSize - 2;
+                }
+
+                return Text(
+                  username,
+                  style: themeData.textTheme.bodyLarge?.copyWith(
+                    color: textPrimary,
+                    fontWeight: FontWeight.bold,
+                    fontSize: fontSize, // Use dynamic font size
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                );
+              },
             ),
           ),
 
@@ -439,10 +488,10 @@ class _UserCard extends ConsumerWidget {
                 onPressed: () => onToggleFollow(userId, displayFollowing),
                 style: ElevatedButton.styleFrom(
                   backgroundColor: displayFollowing
-                      ? themeData.colorScheme.surface
+                      ? const Color.fromARGB(255, 19, 48, 21)
                       : accentColor,
                   foregroundColor: displayFollowing
-                      ? colorScheme.onSurface
+                      ? Colors.white
                       : colorScheme.onPrimary,
                   padding: const EdgeInsets.symmetric(
                     horizontal: 20,
@@ -452,12 +501,21 @@ class _UserCard extends ConsumerWidget {
                     borderRadius: BorderRadius.circular(38),
                   ),
                   elevation: 0,
+                  minimumSize: const Size(
+                    80,
+                    36,
+                  ), // ADD THIS: Set minimum button size
                 ),
                 child: Text(
                   displayFollowing ? 'Following' : 'Follow',
                   style: themeData.textTheme.labelLarge?.copyWith(
                     fontWeight: FontWeight.w600,
-                    fontSize: 14,
+                    fontSize: screenWidth < 360
+                        ? 12
+                        : 14, // Dynamic button text size
+                    color: displayFollowing
+                        ? Colors.white
+                        : colorScheme.onPrimary,
                   ),
                 ),
               );
@@ -478,8 +536,16 @@ class _UserCard extends ConsumerWidget {
                   horizontal: 20,
                   vertical: 10,
                 ),
+                minimumSize: const Size(80, 36), // ADD THIS
               ),
-              child: Text('Retry', style: themeData.textTheme.labelLarge),
+              child: Text(
+                'Retry',
+                style: themeData.textTheme.labelLarge?.copyWith(
+                  fontSize: screenWidth < 360
+                      ? 12
+                      : 14, // Dynamic button text size
+                ),
+              ),
             ),
           ),
         ],

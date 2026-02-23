@@ -20,21 +20,21 @@ class AudioServices {
     if (_instance == null) {
       _instance = AudioServices._();
 
-      // ✅ Use existing app icon, avoid androidStopForegroundOnPause crash
+      // ✅ FIXED: Use proper notification icon
       final handler = await audio_service.AudioService.init(
         builder: () => BackgroundAudioHandler(),
         config: audio_service.AudioServiceConfig(
           androidNotificationChannelId: 'com.vibeflow.audio',
           androidNotificationChannelName: 'VibeFlow Music',
-          androidNotificationOngoing: false, // must be false
-          androidNotificationIcon: 'mipmap/ic_launcher', // use app icon
+          androidNotificationOngoing: false,
+          androidNotificationIcon: 'drawable/ic_logo_notification',
           androidShowNotificationBadge: true,
-          androidStopForegroundOnPause: false, // keep notification visible
+          androidStopForegroundOnPause: false,
         ),
       );
 
       _audioHandler = handler;
-      print('✅ [AudioService] Initialized with app icon');
+      print('✅ [AudioService] Initialized with notification icon');
     }
     return _instance!;
   }
@@ -90,6 +90,10 @@ class AudioServices {
     await AudioServices.handler.customAction('set_loop_mode', {
       'loop_mode': loopMode.index,
     });
+  }
+
+  void setCrossfadeEnabled(bool enabled) {
+    AudioServices.handler.setCrossfadeEnabled(enabled);
   }
 
   // ───────── Loop Mode Stream (FIXED) ─────────

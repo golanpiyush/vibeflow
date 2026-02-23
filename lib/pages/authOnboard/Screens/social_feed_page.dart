@@ -6,6 +6,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:vibeflow/api_base/db_actions.dart';
 import 'package:vibeflow/constants/app_spacing.dart';
 import 'package:vibeflow/constants/app_typography.dart';
+import 'package:vibeflow/constants/theme_colors.dart';
 import 'package:vibeflow/database/access_code_service.dart';
 import 'package:vibeflow/database/listening_activity_service.dart';
 import 'package:vibeflow/database/profile_service.dart';
@@ -142,31 +143,14 @@ class SocialScreen extends ConsumerStatefulWidget {
 }
 
 class _SocialScreenState extends ConsumerState<SocialScreen> {
-  Timer? _autoRefreshTimer;
-
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _startAutoRefresh();
-    });
-  }
-
-  void _startAutoRefresh() {
-    _autoRefreshTimer?.cancel();
-
-    _autoRefreshTimer = Timer.periodic(const Duration(seconds: 30), (timer) {
-      final selectedIndex = ref.read(socialSidebarIndexProvider);
-      if (selectedIndex == 0 && mounted) {
-        ref.invalidate(followingActivitiesProvider);
-        ref.invalidate(currentUserLatestActivityProvider);
-      }
-    });
+    // WidgetsBinding.instance.addPostFrameCallback((_) {});
   }
 
   @override
   void dispose() {
-    _autoRefreshTimer?.cancel();
     super.dispose();
   }
 
@@ -340,12 +324,47 @@ class _SocialScreenState extends ConsumerState<SocialScreen> {
     int selectedIndex,
     ThemeData themeData,
   ) {
-    final textColor = themeData.textTheme.bodyLarge?.color ?? Colors.white;
-    final iconColor = themeData.iconTheme.color ?? Colors.white;
+    final colorScheme = themeData.colorScheme;
+    final themeState = ref.watch(themeProvider);
 
-    final pageTitleStyle = AppTypography.pageTitle(
-      context,
-    ).copyWith(color: textColor);
+    // ✅ Get theme-aware colors from providers
+    final backgroundColor = ref.watch(themeBackgroundColorProvider);
+    final textPrimaryColor = ref.watch(themeTextPrimaryColorProvider);
+    final iconColor = ref.watch(themeIconActiveColorProvider);
+
+    // ✅ Determine if we're in pure black mode
+    final bool isPureBlack = themeState.themeType == ThemeType.pureBlack;
+
+    // ✅ Use appropriate colors based on theme type
+    final Color effectiveBackgroundColor = isPureBlack
+        ? Colors
+              .black // Pure black background for pure black mode
+        : colorScheme.surface; // Material You surface for other modes
+
+    final Color effectiveTextColor = isPureBlack
+        ? Colors
+              .white // Pure white for pure black mode
+        : colorScheme.onSurface; // Material You onSurface for other modes
+
+    final Color effectiveIconColor = isPureBlack
+        ? Colors.white.withOpacity(0.9) // Bright white with slight opacity
+        : colorScheme.onSurface; // Material You onSurface
+
+    final Color effectiveBorderColor = isPureBlack
+        ? Colors.white.withOpacity(0.15) // Subtle white border for pure black
+        : colorScheme.onSurface.withOpacity(0.12); // Theme-aware border
+
+    // ✅ Use theme-aware typography
+    final pageTitleStyle =
+        themeData.textTheme.titleLarge?.copyWith(
+          color: effectiveTextColor,
+          fontWeight: FontWeight.w600,
+        ) ??
+        TextStyle(
+          color: effectiveTextColor,
+          fontSize: 20,
+          fontWeight: FontWeight.w600,
+        );
 
     String pageTitle = '';
     switch (selectedIndex) {
@@ -362,59 +381,115 @@ class _SocialScreenState extends ConsumerState<SocialScreen> {
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-      color: themeData.scaffoldBackgroundColor,
-      child: Row(
-        children: [
-          IconButton(
-            onPressed: () => Navigator.of(context).pop(),
-            icon: Icon(Icons.arrow_back, color: iconColor, size: 28),
-          ),
-          const Spacer(),
-          if (selectedIndex == 0)
+      decoration: BoxDecoration(
+        color: effectiveBackgroundColor,
+        border: Border(
+          bottom: BorderSide(color: effectiveBorderColor, width: 0.5),
+        ),
+      ),
+      child: SafeArea(
+        bottom: false,
+        child: Row(
+          children: [
+            // Back button
             IconButton(
-              onPressed: () async {
-                try {
-                  final supabase = Supabase.instance.client;
-                  final cutoffTime = DateTime.now().toUtc().subtract(
-                    const Duration(minutes: 5),
-                  );
-
-                  await supabase
-                      .from('listening_activity')
-                      .update({
-                        'is_currently_playing': false,
-                        'current_position_ms': 0,
-                      })
-                      .eq('is_currently_playing', true)
-                      .lt('played_at', cutoffTime.toIso8601String());
-
-                  ref.invalidate(followingActivitiesProvider);
-                  ref.invalidate(currentUserLatestActivityProvider);
-
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                      content: Text('Cleaned up stale activities'),
-                      duration: Duration(seconds: 2),
-                    ),
-                  );
-                } catch (e) {
-                  print('Error cleaning activities: $e');
-                }
-              },
-              icon: Icon(Icons.cleaning_services, color: iconColor, size: 24),
-              tooltip: 'Cleanup',
+              onPressed: () => Navigator.of(context).pop(),
+              icon: Icon(Icons.arrow_back, color: effectiveIconColor, size: 28),
+              tooltip: 'Back',
             ),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Text(
-              pageTitle,
-              style: pageTitleStyle,
-              textAlign: TextAlign.right,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
+            const Spacer(),
+
+            // Cleanup button (only on Friends Activity page)
+            if (selectedIndex == 0)
+              IconButton(
+                onPressed: () async {
+                  try {
+                    final supabase = Supabase.instance.client;
+                    final cutoffTime = DateTime.now().toUtc().subtract(
+                      const Duration(minutes: 5),
+                    );
+
+                    await supabase
+                        .from('listening_activity')
+                        .update({
+                          'is_currently_playing': false,
+                          'current_position_ms': 0,
+                        })
+                        .eq('is_currently_playing', true)
+                        .lt('played_at', cutoffTime.toIso8601String());
+
+                    ref.invalidate(followingActivitiesProvider);
+                    ref.invalidate(currentUserLatestActivityProvider);
+
+                    // ✅ Theme-aware snackbar
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text(
+                          'Cleaned up stale activities',
+                          style: TextStyle(
+                            color: isPureBlack
+                                ? Colors.white
+                                : colorScheme.onSurface,
+                          ),
+                        ),
+                        backgroundColor: isPureBlack
+                            ? const Color(
+                                0xFF1A1A1A,
+                              ) // Dark gray for pure black
+                            : colorScheme.surfaceContainerHighest,
+                        behavior: SnackBarBehavior.floating,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                      ),
+                    );
+                  } catch (e) {
+                    print('Error cleaning activities: $e');
+
+                    // ✅ Error snackbar
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text(
+                          'Failed to cleanup activities',
+                          style: TextStyle(
+                            color: isPureBlack
+                                ? Colors.white
+                                : colorScheme.onError,
+                          ),
+                        ),
+                        backgroundColor: colorScheme.error,
+                        behavior: SnackBarBehavior.floating,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                      ),
+                    );
+                  }
+                },
+                icon: Icon(
+                  Icons.cleaning_services_rounded,
+                  color: isPureBlack
+                      ? Colors.white.withOpacity(0.7)
+                      : colorScheme.onSurface.withOpacity(0.7),
+                  size: 24,
+                ),
+                tooltip: 'Cleanup stale activities',
+              ),
+
+            const SizedBox(width: 8),
+
+            // Page title
+            Expanded(
+              child: Text(
+                pageTitle,
+                style: pageTitleStyle,
+                textAlign: TextAlign.right,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -452,12 +527,145 @@ final userListeningActivityEnabledProvider = StreamProvider<bool>((ref) {
       });
 });
 
+// ADD this new realtime provider (replace followingActivitiesProvider usage)
+final realtimeFollowingActivitiesProvider = StreamProvider<List<ListeningActivity>>((
+  ref,
+) {
+  final currentUser = ref.watch(currentUserProvider);
+  if (currentUser == null) return Stream.value([]);
+
+  final supabase = ref.watch(supabaseClientProvider);
+  final controller = StreamController<List<ListeningActivity>>();
+  bool isDisposed = false;
+  RealtimeChannel? channel;
+
+  Future<void> loadActivities() async {
+    if (isDisposed || controller.isClosed) return;
+    try {
+      print('🔍 [Realtime] Loading for user: ${currentUser.id}');
+
+      // First check if user has follows at all
+      final followsCheck = await supabase
+          .from('user_follows')
+          .select('followed_id')
+          .eq('follower_id', currentUser.id);
+
+      print('👥 [Realtime] Follows count: ${(followsCheck as List).length}');
+      print('👥 [Realtime] Follows: $followsCheck');
+
+      if ((followsCheck as List).isEmpty) {
+        print('⚠️ [Realtime] No follows found!');
+        if (!isDisposed && !controller.isClosed) controller.add([]);
+        return;
+      }
+
+      final followedIds = (followsCheck as List)
+          .map((f) => f['followed_id'] as String)
+          .toList();
+
+      print('👥 [Realtime] Following IDs: $followedIds');
+
+      // Direct query instead of RPC
+      final response = await supabase
+          .from('listening_activity')
+          .select('*, profiles!user_id(userid, profile_pic_url)')
+          .inFilter('user_id', followedIds)
+          .order('played_at', ascending: false)
+          .limit(50);
+
+      print('📊 [Realtime] Raw response count: ${(response as List).length}');
+      print(
+        '📊 [Realtime] First item: ${response.isNotEmpty ? response.first : "empty"}',
+      );
+
+      final activities = <ListeningActivity>[];
+      for (final item in response as List) {
+        try {
+          final jsonData = Map<String, dynamic>.from(item as Map);
+
+          // Extract joined profile data
+          final profileData = jsonData['profiles'] as Map<String, dynamic>?;
+          jsonData['username'] = profileData?['userid'] ?? 'Unknown';
+          jsonData['profile_pic'] = profileData?['profile_pic_url'];
+          jsonData.remove('profiles');
+
+          if (jsonData['played_at'] is String) {
+            jsonData['played_at'] = DateTime.parse(
+              jsonData['played_at'] as String,
+            ).toUtc().toIso8601String();
+          }
+
+          // Ensure required fields have defaults
+          jsonData['is_currently_playing'] ??= false;
+          jsonData['current_position_ms'] ??= 0;
+
+          print(
+            '✅ [Realtime] Parsed: ${jsonData['song_title']} by ${jsonData['username']}',
+          );
+          activities.add(ListeningActivity.fromMap(jsonData));
+        } catch (e) {
+          print('⚠️ Error parsing activity item: $e');
+          print('   Item was: $item');
+        }
+      }
+
+      print('✅ [Realtime] Total activities loaded: ${activities.length}');
+      if (!isDisposed && !controller.isClosed) controller.add(activities);
+    } catch (e, stack) {
+      print('❌ Error loading activities: $e');
+      print('   Stack: ${stack.toString().split('\n').take(5).join('\n')}');
+      if (!isDisposed && !controller.isClosed) controller.add([]);
+    }
+  }
+
+  // Initial load
+  WidgetsBinding.instance.addPostFrameCallback((_) {
+    if (!isDisposed) loadActivities();
+  });
+
+  // Realtime: fires on any change to listening_activity
+  channel = supabase
+      .channel('following_activities_live_${currentUser.id}')
+      .onPostgresChanges(
+        event: PostgresChangeEvent.all,
+        schema: 'public',
+        table: 'listening_activity',
+        callback: (payload) async {
+          if (isDisposed) return;
+          print('🔴 [Realtime] Activity changed, refreshing feed...');
+          await loadActivities();
+        },
+      )
+      .subscribe((status, [error]) {
+        print('📡 [Realtime] Subscription status: $status');
+        if (error != null) print('❌ [Realtime] Error: $error');
+      });
+
+  ref.onDispose(() {
+    isDisposed = true;
+    try {
+      channel?.unsubscribe();
+    } catch (e) {}
+    if (!controller.isClosed) {
+      try {
+        controller.close();
+      } catch (e) {}
+    }
+  });
+
+  return controller.stream;
+});
+
 class _FriendsActivityContent extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final themeData = Theme.of(context);
+    final colorScheme = themeData.colorScheme;
 
-    final activitiesAsync = ref.watch(followingActivitiesProvider);
+    // Use ref.watch to listen to providers
+    final activitiesAsync = ref.watch(realtimeFollowingActivitiesProvider);
+    // final activitiesAsync = ref.watch(followingActivitiesProvider);
+
     final currentUserActivityAsync = ref.watch(
       currentUserLatestActivityProvider,
     );
@@ -466,10 +674,12 @@ class _FriendsActivityContent extends ConsumerWidget {
     );
     final currentUser = ref.watch(currentUserProvider);
 
-    final textPrimary = themeData.textTheme.bodyLarge?.color ?? Colors.white;
-    final textSecondary =
-        themeData.textTheme.bodyMedium?.color ?? Colors.white70;
-    final primaryColor = themeData.primaryColor;
+    // Use colorScheme for all colors
+    final textPrimary = colorScheme.onSurface;
+    final textSecondary = colorScheme.onSurface.withOpacity(0.6);
+    final primaryColor = colorScheme.primary;
+    final surfaceColor = colorScheme.surface;
+    final errorColor = colorScheme.error;
 
     return listeningActivityEnabledAsync.when(
       data: (isListeningActivityEnabled) {
@@ -524,7 +734,7 @@ class _FriendsActivityContent extends ConsumerWidget {
                             'Your activity is also hidden from friends',
                             style: AppTypography.caption(
                               context,
-                            ).copyWith(color: textPrimary, fontSize: 12),
+                            ).copyWith(color: textSecondary, fontSize: 12),
                           ),
                         ),
                       ],
@@ -551,6 +761,8 @@ class _FriendsActivityContent extends ConsumerWidget {
                 ref.invalidate(currentUserLatestActivityProvider);
                 await Future.delayed(const Duration(milliseconds: 500));
               },
+              color: primaryColor,
+              backgroundColor: surfaceColor,
               child: CustomScrollView(
                 slivers: [
                   SliverToBoxAdapter(
@@ -720,18 +932,18 @@ class _FriendsActivityContent extends ConsumerWidget {
                         child: Container(
                           padding: const EdgeInsets.all(16),
                           decoration: BoxDecoration(
-                            color: Colors.red.withOpacity(0.1),
+                            color: errorColor.withOpacity(0.1),
                             borderRadius: BorderRadius.circular(12),
                             border: Border.all(
-                              color: Colors.red.withOpacity(0.3),
+                              color: errorColor.withOpacity(0.3),
                               width: 1,
                             ),
                           ),
                           child: Row(
                             children: [
-                              const Icon(
+                              Icon(
                                 Icons.error_outline,
-                                color: Colors.red,
+                                color: errorColor,
                                 size: 24,
                               ),
                               const SizedBox(width: 12),
@@ -740,7 +952,7 @@ class _FriendsActivityContent extends ConsumerWidget {
                                   'Could not load your activity',
                                   style: AppTypography.caption(
                                     context,
-                                  ).copyWith(color: textPrimary),
+                                  ).copyWith(color: textSecondary),
                                 ),
                               ),
                             ],
@@ -760,7 +972,7 @@ class _FriendsActivityContent extends ConsumerWidget {
                       child: Text(
                         'Friends Activity',
                         style: AppTypography.caption(context).copyWith(
-                          color: textSecondary,
+                          color: textPrimary,
                           fontSize: 11,
                           fontWeight: FontWeight.w600,
                           letterSpacing: 0.5,
@@ -820,8 +1032,12 @@ class _FriendsActivityContent extends ConsumerWidget {
               ),
             );
           },
-          loading: () =>
-              Center(child: CircularProgressIndicator(color: primaryColor)),
+          loading: () => Center(
+            child: CircularProgressIndicator(
+              color: primaryColor,
+              backgroundColor: surfaceColor,
+            ),
+          ),
           error: (error, stack) {
             return Center(
               child: Column(
@@ -858,6 +1074,10 @@ class _FriendsActivityContent extends ConsumerWidget {
                     },
                     icon: const Icon(Icons.refresh),
                     label: const Text('Retry'),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: primaryColor,
+                      foregroundColor: colorScheme.onPrimary,
+                    ),
                   ),
                 ],
               ),
@@ -865,8 +1085,12 @@ class _FriendsActivityContent extends ConsumerWidget {
           },
         );
       },
-      loading: () =>
-          Center(child: CircularProgressIndicator(color: primaryColor)),
+      loading: () => Center(
+        child: CircularProgressIndicator(
+          color: primaryColor,
+          backgroundColor: surfaceColor,
+        ),
+      ),
       error: (error, stack) => Center(
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
@@ -967,6 +1191,25 @@ class _ActivityCardState extends State<_ActivityCard> {
     }
   }
 
+  // Helper to calculate dynamic font size based on text length
+  double _getDynamicTitleFontSize(String text) {
+    if (text.length > 30) return 13.0;
+    if (text.length > 20) return 14.0;
+    return 15.0;
+  }
+
+  double _getDynamicArtistFontSize(String text) {
+    if (text.length > 40) return 10.0;
+    if (text.length > 30) return 11.0;
+    return 12.0;
+  }
+
+  double _getDynamicUsernameFontSize(String text) {
+    if (text.length > 15) return 11.0;
+    if (text.length > 10) return 12.0;
+    return 13.0;
+  }
+
   @override
   Widget build(BuildContext context) {
     final themeData = Theme.of(context);
@@ -974,13 +1217,22 @@ class _ActivityCardState extends State<_ActivityCard> {
     final statusText = _getStatusText();
     final artists = widget.activity.songArtists.join(', ');
 
-    final cardBg = themeData.cardColor;
+    // Use colorScheme for all colors
+    final cardBg = colorScheme.surface;
     final textPrimary = colorScheme.onSurface;
     final textSecondary = colorScheme.onSurface.withOpacity(0.6);
     final primaryColor = colorScheme.primary;
+    final surfaceColor = colorScheme.surface;
     final thumbnailRadius = widget.ref.watch(thumbnailRadiusProvider);
 
     final progressPercentage = widget.activity.realtimeProgressPercentage;
+
+    // Calculate dynamic font sizes
+    final titleFontSize = _getDynamicTitleFontSize(widget.activity.songTitle);
+    final artistFontSize = _getDynamicArtistFontSize(artists);
+    final usernameFontSize = _getDynamicUsernameFontSize(
+      widget.activity.username,
+    );
 
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
@@ -1005,12 +1257,15 @@ class _ActivityCardState extends State<_ActivityCard> {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.center,
         children: [
+          // Profile picture with status indicator
           Stack(
             children: [
               ClipOval(
                 child:
                     widget.activity.profilePic != null &&
-                        widget.activity.profilePic!.isNotEmpty
+                        widget.activity.profilePic!.isNotEmpty &&
+                        (widget.activity.profilePic!.startsWith('http://') ||
+                            widget.activity.profilePic!.startsWith('https://'))
                     ? Image.network(
                         widget.activity.profilePic!,
                         width: 36,
@@ -1019,7 +1274,7 @@ class _ActivityCardState extends State<_ActivityCard> {
                         errorBuilder: (_, __, ___) => Container(
                           width: 36,
                           height: 36,
-                          color: colorScheme.surface,
+                          color: surfaceColor,
                           child: Icon(
                             Icons.person,
                             color: textSecondary,
@@ -1030,7 +1285,7 @@ class _ActivityCardState extends State<_ActivityCard> {
                     : Container(
                         width: 36,
                         height: 36,
-                        color: colorScheme.surface,
+                        color: surfaceColor,
                         child: Icon(
                           Icons.person,
                           color: textSecondary,
@@ -1055,11 +1310,15 @@ class _ActivityCardState extends State<_ActivityCard> {
             ],
           ),
           const SizedBox(width: 12),
+
+          // Album thumbnail with progress bar overlay
           ClipRRect(
             borderRadius: BorderRadius.circular(54 * thumbnailRadius),
             child:
                 widget.activity.songThumbnail != null &&
-                    widget.activity.songThumbnail!.isNotEmpty
+                    widget.activity.songThumbnail!.isNotEmpty &&
+                    (widget.activity.songThumbnail!.startsWith('http://') ||
+                        widget.activity.songThumbnail!.startsWith('https://'))
                 ? Stack(
                     children: [
                       Image.network(
@@ -1070,7 +1329,7 @@ class _ActivityCardState extends State<_ActivityCard> {
                         errorBuilder: (_, __, ___) => Container(
                           width: 54,
                           height: 54,
-                          color: themeData.colorScheme.surface,
+                          color: surfaceColor,
                           child: Icon(
                             Icons.music_note,
                             color: textSecondary,
@@ -1097,7 +1356,7 @@ class _ActivityCardState extends State<_ActivityCard> {
                 : Container(
                     width: 54,
                     height: 54,
-                    color: themeData.colorScheme.surface,
+                    color: surfaceColor,
                     child: Icon(
                       Icons.music_note,
                       color: textSecondary,
@@ -1106,174 +1365,248 @@ class _ActivityCardState extends State<_ActivityCard> {
                   ),
           ),
           const SizedBox(width: 12),
+
+          // Text content - UPDATED with online/offline badge in top right corner
           Expanded(
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Row(
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                return Stack(
+                  clipBehavior: Clip.none,
                   children: [
-                    Expanded(
-                      child: Text(
-                        widget.activity.username,
-                        style:
-                            themeData.textTheme.labelSmall?.copyWith(
-                              fontWeight: FontWeight.w600,
-                              color: textPrimary,
-                              fontSize: 13,
-                            ) ??
-                            AppTypography.caption(context).copyWith(
-                              fontWeight: FontWeight.w600,
-                              color: textPrimary,
-                              fontSize: 13,
+                    // Main content column
+                    Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        // Username
+                        Row(
+                          children: [
+                            Flexible(
+                              child: Text(
+                                widget.activity.username,
+                                style:
+                                    themeData.textTheme.labelSmall?.copyWith(
+                                      fontWeight: FontWeight.w600,
+                                      color: textPrimary,
+                                      fontSize: usernameFontSize,
+                                    ) ??
+                                    AppTypography.caption(context).copyWith(
+                                      fontWeight: FontWeight.w600,
+                                      color: textPrimary,
+                                      fontSize: usernameFontSize,
+                                    ),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
                             ),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
+                          ],
+                        ),
+
+                        const SizedBox(height: 4),
+
+                        // Song title with dynamic font size
+                        Text(
+                          widget.activity.songTitle,
+                          style:
+                              themeData.textTheme.bodyLarge?.copyWith(
+                                fontWeight: FontWeight.w600,
+                                color: textPrimary,
+                                fontSize: titleFontSize,
+                              ) ??
+                              AppTypography.songTitle(context).copyWith(
+                                fontWeight: FontWeight.w600,
+                                color: textPrimary,
+                                fontSize: titleFontSize,
+                              ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+
+                        const SizedBox(height: 2),
+
+                        // Artist names and timestamp
+                        Row(
+                          children: [
+                            // Artist names with dynamic font size
+                            Flexible(
+                              child: Text(
+                                artists,
+                                style:
+                                    themeData.textTheme.bodySmall?.copyWith(
+                                      color: textSecondary,
+                                      fontSize: artistFontSize,
+                                    ) ??
+                                    AppTypography.caption(context).copyWith(
+                                      color: textSecondary,
+                                      fontSize: artistFontSize,
+                                    ),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+
+                            // Only show separator if artist exists
+                            if (artists.isNotEmpty)
+                              Padding(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 4,
+                                ),
+                                child: Text(
+                                  '•',
+                                  style:
+                                      themeData.textTheme.labelSmall?.copyWith(
+                                        color: textSecondary,
+                                        fontSize: 11,
+                                      ) ??
+                                      AppTypography.caption(context).copyWith(
+                                        color: textSecondary,
+                                        fontSize: 11,
+                                      ),
+                                ),
+                              ),
+
+                            // Status text with dynamic sizing
+                            Flexible(
+                              child: Text(
+                                statusText,
+                                style:
+                                    themeData.textTheme.labelSmall?.copyWith(
+                                      color: widget.activity.isCurrentlyPlaying
+                                          ? Colors.green
+                                          : textSecondary,
+                                      fontSize:
+                                          widget.activity.isCurrentlyPlaying
+                                          ? 10
+                                          : 11,
+                                      fontWeight:
+                                          widget.activity.isCurrentlyPlaying
+                                          ? FontWeight.w600
+                                          : FontWeight.normal,
+                                    ) ??
+                                    AppTypography.caption(context).copyWith(
+                                      color: widget.activity.isCurrentlyPlaying
+                                          ? Colors.green
+                                          : textSecondary,
+                                      fontSize:
+                                          widget.activity.isCurrentlyPlaying
+                                          ? 10
+                                          : 11,
+                                      fontWeight:
+                                          widget.activity.isCurrentlyPlaying
+                                          ? FontWeight.w600
+                                          : FontWeight.normal,
+                                    ),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                          ],
+                        ),
+
+                        // Progress bar for currently playing songs
+                        if (widget.activity.isCurrentlyPlaying &&
+                            widget.activity.durationMs > 0)
+                          Column(
+                            children: [
+                              const SizedBox(height: 8),
+                              LinearProgressIndicator(
+                                value: progressPercentage,
+                                backgroundColor: textSecondary.withOpacity(0.1),
+                                valueColor: AlwaysStoppedAnimation<Color>(
+                                  primaryColor,
+                                ),
+                                minHeight: 3,
+                                borderRadius: BorderRadius.circular(1.5),
+                              ),
+                              const SizedBox(height: 4),
+                              Row(
+                                mainAxisAlignment:
+                                    MainAxisAlignment.spaceBetween,
+                                children: [
+                                  Text(
+                                    _formatDuration(
+                                      widget.activity.realtimeCurrentPositionMs,
+                                    ),
+                                    style:
+                                        themeData.textTheme.labelSmall
+                                            ?.copyWith(
+                                              color: textSecondary,
+                                              fontSize: 9,
+                                            ) ??
+                                        AppTypography.caption(context).copyWith(
+                                          color: textSecondary,
+                                          fontSize: 9,
+                                        ),
+                                  ),
+                                  Text(
+                                    _formatDuration(widget.activity.durationMs),
+                                    style:
+                                        themeData.textTheme.labelSmall
+                                            ?.copyWith(
+                                              color: textSecondary,
+                                              fontSize: 9,
+                                            ) ??
+                                        AppTypography.caption(context).copyWith(
+                                          color: textSecondary,
+                                          fontSize: 9,
+                                        ),
+                                  ),
+                                ],
+                              ),
+                            ],
+                          ),
+                      ],
                     ),
-                    const SizedBox(width: 8),
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 8,
-                        vertical: 3,
-                      ),
-                      decoration: BoxDecoration(
-                        color: widget.activity.isCurrentlyPlaying
-                            ? Colors.green.withOpacity(0.2)
-                            : textSecondary.withOpacity(0.1),
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child: Text(
-                        widget.activity.isCurrentlyPlaying ? 'LIVE' : 'OFFLINE',
-                        style:
-                            themeData.textTheme.labelSmall?.copyWith(
-                              color: widget.activity.isCurrentlyPlaying
-                                  ? Colors.green
-                                  : textSecondary,
-                              fontSize: 10,
-                              fontWeight: FontWeight.w700,
-                              letterSpacing: 0.5,
-                            ) ??
-                            AppTypography.caption(context).copyWith(
-                              color: widget.activity.isCurrentlyPlaying
-                                  ? Colors.green
-                                  : textSecondary,
-                              fontSize: 10,
-                              fontWeight: FontWeight.w700,
-                              letterSpacing: 0.5,
-                            ),
+
+                    // ONLINE/OFFLINE BADGE - Positioned in top right corner
+                    Positioned(
+                      top: -4,
+                      right: -8,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 3,
+                        ),
+                        decoration: BoxDecoration(
+                          color: widget.activity.isCurrentlyPlaying
+                              ? Colors.green.withOpacity(0.2)
+                              : textSecondary.withOpacity(0.1),
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(
+                            color: widget.activity.isCurrentlyPlaying
+                                ? Colors.green.withOpacity(0.3)
+                                : textSecondary.withOpacity(0.2),
+                            width: 1,
+                          ),
+                        ),
+                        child: Text(
+                          widget.activity.isCurrentlyPlaying
+                              ? 'LIVE'
+                              : 'OFFLINE',
+                          style:
+                              themeData.textTheme.labelSmall?.copyWith(
+                                color: widget.activity.isCurrentlyPlaying
+                                    ? Colors.green
+                                    : textSecondary,
+                                fontSize: 9,
+                                fontWeight: FontWeight.w700,
+                                letterSpacing: 0.5,
+                              ) ??
+                              AppTypography.caption(context).copyWith(
+                                color: widget.activity.isCurrentlyPlaying
+                                    ? Colors.green
+                                    : textSecondary,
+                                fontSize: 9,
+                                fontWeight: FontWeight.w700,
+                                letterSpacing: 0.5,
+                              ),
+                        ),
                       ),
                     ),
                   ],
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  widget.activity.songTitle,
-                  style:
-                      themeData.textTheme.bodyLarge?.copyWith(
-                        fontWeight: FontWeight.w600,
-                        color: textPrimary,
-                        fontSize: 15,
-                      ) ??
-                      AppTypography.songTitle(context).copyWith(
-                        fontWeight: FontWeight.w600,
-                        color: textPrimary,
-                        fontSize: 15,
-                      ),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-                const SizedBox(height: 2),
-                Row(
-                  children: [
-                    Expanded(
-                      child: Text(
-                        artists,
-                        style:
-                            themeData.textTheme.bodySmall?.copyWith(
-                              color: textSecondary,
-                              fontSize: 12,
-                            ) ??
-                            AppTypography.caption(
-                              context,
-                            ).copyWith(color: textSecondary, fontSize: 12),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Text(
-                      '• $statusText',
-                      style:
-                          themeData.textTheme.labelSmall?.copyWith(
-                            color: widget.activity.isCurrentlyPlaying
-                                ? Colors.green
-                                : textSecondary,
-                            fontSize: 11,
-                            fontWeight: widget.activity.isCurrentlyPlaying
-                                ? FontWeight.w600
-                                : FontWeight.normal,
-                          ) ??
-                          AppTypography.caption(context).copyWith(
-                            color: widget.activity.isCurrentlyPlaying
-                                ? Colors.green
-                                : textSecondary,
-                            fontSize: 11,
-                            fontWeight: widget.activity.isCurrentlyPlaying
-                                ? FontWeight.w600
-                                : FontWeight.normal,
-                          ),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ],
-                ),
-                if (widget.activity.isCurrentlyPlaying &&
-                    widget.activity.durationMs > 0)
-                  Column(
-                    children: [
-                      const SizedBox(height: 8),
-                      LinearProgressIndicator(
-                        value: progressPercentage,
-                        backgroundColor: textSecondary.withOpacity(0.1),
-                        valueColor: AlwaysStoppedAnimation<Color>(primaryColor),
-                        minHeight: 3,
-                        borderRadius: BorderRadius.circular(1.5),
-                      ),
-                      const SizedBox(height: 4),
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          Text(
-                            _formatDuration(
-                              widget.activity.realtimeCurrentPositionMs,
-                            ),
-                            style:
-                                themeData.textTheme.labelSmall?.copyWith(
-                                  color: textSecondary,
-                                  fontSize: 10,
-                                ) ??
-                                AppTypography.caption(
-                                  context,
-                                ).copyWith(color: textSecondary, fontSize: 10),
-                          ),
-                          Text(
-                            _formatDuration(widget.activity.durationMs),
-                            style:
-                                themeData.textTheme.labelSmall?.copyWith(
-                                  color: textSecondary,
-                                  fontSize: 10,
-                                ) ??
-                                AppTypography.caption(
-                                  context,
-                                ).copyWith(color: textSecondary, fontSize: 10),
-                          ),
-                        ],
-                      ),
-                    ],
-                  ),
-              ],
+                );
+              },
             ),
           ),
         ],

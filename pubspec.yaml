@@ -17,11 +17,11 @@ publish_to: 'none' # Remove this line if you wish to publish to pub.dev
 # In Windows, build-name is used as the major, minor, and patch parts
 # of the product and file versions while build-number is used as the build suffix.
 
-version: 2.11.5+21105 
+version: 2.12.11+21211
 
-# version: 2.10.5+21005 real
+# version: 2.11.6+21106 real
 # 15/02/26
-# vibeflow_v2.10.5_
+# vibeflow_v2.11.5_
 
 environment:
   sdk: ^3.8.1
@@ -51,11 +51,14 @@ dependencies:
   permission_handler: 
   just_audio_background:
   package_info_plus:
+  markdown_widget:
   yt_flutter_musicapi: ^3.4.2
   dart_ytmusic_api:
   flutter_secure_storage:
+  flutter_markdown_plus:
   wikipedia:
   miniplayer:
+  highlight:
   file_picker:
   flutter_dotenv:
   device_info_plus:
@@ -79,7 +82,7 @@ dependencies:
   palette_generator:
   awesome_notifications:
   # wikipedia_search:
-  wave_slider:
+  # wave_slider:
   workmanager:
   supabase_flutter:
 
@@ -102,10 +105,11 @@ dev_dependencies:
 flutter_icons:
   android: true
   # ios: true
-  image_path: "assets/icons/icon_launcher.png"
+  image_path: "assets/icons/logo_unamed_sat.png"
   min_sdk_android: 21
   adaptive_icon_background: "#0F0F0F"
-  adaptive_icon_foreground: "assets/icons/logo_unamed.png"
+  adaptive_icon_foreground: "assets/icons/logo_unamed_sat.png"
+  notification_icon: "assets/icons/logo_notification.png"
 
 # The following section is specific to Flutter packages.
 flutter:
@@ -138,6 +142,9 @@ flutter:
     # Logos
     - assets/icons/logo_unamed.png
     - assets/icons/logo_named.png
+    - assets/icons/logo_unamed_sat.png
+    - assets/icons/logo_monochrome.png
+    - assets/icons/logo_notification.png
 
 
     # Icons
